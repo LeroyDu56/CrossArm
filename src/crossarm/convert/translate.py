@@ -85,6 +85,8 @@ REMARK_MAX = 32  # characters after '!' shown on the pendant
 MESSAGE_MAX = 24  # MESSAGE[...] text length: longer texts are silently cut by the controller (ROBOGUIDE probe)
 REGISTER_COMMENT_MAX = 16
 WAIT_CLOCK = "WaitTimer"  # the register a wait with a MaxTime reads its TIMER into
+TEST_VALUE = "TestValue"  # the register a TEST on anything but a register is selected on
+SELECT_INDENT = " " * len("SELECT ")  # a SELECT's next lines, as the controller stores them (ROBOGUIDE)
 NO_LOAD_KG = 0.001  # RAPID's load0 / tool0 placeholder mass: no real payload declared
 
 _NEGATED = {"=": "<>", "<>": "=", "<": ">=", ">=": "<", ">": "<=", "<=": ">"}
@@ -1247,10 +1249,10 @@ class _RoutineTranslator:
                 if name not in self.local_names:
                     self.known[name] = why
 
-    def merge(self, line: int, *states: dict[str, Typed | Unknown]) -> None:
-        """After an IF: what every path left the same is known, the rest is not."""
+    def merge(self, line: int, *states: dict[str, Typed | Unknown], what: str = "IF") -> None:
+        """After an IF or a TEST: what every path left the same is known, the rest is not."""
         merged: dict[str, Typed | Unknown] = {}
-        differs = Unknown(f"is set differently in the branches of the IF at l.{line}")
+        differs = Unknown(f"is set differently in the branches of the {what} at l.{line}")
         for name in set().union(*states):
             values = [state.get(name, differs) for state in states]
             first = values[0]
@@ -1362,6 +1364,8 @@ class _RoutineTranslator:
                 self.for_stmt(s)
             case n.While():
                 self.while_stmt(s)
+            case n.Test():
+                self.test_stmt(s)
             case n.Return(value=None):
                 self.emit("END")
             case n.Exit():
@@ -2100,6 +2104,100 @@ class _RoutineTranslator:
         self.emit(f"JMP LBL[{top}]")
         self.emit(f"LBL[{exit_label}]")
         self.forget(loop.body, changes)
+
+    def test_stmt(self, test: n.Test) -> None:
+        """TEST/CASE -> SELECT, one line per CASE value, then the branches behind labels.
+
+        Measured on ROBOGUIDE: the first line whose value is equal wins, as the first CASE does in RAPID;
+        with no ELSE and no value equal, the program goes on after the SELECT, and so does a CALL made on a
+        SELECT line once it returns. A branch that is a single CALL is made on its SELECT line.
+        """
+        line = test.span.line
+        if not test.cases:  # nothing to compare: the DEFAULT always runs
+            self.block(test.default or ())
+            return
+        values = [[self._case_value(v) for v in case.values] for case in test.cases]
+        subject = self.numeric(test.subject)
+        try:  # a constant: the branch is known now
+            self._constant_test(test, float(subject), values)
+            return
+        except ValueError:
+            pass
+        if not re.fullmatch(r"R\[[^\]]*\]", subject):  # SELECT reads a register only
+            register = self.c.written_register(TEST_VALUE, key="CROSSARM.TESTVALUE")
+            self.emit(f"{register}={subject}")
+            subject = register
+        start, known = (self.active_uf, self.active_ut), dict(self.known)
+        bodies = [case.body for case in test.cases] + ([test.default] if test.default is not None else [])
+        branches: list[list[Instruction | Motion]] = []
+        ends: list[dict[str, Typed | Unknown]] = [] if test.default is not None else [known]
+        for body in bodies:  # each branch starts from what held before the TEST
+            self.active_uf, self.active_ut = start
+            self.known = dict(known)
+            mark = len(self.lines)
+            self.block(body)
+            branches.append(self.lines[mark:])
+            del self.lines[mark:]
+            ends.append(self.known)
+        end = self.label()
+        actions: list[str] = []
+        behind: list[tuple[int, list[Instruction | Motion], tuple[n.Stmt, ...]]] = []  # the branches after the SELECT
+        for body, lines in zip(bodies, branches, strict=True):
+            if not lines:
+                actions.append(f"JMP LBL[{end}]")
+            elif len(lines) == 1 and isinstance(lines[0], Instruction) and lines[0].text.startswith("CALL "):
+                actions.append(lines[0].text)
+            else:
+                behind.append((self.label(), lines, body))
+                actions.append(f"JMP LBL[{behind[-1][0]}]")
+        select, seen = [], set()
+        for case_values, action in zip(values, actions, strict=False):
+            for value in case_values:
+                if value not in seen:  # the controller would take the first one anyway
+                    seen.add(value)
+                    select.append(f"={value},{action}")
+        if test.default is not None:
+            select.append(f"ELSE,{actions[-1]}")
+        self.emit(f"SELECT {subject}{select[0]}")
+        for text in select[1:]:
+            self.emit(SELECT_INDENT + text)
+        # Past the SELECT: no value equal and no ELSE, or back from a CALL made on a SELECT line.
+        after_select = test.default is None or any(a.startswith("CALL ") for a in actions)
+        used = any(a == f"JMP LBL[{end}]" for a in actions)
+        if behind and after_select:
+            self.emit(f"JMP LBL[{end}]")
+            used = True
+        for i, (label, lines, body) in enumerate(behind):
+            self.emit(f"LBL[{label}]")
+            self.lines.extend(lines)
+            if i < len(behind) - 1 and not leaves(body):
+                self.emit(f"JMP LBL[{end}]")
+                used = True
+        if used or behind:
+            self.emit(f"LBL[{end}]")
+        self.active_uf = self.active_ut = None  # a branch, or the CALL made on a SELECT line, may select others
+        self.merge(line, *ends, what="TEST")
+
+    def _case_value(self, expr: n.Expr) -> str:
+        """A CASE value as a SELECT line writes it: a constant, `(-1)`, `.5` (as ROBOGUIDE stores them)."""
+        if isinstance(expr, n.String):
+            raise Untranslatable("TEST on a string: TP SELECT compares a register with numbers", Blocker.CONDITION)
+        try:
+            return decimal(operand(fmt_number(self.c.evaluator.constant_number(expr))))
+        except Unresolvable as exc:
+            raise Untranslatable(f"CASE value '{format_expr(expr)}' is not known at conversion time: TP SELECT "
+                                 "compares with constants", Blocker.VALUE) from exc  # fmt: skip
+
+    def _constant_test(self, test: n.Test, subject: float, values: list[list[str]]) -> None:
+        """TEST on a constant: code switched by hand, like IF FALSE. The branch it takes, without a SELECT."""
+        line = test.span.line
+        for case, case_values in zip(test.cases, values, strict=True):
+            if any(float(v.strip("()")) == subject for v in case_values):
+                self.emit(f"!l.{line} TEST {fmt_number(subject)}: one CASE")
+                self.block(case.body)
+                return
+        self.emit(f"!l.{line} TEST {fmt_number(subject)}: " + ("DEFAULT" if test.default is not None else "no CASE"))
+        self.block(test.default or ())
 
     # -- conditions (TP mixed logic) --------------------------------------------------
 

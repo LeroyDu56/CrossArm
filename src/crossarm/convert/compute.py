@@ -761,6 +761,13 @@ class Computer:
                     result = self._run(body, data, modes, function)
                     if result is not None:
                         return result
+                case n.Test(subject=subject, cases=cases, default=default):
+                    chosen = self.value(subject).value
+                    body = next((c.body for c in cases if any(self.value(v).value == chosen for v in c.values)),
+                                default or ())  # fmt: skip
+                    result = self._run(body, data, modes, function)
+                    if result is not None:
+                        return result
                 case n.Return(value=value) if value is not None:
                     return self.value(value)
                 case _:

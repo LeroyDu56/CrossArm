@@ -60,6 +60,14 @@ def test_a_tool_built_from_fixed_values_is_loaded_where_the_rapid_builds_it():
     assert frame.uses == (("UTOOL", "tBuilt", "MAIN", 4),)
 
 
+def test_a_function_choosing_with_test_case_is_run():
+    extra = MAKE + ("\nFUNC num Length(num size)\nTEST size\nCASE 1:\nRETURN 10;\nCASE 2, 3:\nRETURN 30;\n"
+                    "DEFAULT:\nRETURN 0;\nENDTEST\nENDFUNC")  # fmt: skip
+    result = run(f"tBuilt:=Shifted(tBase,Length(3));\n{MOVE}", extra=extra)
+    assert todos(result) == []
+    assert result.computed_frames[0].key == "0.000,0.000,230.000,0.000,0.000,0.000"
+
+
 def test_identical_values_share_one_register():
     result = run(f"tBuilt:=Shifted(tBase,30);\n{MOVE}\ntBuilt:=Shifted(tBase,10);\n{MOVE}\ntBuilt:=Shifted(tBase,30);\n{MOVE}")
     assert [(f.number, len(f.uses)) for f in result.computed_frames] == [(99, 2), (98, 1)]

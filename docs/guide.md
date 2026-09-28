@@ -96,10 +96,11 @@ crossarm stats   backup/RAPID                                          # parser 
 | `IF / ELSEIF / ELSE` | `IF (...) THEN / ELSE / ENDIF` | `ELSEIF` unrolled, negations pushed down |
 | condition calling the backup's own bool function (`IF HasVision()=TRUE`) | the test the function makes: `IF (DI[5]=OFF)` | For a function that only returns a test, with a remark keeping the RAPID text. `RobOS()` is TRUE (the programs run on a real robot) |
 | `FOR` (step ±1), `WHILE` | `FOR R[n]=a TO/DOWNTO b`, `LBL`/`JMP` loop | |
+| `TEST` / `CASE` / `DEFAULT` | `SELECT R[n]=1,JMP LBL[2]` / `=2,CALL PICK` / `ELSE,JMP LBL[3]` | One line per `CASE` value; a `CASE` that only calls a routine calls it on its line, the other branches are behind labels. A `TEST` on an argument or a group input selects a copy (`R[n:TestValue]`). On a string, or with a `CASE` value only known at run time: TODO |
 | routine call, `Stop`, `RETURN`, `EXIT` | `CALL`, `PAUSE`, `END`, `ABORT` | A routine of a system module the programs call is written too: the robot needs it |
 | routine with `num`, `bool`, switch parameters | `CALL NAME(3,(-2.5),1,0)`, read as `AR[n]` | Every argument on every call (a switch as 1 / 0). A parameter the routine changes is copied to a register. Other parameters (robtarget, tooldata, string, INOUT...) stay TODO, with the reason |
 | call to a routine that makes one move (`MyMoveL p10,v500,z10,tool1`) | `L P[n] …` | Converted when the routine does nothing else; otherwise listed in the report and converted on request ([`move_routines`](#the-mapping-file)) |
-| `IF FALSE` / `WHILE FALSE` | a remark | Code switched off by hand: left out, `IF TRUE` converted without a test |
+| `IF FALSE` / `WHILE FALSE`, `TEST` on a constant | a remark | Code switched off by hand: left out, `IF TRUE` converted without a test, a `TEST` on a constant as the branch it takes |
 | comments | `!remark` | Split to 32 characters, accents folded to ASCII |
 
 **Reported as TODO**:

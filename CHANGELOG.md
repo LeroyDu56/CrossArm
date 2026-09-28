@@ -3,6 +3,21 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+### Converts
+- `TEST` / `CASE` / `DEFAULT` to `SELECT`: one line per `CASE` value, a `CASE` that only calls a
+  routine calls it on its `SELECT` line, the other branches behind labels. A `TEST` on a routine's
+  argument or a group input selects a copy of it; a `TEST` on a constant keeps its branch only. A
+  `TEST` on a string, or a `CASE` value only known at run time, stays TODO. A `FUNC` choosing its
+  value with `TEST` is run at conversion time like one using `IF`.
+
+### Validated
+- A probe runs `TEST` in ten shapes (several values, negative and decimal values, empty and
+  call-only `CASE`s, with and without `DEFAULT`, nested, on a constant, on an argument) on
+  RobotStudio and, converted, on ROBOGUIDE: the same branches, register for register
+  ([docs/validation.md](docs/validation.md#16-test-and-case-run)).
+
 ## 1.0.0 — 2026-09-26
 
 The first release. CrossArm converts ABB robot programs written in RAPID, from a RobotWare backup or

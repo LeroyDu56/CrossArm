@@ -365,6 +365,76 @@ def test_while_loops_use_labels():
     ]  # fmt: skip
 
 
+def test_test_case_becomes_select():
+    """One SELECT line per CASE value; the branches behind labels, each ending on the common exit."""
+    body = "TEST n\nCASE 1, 2:\n  Set doA;\n  Set doB;\nCASE -1:\n  Reset doA;\n  Reset doB;\nDEFAULT:\n  Stop;\nENDTEST"
+    result = run(body, "VAR num n;")
+    assert tp_lines(result) == [
+        "SELECT R[1]=1,JMP LBL[2]",
+        "       =2,JMP LBL[2]",
+        "       =(-1),JMP LBL[3]",
+        "       ELSE,JMP LBL[4]",
+        "LBL[2]", "DO[1]=ON", "DO[2]=ON", "JMP LBL[1]",
+        "LBL[3]", "DO[1]=OFF", "DO[2]=OFF", "JMP LBL[1]",
+        "LBL[4]", "PAUSE",
+        "LBL[1]",
+    ]  # fmt: skip
+    assert not todos(result)
+
+
+def test_test_case_calls_are_made_on_the_select_lines():
+    """A CALL on a SELECT line comes back after the SELECT (ROBOGUIDE): no label needed."""
+    procs = "PROC palA()\nENDPROC\nPROC palB()\nENDPROC\n"
+    result = run("TEST n\nCASE 1:\n  palA;\nCASE 2:\n  palB;\nCASE 3:\nENDTEST", "VAR num n;", extra_procs=procs)
+    assert tp_lines(result) == [
+        "SELECT R[1]=1,CALL PALA",
+        "       =2,CALL PALB",
+        "       =3,JMP LBL[1]",
+        "LBL[1]",
+    ]  # fmt: skip
+
+
+def test_test_case_without_default_goes_on_after_the_select():
+    result = run("TEST n\nCASE 1:\n  Set doA;\n  Set doB;\nCASE 2:\n  palA;\nENDTEST", "VAR num n;",
+                 extra_procs="PROC palA()\nENDPROC\n")  # fmt: skip
+    assert tp_lines(result) == [
+        "SELECT R[1]=1,JMP LBL[2]",
+        "       =2,CALL PALA",
+        "JMP LBL[1]",
+        "LBL[2]", "DO[1]=ON", "DO[2]=ON",
+        "LBL[1]",
+    ]  # fmt: skip
+
+
+def test_test_case_on_an_argument_or_a_group_input_selects_a_copy():
+    source = ("MODULE M\nPROC main()\nTEST giCode\nCASE 1:\n  Set doA;\nENDTEST\nENDPROC\n"
+              "PROC sub(num k)\nTEST k\nCASE 1:\n  Set doA;\nENDTEST\nENDPROC\nENDMODULE\n")  # fmt: skip
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)),
+                     signals={"GICODE": Signal("giCode", "GI")}, sources={"M": source})  # fmt: skip
+    main, sub = (info.program.lines[1:4] for info in result.programs)
+    assert [line.text for line in main] == ["R[1:TestValue]=GI[1]", "SELECT R[1:TestValue]=1,JMP LBL[2]", "JMP LBL[1]"]
+    assert [line.text for line in sub] == ["R[1:TestValue]=AR[1]", "SELECT R[1:TestValue]=1,JMP LBL[2]", "JMP LBL[1]"]
+
+
+def test_test_case_on_a_constant_keeps_its_branch_only():
+    result = run("TEST MODE\nCASE 1:\n  Set doA;\nCASE 2:\n  Set doB;\nENDTEST", "CONST num MODE:=2;")
+    assert tp_lines(result) == ["!l.4 TEST 2: one CASE", "DO[1]=ON"]
+
+
+def test_test_case_on_a_string_or_a_variable_value_is_a_todo():
+    result = run('TEST s\nCASE "A":\n  Set doA;\nENDTEST', "VAR string s;")
+    assert [n.category for n in result.notes if n.kind == "TODO"] == [Blocker.CONDITION]
+    result = run("TEST n\nCASE m:\n  Set doA;\nENDTEST", "VAR num n;\nVAR num m;")
+    assert "CASE value 'm'" in todos(result)[0]
+
+
+def test_test_case_branches_merge_what_they_know():
+    """A value set in one CASE only is not known after the TEST: the move on it stays a TODO."""
+    data = HOME + "VAR num n;\nVAR robtarget p;"
+    result = run("p:=pHome;\nTEST n\nCASE 1:\n  p:=Offs(pHome,0,0,50);\nENDTEST\nMoveL p,v100,fine,tool0;", data)
+    assert "branches of the TEST" in todos(result)[0]
+
+
 def test_comments_are_split_to_32_characters():
     result = run("! " + "word " * 12)
     lines = tp_lines(result)

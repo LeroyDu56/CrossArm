@@ -12,12 +12,13 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | What | Result |
 |---|---|
 | Every program converted from the test corpus, loaded on a FANUC controller | 118 of 118 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (164 forms) |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (170 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
 | Corners, approaches, retracts, reversals, zigzags, converted, against the ABB | the path within 4 mm |
 | Frames and points the programs compute, worked out by CrossArm, run on ROBOGUIDE | within 0.005 mm and 0.001° of RobotStudio |
+| `TEST` / `CASE` converted to `SELECT`, run on both controllers | the branches RAPID takes |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -34,6 +35,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 13. [The path where zones matter](#13-the-path-where-zones-matter)
 14. [Other robots](#14-other-robots)
 15. [Frames and points the programs compute](#15-frames-and-points-the-programs-compute)
+16. [TEST and CASE, run](#16-test-and-case-run)
 
 ## 1. The test corpus
 
@@ -188,7 +190,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 164 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 170 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
@@ -260,7 +262,7 @@ and 135 degrees; zigzags with 50 mm legs. 32 runs:
 - **Into a faster move it rounds more.** Off the top of a retract (300 mm/s, then 1000), the CNT
   for 300 mm/s cut the corner by 6.8 mm, where the ABB cut it by 4.9. CrossArm now matches a
   corner at the next move's speed when that is faster, past outputs and remarks in between: 1.3 mm.
-  On the test corpus the rule lowers 72 CNT of 637 moves and raises none.
+  On the test corpus the rule lowers 72 CNT of 638 moves and raises none.
 - **A reversal turns short of the bottom by up to 4 mm more.** Down and back up through a zone, the
   R-2000iC turns 5.6 mm short of the bottom with `z5` (the ABB 2.6), 12.1 with `z20` (9.5), still
   on the line: the tool goes less deep, not aside. The R-1000iA: 3.9 mm for 2.6 with `z5`, as
@@ -351,5 +353,30 @@ it, a function that does more than compute.
 On the test corpus, the deburring cell's burr tools, built by a FUNC from the spindle frame, and two
 of its fixtures (a `uframe` copied, one from `DefFrame` on measured reference points) are worked out
 and loaded from five registers; the fixture it measures with a search and the TCP it checks with
-`CRobT` stay TODO, as calibrations. The three backups lose 9 TODO against 1.0, and the automatic
+`CRobT` stay TODO, as calibrations. Computing them takes 9 TODO off the three backups, and the automatic
 numbers of their mapping files do not move.
+
+## 16. TEST and CASE, run
+
+**What `SELECT` does** was asked of ROBOGUIDE first, with hand-written programs: every form loads
+(values negative, decimal, repeated; a `CALL` with or without arguments on a line; no `ELSE`), the
+controller indents the lines after the first by 7 spaces whatever they had, and stores `-1` as
+`(-1)`. Run with each value: the first equal line wins, as the first `CASE` does in RAPID; with no
+`ELSE` and no equal value the program goes on after the `SELECT`; a `CALL` made on a `SELECT` line
+comes back after the `SELECT`. So a `CASE` that only calls a routine is written on its line, and the
+other branches behind labels, each jumping to a common exit.
+
+**End to end.** [tools/make_select_probe.py](../tools/make_select_probe.py) writes a module that runs
+`TEST` in the shapes programs use: several values on a `CASE`, a negative and a decimal value, a
+`CASE` that only calls a routine, an empty one, with and without `DEFAULT`, a value no `CASE` has, a
+`TEST` nested in a `CASE`, one on a constant and one on a routine's argument. Each branch adds its own
+weight to three totals, so a wrong branch shows. RobotStudio runs the RAPID, ROBOGUIDE the converted
+programs:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| `nSum` | 21120 | 21120 |
+| `nCalls` | 112 | 112 |
+| `nPath` | 114 | 114 |
+
+The results are in [tests/fixtures/probes/select/results](../tests/fixtures/probes/select/results).

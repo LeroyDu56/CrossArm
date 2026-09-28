@@ -32,9 +32,9 @@ procedure call (`name args;`). Only then are `MoveJ/MoveL/MoveC/MoveAbsJ`,
 by role (`to_point`, `speed`, `zone`, `tool`, `wobj`). A call with an unexpected
 shape stays a generic `ProcCall` and gets a warning, so nothing is guessed.
 
-**Structure beyond V1 is parsed, not dropped.** `WHILE` and `TEST` are outside
-the V1 conversion scope, but a real main routine is typically one big
-`WHILE TRUE DO` loop. Parsing them keeps the V1 instructions inside visible.
+**Structure beyond V1 is parsed, not dropped.** `WHILE` and `TEST` were outside
+the V1 conversion scope (both are converted now), but a real main routine is typically one big
+`WHILE TRUE DO` loop. Parsing them kept the V1 instructions inside visible.
 
 **Nothing is lost silently.** Out-of-scope constructs become `Unsupported`
 nodes with a stable `kind` tag and their exact source text. `crossarm stats`

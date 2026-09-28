@@ -68,6 +68,7 @@ byte). CrossArm does not emit these; the parser keeps them so files survive a ro
 | Conditions with `AND` / `OR`, flags | `IF (R[1]>=12 OR F[1]=ON) THEN` | ROBOGUIDE |
 | Grouped conditions, group input | `IF (R[5]<>2 AND (R[5]<>0 OR F[1]=OFF)) THEN`, `IF (GI[1]=0 AND DI[1]=OFF) THEN` | ROBOGUIDE (condition probe: the grouped conditions run, registers as RAPID computes; the group input loaded) |
 | FOR loop | `FOR R[1:i]=1 TO 3` / `ENDFOR` | ROBOGUIDE |
+| Select | `SELECT R[5:nMode]=1,JMP LBL[4] ;` then `       =(-1),CALL SELCOUNT ;`, `       ELSE,JMP LBL[6] ;`: the next lines indented 7 spaces (the controller indents them so), a negative value stored in parentheses, `.5` without its zero, one space before `;`. The first equal value wins; with no `ELSE` and no equal value the program goes on after the `SELECT`, and so does a `CALL` made on a `SELECT` line once it returns | ROBOGUIDE (select probe, run: registers as RobotStudio computes) |
 | FOR loop, descending | `FOR R[5:k]=3 DOWNTO 1` | ROBOGUIDE |
 | Timed wait | `WAIT    .30(sec)` (width 6, no leading zero) | ROBOGUIDE |
 | Other waits | `WAIT R[4]`, `WAIT DI[1]=ON`, `WAIT DO[2]=ON`, `WAIT (DI[1]=OFF OR R[6]<>0)` | ROBOGUIDE |

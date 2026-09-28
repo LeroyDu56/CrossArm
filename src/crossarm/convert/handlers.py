@@ -57,6 +57,8 @@ def leaves(stmts: tuple[n.Stmt, ...]) -> bool:
         return True
     if isinstance(last, n.If):
         return bool(last.else_body) and leaves(last.else_body) and all(leaves(b.body) for b in last.branches)
+    if isinstance(last, n.Test):
+        return last.default is not None and leaves(last.default) and all(leaves(c.body) for c in last.cases)
     return False
 
 

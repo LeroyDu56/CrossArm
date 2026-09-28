@@ -19,6 +19,7 @@ change to CrossArm is checked on a controller and not only on text:
                  tools/CrossArmServer.mod running; skipped when RobotStudio is not)
     banks        the same moves with frames past the limit loaded from registers: the same flanges
     compute      frames and points the programs compute, worked out by CrossArm: the flanges RobotStudio computes
+    select       TEST/CASE converted to SELECT: the totals RobotStudio computes
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool and user frames 1 to 3 and 9, and
@@ -41,6 +42,7 @@ import make_arg_probe
 import make_bank_probe
 import make_compute_probe
 import make_condition_probe
+import make_select_probe
 import make_setup_probe
 import make_wait_probe
 import roboguide
@@ -59,6 +61,7 @@ ABB_PROBES = [
     (PROBES / "pose" / "PoseProbe.mod", "Probe", "poseprobe.txt", ROBOTSTUDIO),
     (PROBES / "pin" / "PinProbe.mod", "Probe", "pinprobe.txt", PIN_ROBOTSTUDIO),
     (PROBES / "compute" / "ComputeProbe.mod", "Probe", "computeprobe.txt", make_compute_probe.ABB_RESULT),
+    (PROBES / "select" / "SelectProbe.mod", "Probe", "selectprobe.txt", make_select_probe.ABB_RESULT),
 ]
 REFUSED = {"NEG_FOR_B"}  # the negative-constant probe: the one form the controller does not load
 
@@ -197,6 +200,12 @@ def probe_compute() -> str:
     return _run("compute", make_compute_probe.PROGRAM, [], check, timeout=300)
 
 
+def probe_select() -> str:
+    numbers = make_select_probe.registers(make_select_probe.conversion())
+    return _run("select", make_select_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_select_probe.EXPECTED, numbers))  # fmt: skip
+
+
 LOADED: list[str] = []
 
 
@@ -224,7 +233,7 @@ def _run(folder: str, program: str, zero: list[int], check: Callable[[], str] | 
 def main() -> int:
     probes = {"negative": probe_negative, "args": probe_args, "conditions": probe_conditions, "waits": probe_waits,
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
-              "compute": probe_compute, "abb": probe_abb}  # fmt: skip
+              "compute": probe_compute, "select": probe_select, "abb": probe_abb}  # fmt: skip
     chosen = sys.argv[1:] or list(probes)
     failed = 0
     try:
