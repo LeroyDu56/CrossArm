@@ -1,19 +1,22 @@
 # SPDX-FileCopyrightText: 2026 Enzo LEROY
 # SPDX-License-Identifier: BUSL-1.1
 
-"""Generate the I/O probe: do PulseDO, InvertDO, SetAO and the clocks, converted, do what RAPID does?
+"""Generate the I/O probe: do PulseDO, InvertDO, SetAO, the clocks and GripLoad, converted, do what RAPID does?
 
 IoProbe.mod inverts an output twice, pulses another and looks at it during and after the pulse, times
-half a second with a clock, and sets an analog output with the scale of the mapping file. CrossArm
+half a second with a clock, sets an analog output with the scale of the mapping file, and grips a part between two joint
+moves (GripLoad: the payload schedule of the tool with the part). CrossArm
 converts it (DO[n]=(!DO[n]), DO[n]=PULSE,0.5sec, TIMER[n]=RESET/START/STOP and R[m]=TIMER[n],
 AO[n]=counts); every program is written to this folder. On ROBOGUIDE, load it, run IOPROBE, and read
 NUMREG.VA: each RAPID num holds the value EXPECTED gives, which is what the module does on an ABB
 controller (worked out by hand: the virtual ABB controller has no such signals), the clock within
-TIME_TOLERANCE_S of half a second.
+TIME_TOLERANCE_S of half a second. The active payload schedule, $PLST_PARNUM[1] in SYSVARS.VA, is then the
+one CrossArm numbered for the tool with the part.
 
 Usage:  python tools/make_io_probe.py [output_dir]   (default tests/fixtures/probes/io)
 """
 
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +35,9 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "    VAR num nPulse:=0;",
     "    VAR num nTime:=0;",
     "    VAR clock ckProbe;",
+    "    PERS tooldata tProbe:=[TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,50],[1,0,0,0],0,0,0]];",
+    "    PERS loaddata lProbe:=[2,[0,0,20],[1,0,0,0],0,0,0];",
+    "    CONST jointtarget jProbe:=[[0,0,0,0,-90,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];",
     "",
     "    PROC IoProbe()",
     "        nInvert:=0;",
@@ -54,6 +60,9 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "        ClkStop ckProbe;",
     "        nTime:=ClkRead(ckProbe);",
     "        SetAO aoProbe,2.5;",
+    "        MoveAbsJ jProbe,v1000,fine,tProbe;",
+    "        GripLoad lProbe;",
+    "        MoveAbsJ jProbe,v1000,fine,tProbe;",
     "    ENDPROC",
     "ENDMODULE",
     "",
@@ -75,6 +84,19 @@ def conversion() -> ConversionResult:
     result = convert([parsed.module], config, sources={"IoProbe": MODULE}, signals=SIGNALS)
     assert not [n for n in result.notes if n.kind == "TODO"], [n.message for n in result.notes]
     return result
+
+
+def payload_schedule(result: ConversionResult) -> int:
+    """The schedule CrossArm gave the tool holding the part: the one active once the probe has run."""
+    (schedule,) = [s for s in result.grip_payloads if s.load is not None]
+    assert schedule.number is not None
+    return schedule.number
+
+
+def active_payload(sysvars: str) -> int | None:
+    """$PLST_PARNUM[1] in SYSVARS.VA: the payload schedule group 1 runs with."""
+    found = re.search(r"\$PLST_PARNUM\s[^\n]*\n\s*\[1\] = (\d+)", sysvars)
+    return int(found[1]) if found else None
 
 
 def registers(result: ConversionResult) -> dict[str, int]:

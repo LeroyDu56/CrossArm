@@ -40,6 +40,11 @@ ANALOG_SCALES_README = (
     "AO[n]=1843 (4.5 of 10 V on a 0-4095 module). null: not known, and SetAO on that signal stays TODO. "
     "The counts depend on the FANUC analog module: see its manual."
 )
+PAYLOADS_README = (
+    "Payload schedules of a tool holding a part (GripLoad), numbered from the top down past the tools' "
+    "own (a tool alone is its UTOOL number). Change a number to a schedule the robot does not use (see the "
+    "report, 'Payloads to set up')."
+)
 TOOL_PIN_README = (
     "The pin hole of the FANUC flange the tool's guide pin goes in, which the adapter plate decides. "
     "-x: where the ABB pin was, tool frames as they are. +x: the ISO 9409-1 hole, tool frames turned "
@@ -77,6 +82,10 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     if wrappers:
         data["_move_routines"] = MOVE_ROUTINES_README
         data["move_routines"] = {use.name: use.converted for use in wrappers}
+    gripped = [s for s in result.grip_payloads if s.load is not None and s.number is not None]
+    if gripped:
+        data["_payloads"] = PAYLOADS_README
+        data["payloads"] = {s.key: s.number for s in gripped}
     computed = [f for f in result.computed_frames if f.number is not None]
     if computed:
         data["_frame_registers"] = FRAME_REGISTERS_README

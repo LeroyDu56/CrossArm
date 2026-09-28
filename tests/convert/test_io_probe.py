@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Enzo LEROY
 # SPDX-License-Identifier: BUSL-1.1
 
-"""PulseDO, InvertDO, the clocks and SetAO, converted and run on ROBOGUIDE: they do what RAPID does.
+"""PulseDO, InvertDO, the clocks, SetAO and GripLoad, converted and run on ROBOGUIDE: they do what RAPID does.
 
 tools/make_io_probe.py converts a module that inverts an output twice, pulses another and reads it
 during and after the pulse, times half a second with a clock and sets an analog output with a scale.
@@ -17,7 +17,7 @@ from helpers import FIXTURES
 from crossarm.fanuc.ls_writer import write_ls
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from make_io_probe import MODULE, conversion, matches
+from make_io_probe import MODULE, conversion, matches, payload_schedule
 
 PROBE = FIXTURES / "probes" / "io"
 RESULT = PROBE / "results" / "ioprobe_roboguide.txt"
@@ -31,7 +31,8 @@ def test_the_probe_files_are_those_the_generator_writes():
 
 def test_every_instruction_of_the_probe_is_converted():
     text = (PROBE / "IOPROBE.LS").read_text(encoding="ascii")
-    for form in ("DO[1]=(!DO[1])", "DO[2]=PULSE,0.5sec", "TIMER[1]=RESET", "R[3:nTime]=TIMER[1]", "AO[1]=250"):
+    for form in ("DO[1]=(!DO[1])", "DO[2]=PULSE,0.5sec", "TIMER[1]=RESET", "R[3:nTime]=TIMER[1]", "AO[1]=250",
+                 "PAYLOAD[10]"):
         assert form in text
     assert conversion().coverage.percent == 100.0
 
@@ -43,3 +44,4 @@ def test_the_controller_does_what_rapid_does():
         name, value = line.split()
         found[name] = float(value)
     assert matches(found)
+    assert found["PAYLOAD"] == payload_schedule(conversion())  # $PLST_PARNUM[1] after the run

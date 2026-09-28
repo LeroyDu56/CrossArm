@@ -98,7 +98,7 @@ The tool frames are the ABB ones as they are. That puts the tool's guide pin in 
 
 ### Payloads to set up (PAYLOAD)
 
-Set one payload schedule per tool before running the programs: MENU > SYSTEM > Motion, on the robot. Unlike the frames, a program cannot do it: the controller holds the payload schedules read-only for TP programs. Values are converted to the units of that screen: centre of gravity in cm in the flange frame (RAPID mm / 10), inertia in kgf.cm.s2 (RAPID kg.m2 / 0.0980665). The schedule number is the tool's UTOOL number.
+Set one payload schedule per tool before running the programs: MENU > SYSTEM > Motion, on the robot. Unlike the frames, a program cannot do it: the controller holds the payload schedules read-only for TP programs. Values are converted to the units of that screen: centre of gravity in cm in the flange frame (RAPID mm / 10), inertia in kgf.cm.s2 (RAPID kg.m2 / 0.0980665). The schedule number is the tool's UTOOL number; a tool holding a part (GripLoad) has a schedule of its own, which the programs select with PAYLOAD[n] where the RAPID grips or releases.
 
 The z coordinate and the mass carry over as they are; x and y depend on the pin hole the tool is fitted by, like the tool frames above.
 

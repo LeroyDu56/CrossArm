@@ -83,6 +83,7 @@ byte). CrossArm does not emit these; the parser keeps them so files survive a ro
 | Frames past the limit | `UTOOL[2]=PR[99]` / `UTOOL_NUM=2` before a move, `UFRAME[1]=PR[98]` / `UFRAME_NUM=1`; a selection past the limit (`UTOOL_NUM=11` with 10 tool frames) is **refused** at load (ASBN-092) | ROBOGUIDE (bank probe, run; every program of the test corpus loaded) |
 | Pulse | `DO[1]=PULSE,0.5sec ;`: tenths of a second, stored with the zero (`0.5sec`), 0.25 stored `0.3sec`, a length below 0.05 dropped for the controller's default, 25.5 s at most (25.6 **refused**, ASBN-092); on during its length, off after | ROBOGUIDE (I/O probe, run) |
 | Inverted output | `DO[1]=(!DO[1]) ;` | ROBOGUIDE (I/O probe, run) |
+| Payload schedule | `PAYLOAD[10] ;`: selects the schedule (`$PLST_PARNUM[1]` follows it); `PAYLOAD[11]` loads but stops the program when run, with 10 schedules | ROBOGUIDE (I/O probe, run) |
 | Analog output | `AO[1]=250 ;`, `AO[1]=4.5`, `AO[1]=(-5)`, `AO[1]=R[1]` load; `AO[1]=R[1]/10` is **refused**: through a register | ROBOGUIDE |
 | Group output from a group input | `GO[4]=GI[3]` is **refused** at load (ASBN-092): `R[5]=GI[3]` then `GO[4]=R[5]` | ROBOGUIDE |
 | End | `END` | ROBOGUIDE |

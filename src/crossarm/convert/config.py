@@ -34,6 +34,7 @@ be pinned in a JSON file passed with --map:
                                                -> the PR SETUP_FRAMES keeps it in (crossarm.convert.compute)
   "analog_scales":   {"aoFlow": 409.5}         FANUC analog output counts per RAPID unit: SetAO aoFlow,4.5
                                                -> AO[1]=1843 (null: not known yet, SetAO stays TODO)
+  "payloads":        {"tGrip+lBox": 9}         the payload schedule of a tool holding a part (GripLoad)
 }
 
 Names are matched case-insensitively, like RAPID.
@@ -136,6 +137,8 @@ class ConversionConfig:
     # FANUC analog output counts per RAPID unit, upper-cased signal name -> scale: a FANUC AO takes the
     # module's counts (0-4095 for 0-10 V on many), RAPID its logical value. Unknown: SetAO stays TODO.
     analog_scales: dict[str, float] = field(default_factory=dict)
+    # Payload schedules of a tool holding a part (GripLoad), upper-cased "TOOL+LOAD" -> PAYLOAD number.
+    payloads: dict[str, int] = field(default_factory=dict)
 
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
@@ -157,7 +160,7 @@ class ConversionConfig:
         unknown = set(data) - set(_MAPPING_KEYS) - {
             "joint_speed_ref_mm_s", "cnt_per_mm", "config_mapping", "joint_mapping", "default_config",
             "program_name_max_length", "tpwrite_values", "tool_pin", "limits", "reserved", "move_routines",
-            "zone_mapping", "motion_profile", "frame_registers", "analog_scales",
+            "zone_mapping", "motion_profile", "frame_registers", "analog_scales", "payloads",
         }  # fmt: skip
         if unknown:
             raise ValueError(f"unknown keys in mapping file: {', '.join(sorted(unknown))}")
@@ -186,6 +189,10 @@ class ConversionConfig:
             if not isinstance(scale, int | float) or isinstance(scale, bool):
                 raise TypeError(f"analog_scales.{name}: expected a number or null, got {scale!r}")
             config.analog_scales[name.upper()] = float(scale)
+        for key, number in data.get("payloads", {}).items():
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise TypeError(f"payloads.{key}: expected an integer, got {number!r}")
+            config.payloads[key.upper()] = number
         for key in _MAPPING_KEYS:
             table = getattr(config, key)
             for name, number in data.get(key, {}).items():

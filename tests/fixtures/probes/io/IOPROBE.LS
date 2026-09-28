@@ -7,7 +7,7 @@ CREATE		= DATE 26-01-01  TIME 00:00:00;
 MODIFIED	= DATE 26-01-01  TIME 00:00:00;
 FILE_NAME	= ;
 VERSION		= 0;
-LINE_COUNT	= 29;
+LINE_COUNT	= 34;
 MEMORY_SIZE	= 0;
 PROTECT		= READ_WRITE;
 TCD:  STACK_SIZE	= 0,
@@ -48,5 +48,16 @@ CONTROL_CODE	= 00000000 00000000;
   27:  TIMER[1]=STOP ;
   28:  R[3:nTime]=TIMER[1]    ;
   29:  AO[1]=250 ;
+  30:  UFRAME_NUM=0 ;
+  31:  UTOOL_NUM=1 ;
+  32:J P[1] 22% FINE    ;
+  33:  PAYLOAD[10] ;
+  34:J P[1] 22% FINE    ;
 /POS
+P[1]{
+   GP1:
+	UF : 0, UT : 1,	
+	J1=     0.000 deg,	J2=     0.000 deg,	J3=     0.000 deg,
+	J4=     0.000 deg,	J5=    90.000 deg,	J6=   180.000 deg
+};
 /END

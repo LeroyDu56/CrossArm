@@ -360,6 +360,41 @@ def test_interrupts_are_their_own_blocker():
     assert [n.category for n in result.notes if n.kind == "TODO"] == [Blocker.INTERRUPT] * 3
 
 
+LOAD = "PERS loaddata lBox:=[5,[0,0,100],[1,0,0,0],0.1,0.1,0.1];"
+
+
+def test_gripload_selects_the_payload_of_the_tool_with_the_part():
+    """A FANUC schedule is all the flange carries: the tool and the part together, numbered from the top down;
+    load0 goes back to the tool's own schedule, its UTOOL number."""
+    body = "GripLoad lBox;\nMoveL pHome,v100,fine,tGrip;\nGripLoad load0;\nMoveL pHome,v100,fine,tGrip;"
+    result = run(body, HOME + TOOL + LOAD)
+    assert tp_lines(result) == ["PAYLOAD[10]", "UFRAME_NUM=0", "UTOOL_NUM=1", "L P[1] 100mm/sec FINE", "PAYLOAD[1]",
+                                "L P[1] 100mm/sec FINE"]  # fmt: skip
+    gripped, alone = sorted(result.grip_payloads, key=lambda s: s.load is None)
+    assert (gripped.key, gripped.number, alone.key, alone.number) == ("tGrip+lBox", 10, "tGrip", 1)
+    # tGrip: 2.4 kg at z 90; lBox: 5 kg 100 mm past the TCP (z 185.5): together 7.4 kg at z 222.09
+    assert gripped.payload.mass == pytest.approx(7.4)
+    assert gripped.payload.cog == pytest.approx((0, 0, (2.4 * 90 + 5 * 285.5) / 7.4))
+    assert gripped.payload.inertia[0] == pytest.approx(0.1 + 2.4 * 0.13209459**2 + 5 * 0.06340541**2, rel=1e-4)
+
+
+def test_gripload_takes_the_tool_selected_or_the_task_s_only_one():
+    result = run("MoveL pHome,v100,fine,tGrip;\nGripLoad lBox;", HOME + TOOL + LOAD)
+    assert tp_lines(result)[-1] == "PAYLOAD[10]"
+    source = (f"MODULE M\n{HOME}{TOOL}{LOAD}\nPROC main()\nMoveL pHome,v100,fine,tGrip;\nENDPROC\n"
+              "PROC grip()\nGripLoad lBox;\nENDPROC\nENDMODULE\n")  # fmt: skip
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    assert "PAYLOAD[10]" in [getattr(line, "text", "") for info in result.programs for line in info.program.lines]
+
+
+def test_gripload_with_several_tools_or_a_load_changed_at_run_time_is_a_todo():
+    tools = TOOL + "PERS tooldata tOther:=[TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,50],[1,0,0,0],0,0,0]];"
+    result = run("GripLoad lBox;\nMoveL pHome,v100,fine,tGrip;\nMoveL pHome,v100,fine,tOther;", HOME + tools + LOAD)
+    assert "2 tools" in todos(result)[0]
+    result = run("lBox.mass:=7;\nGripLoad lBox;\nMoveL pHome,v100,fine,tGrip;", HOME + TOOL + LOAD)
+    assert any("GripLoad lBox: load only known at run time" in t for t in todos(result))
+
+
 def test_a_group_input_read_by_its_name():
     source = "MODULE M\nPROC main()\nIF giCode>0 AND diReady=1 THEN\nWaitTime 1;\nENDIF\nENDPROC\nENDMODULE\n"
     signals = {"GICODE": Signal("giCode", "GI"), "DIREADY": Signal("diReady", "DI")}

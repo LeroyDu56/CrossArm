@@ -84,6 +84,7 @@ crossarm stats   backup/RAPID                                          # parser 
 | `confdata` | `CONFIG 'F/N U/D T/B, t1, t4, t6'` | Measured conventions ([validation](validation.md#3-arm-configuration-measured-on-both-controllers)) |
 | `wobjdata` / `tooldata` | `UFRAME_NUM` / `UTOOL_NUM` | Frame values (X Y Z W P R) listed in the report. A frame the programs calibrate themselves: its value saved in the backup, flagged to check |
 | tool load (`loaddata`) | PAYLOAD schedule | Mass, centre of gravity and inertia listed in the report, to set up before running |
+| `GripLoad` | `PAYLOAD[n]` | A FANUC schedule is all the flange carries: the tool and the part together, worked out (common centre of gravity, inertia about it) and listed in the report. Numbered from the top down past the tools' own; `load0` selects the tool's schedule (its UTOOL number). The tool is the one the moves after it use, else the one selected, else the task's only tool |
 | `speeddata` | `%` (joint) / `mm/sec` | mm/s kept; joint % from the target robot's measured profile ([speeds and zones](#speeds-and-zones)) |
 | `zonedata` | `FINE` / `CNTn` | The CNT that rounds the corner as much at the move's speed, measured on both robots |
 | `num` / `bool` data | `R[n:name]` / `F[n]` | |
@@ -207,6 +208,7 @@ A mapping file can also be written from scratch, with only the keys you care abo
   "analog_outputs": {"aoGlueFlow": 1},
   "analog_scales": {"aoGlueFlow": 409.5},
   "timers": {"ckCycle": 1},
+  "payloads": {"tGripper+lBox": 9},
   "tpwrite_values": "text",
   "program_name_max_length": 8,
   "limits": {"UFRAME": 9, "UTOOL": 10, "R": 200, "PR": 100, "F": 1024},
@@ -234,6 +236,7 @@ A mapping file can also be written from scratch, with only the keys you care abo
   FANUC `AO` takes the module's counts (0-4095 for 0-10 V on many modules, see its manual), RAPID a
   logical value. `SetAO aoGlueFlow,4.5` with 409.5 is `AO[1]=1843`. The generated file lists each
   analog output with `null`: until a number replaces it, `SetAO` on that signal stays TODO.
+- `payloads` gives the payload schedule of a tool holding a part (`GripLoad`), as `tool+load`.
 - `frame_registers` gives the position register that keeps each
   [frame the programs compute](#frames-and-points-the-programs-compute), by its value X, Y, Z, W, P, R
   as the report writes it. The generated file lists them; change a number to a register the robot

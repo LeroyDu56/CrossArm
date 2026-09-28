@@ -61,7 +61,8 @@ from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
 from crossarm.convert.motion import corner
-from crossarm.convert.values import Evaluator, Frame, JointTarget, RobTarget, Symbols, Unresolvable
+from crossarm.convert.payload import Payload, combined
+from crossarm.convert.values import Evaluator, Frame, JointTarget, Load, RobTarget, Symbols, Unresolvable
 from crossarm.convert.wrappers import CallMismatch, MoveRoutine, find_move_routines, parameters
 from crossarm.fanuc.tp import (
     Attributes,
@@ -232,6 +233,19 @@ class ComputedFrame:
 
 
 @dataclass(frozen=True, slots=True)
+class GripPayload:
+    """A payload schedule GripLoad selects: a tool holding a part, or the tool alone (GripLoad load0)."""
+
+    key: str  # "tool+load", as the mapping file pins it; the tool alone: "tool"
+    number: int | None  # None: no schedule left (its GripLoad stay TODO)
+    tool: str
+    load: str | None  # None: the tool alone, whose schedule is its UTOOL number
+    payload: Payload
+    fixed: bool  # pinned by the mapping file
+    uses: tuple[tuple[str, int], ...]  # (TP program, RAPID line)
+
+
+@dataclass(frozen=True, slots=True)
 class Capacity:
     """How much of one controller resource the conversion needs, against what it holds."""
 
@@ -255,6 +269,11 @@ _INTERRUPTS = frozenset({"IDELETE", "ISIGNALDI", "ISIGNALDO", "ISIGNALGI", "ISIG
                          "ITIMER", "IPERS", "IWATCH", "ISLEEP", "IENABLE", "IDISABLE", "IERROR"})
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
 PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
+PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAYLOAD[11] loads, stops when run)
+# Where the tool is among the unnamed arguments of the instructions that move with one besides MoveX.
+_TOOL_ARGUMENT = {"MOVELDO": 3, "MOVEJDO": 3, "MOVECDO": 4, "MOVELAO": 3, "MOVEJAO": 3, "MOVECAO": 4,
+                  "MOVELGO": 3, "MOVEJGO": 3, "MOVECGO": 4, "TRIGGL": 4, "TRIGGJ": 4, "TRIGGC": 5,
+                  "SEARCHL": 4, "SEARCHJ": 4, "SEARCHC": 5}  # fmt: skip
 
 
 def _passed_through(stmt: n.Stmt) -> bool:
@@ -283,6 +302,7 @@ class ConversionResult:
     group_inputs: list[Allocation] = field(default_factory=list)
     analog_outputs: list[Allocation] = field(default_factory=list)
     timers: list[Allocation] = field(default_factory=list)  # RAPID clocks
+    grip_payloads: list[GripPayload] = field(default_factory=list)  # schedules GripLoad selects
     uframes: list[FrameInfo] = field(default_factory=list)
     utools: list[FrameInfo] = field(default_factory=list)
     computed_frames: list[ComputedFrame] = field(default_factory=list)  # in the order the programs first load them
@@ -578,6 +598,9 @@ class Converter:
         # statement), and a program line loading it reads `PR[{CF:use}]` until its register is known (convert()).
         self.computed: dict[str, list[int]] = {}
         self.computed_uses: list[tuple[str, str, str, int, n.Stmt, tuple[float, ...]]] = []
+        # GripLoad: (tool, or None for the task's one tool; load name, or None to release; its value; program;
+        # RAPID line; statement). A program line selecting it reads `PAYLOAD[{PL:use}]` until _place_payloads().
+        self.payload_uses: list[tuple[n.Expr | None, str | None, Load | None, str, int, n.Stmt]] = []
         self.frames_in_moves: dict[str, set[str]] = {"UF": set(), "UT": set()}  # upper-case names, _plan_slots
         self.registers = TableView(shared.registers)
         self.flags = TableView(shared.flags)
@@ -652,6 +675,7 @@ class Converter:
 
         self._controller_comments()
         self._place_computed()
+        self._place_payloads()
         res = self.result
         res.registers = self.registers.allocations()
         res.flags = self.flags.allocations()
@@ -787,6 +811,73 @@ class Converter:
                 key, self.computed_uses[uses[0]][5], numbers[key], key in pinned,  # type: ignore[arg-type]
                 tuple(("UFRAME" if u[0] == "UF" else "UTOOL", u[1], u[2], u[3]) for u in map(self.computed_uses.__getitem__, uses)),
             ))  # fmt: skip
+
+    def _place_payloads(self) -> None:
+        """Number the payload schedules GripLoad selects and write them into the programs.
+
+        The tool alone takes its UTOOL number, as the report's payload table says. A tool holding a part
+        takes a schedule of its own, from the top down past the tools' numbers, unless the mapping file
+        pins it. Done once every tool has its number."""
+        if not self.payload_uses:
+            return
+        limit = self.config.limits.get("PAYLOAD", PAYLOAD_SCHEDULES)
+        tools = {f.rapid_name.upper(): f for (kind, _), f in self.frames.items() if kind == "UT"}
+        movers = [f for f in tools.values() if f.frame is not None and f.frame.robhold]
+        pinned = self.config.payloads
+        taken = ({a.number for a in self.utools.assigned.values()} | set(self.config.reserved.get("PAYLOAD", {}))
+                 | set(pinned.values()))  # fmt: skip
+        free = [k for k in range(limit, 0, -1) if k not in taken]
+        schedules: dict[str, GripPayload] = {}
+        numbers: list[int | None] = []
+        for tool_expr, load, part, program, line, _stmt in self.payload_uses:
+            if tool_expr is None and len(movers) == 1:
+                tool_expr = n.Name(n.Span(line, 0), movers[0].rapid_name)
+            if tool_expr is None:
+                numbers.append(None)
+                self.note(program, line, "TODO", f"GripLoad: no move after it says which tool carries the load, and"
+                          f" this task moves {len(movers)} tools", Blocker.PAYLOAD)  # fmt: skip
+                continue
+            tool = format_expr(tool_expr)
+            info = tools.get(tool.upper())
+            try:
+                frame = self.declared_frame("UT", tool_expr)
+            except Unresolvable as exc:
+                numbers.append(None)
+                self.note(program, line, "TODO", f"GripLoad: tool {tool} not known ({exc})", Blocker.PAYLOAD)
+                continue
+            key = tool if load is None else f"{tool}+{load}"
+            if key.upper() not in schedules:
+                if load is None:  # the tool's own schedule: its UTOOL number, when the controller has it
+                    number = info.number if info is not None and info.number <= limit else None
+                else:
+                    number = pinned.get(key.upper()) or (free.pop(0) if free else None)
+                schedules[key.upper()] = GripPayload(key, number, tool, load, combined(frame, part),
+                                                     key.upper() in pinned, ())  # fmt: skip
+            found = schedules[key.upper()]
+            schedules[key.upper()] = GripPayload(found.key, found.number, found.tool, found.load, found.payload,
+                                                 found.fixed, (*found.uses, (program, line)))  # fmt: skip
+            numbers.append(found.number)
+            if found.number is None:
+                why = (f"the {limit} payload schedules are taken" if load is not None else
+                       f"tool {tool} has no UTOOL number of its own up to {limit}")  # fmt: skip
+                self.note(program, line, "TODO", f"GripLoad {load or 'load0'}: {why}", Blocker.CAPACITY)
+        placeholder = re.compile(r"^PAYLOAD\[\{PL:(\d+)\}\]$")
+        for info_program in self.result.programs:
+            lines = info_program.program.lines
+            for i, text_line in enumerate(lines):
+                found_use = placeholder.match(text_line.text) if isinstance(text_line, Instruction) else None
+                if found_use is None:
+                    continue
+                use = int(found_use[1])
+                number = numbers[use]
+                if number is None:
+                    _, load, _, _, rapid_line, stmt = self.payload_uses[use]
+                    text = f"TODO l.{rapid_line} GripLoad {load or 'load0'}"
+                    lines[i] = Instruction(("!" + ascii_text(text)[:REMARK_MAX]).rstrip())
+                    self.not_converted.update(id(s) for s in walk_statements((stmt,)))
+                else:
+                    lines[i] = Instruction(f"PAYLOAD[{number}]")
+        self.result.grip_payloads = sorted(schedules.values(), key=lambda s: (s.number is None, s.number or 0))
 
     def selection(self, kind: str, number: int) -> tuple[int, int | None]:
         """(number to select, PR to load it from first): a frame above the limit is loaded into its slot."""
@@ -1209,6 +1300,8 @@ class _RoutineTranslator:
         self.timed_waits = 0  # waits with \MaxTime written with the handler's timeout path
         self.error_jumps: tuple[int, int] | None = None  # (RETRY, TRYNEXT) labels while writing that path
         self.strict = 0  # >0: a statement that cannot be converted fails the enclosing one instead of a TODO
+        self.after: tuple[n.Stmt, ...] = ()  # what follows the statement being written, in its block
+        self.last_tool: n.Expr | None = None  # the tool of the last move written, while it is still selected
         self.next_speed: n.Expr | None = None  # the speed of the move after the one being written, if a move
         self.next_label = 1
         # What the routine's data holds at the statement being written (crossarm.convert.compute): upper-case
@@ -1333,6 +1426,7 @@ class _RoutineTranslator:
             # move is rounded more.
             following = next((s for s in stmts[i + 1 :] if not _passed_through(s)), None)
             self.next_speed = following.speed if isinstance(stmt, n.Move) and isinstance(following, n.Move) else None
+            self.after = stmts[i + 1 :]
             if self.strict:
                 self.stmt(stmt)
                 continue
@@ -1439,6 +1533,7 @@ class _RoutineTranslator:
         else:
             uf = self.c.selection("UF", self.c.frame_number("UF", m.wobj, self.name, line))
             ut = self.c.selection("UT", self.c.frame_number("UT", m.tool, self.name, line))
+            self.last_tool = m.tool
         motion = "J" if m.kind in (n.MoveKind.J, n.MoveKind.ABSJ) else m.kind.value
         evaluator = self.c.evaluator
         to_value = evaluator.jointtarget(m.to_point) if m.kind is n.MoveKind.ABSJ else evaluator.robtarget(m.to_point)
@@ -1667,6 +1762,8 @@ class _RoutineTranslator:
             self.emit(f"{target}={value}")
         elif name == "PULSEDO" and len(positional) == 1:
             self.pulse(call, positional[0], options)
+        elif name == "GRIPLOAD" and len(positional) == 1 and not options:
+            self.grip_load(call, positional[0])
         elif name == "INVERTDO" and len(positional) == 1 and not options:
             signal = self.output(positional[0], call)
             self.emit(f"{signal}=(!{signal})")
@@ -1932,6 +2029,47 @@ class _RoutineTranslator:
             self.warn(call, f"PulseDO of {fmt_number(length)} s written {tenths / 10:.1f} s: FANUC pulses last whole"
                             " tenths of a second", Blocker.IO_ROUNDED)  # fmt: skip
         self.emit(f"{self.output(signal, call)}=PULSE,{tenths / 10:.1f}sec")
+
+    def grip_load(self, call: n.ProcCall, load: n.Expr) -> None:
+        """GripLoad -> PAYLOAD[n]: the schedule of the tool with the part (load0: the tool alone).
+
+        A FANUC schedule is all the flange carries, so the tool matters: the one the moves after it use
+        (RAPID adds the load to whichever tool moves), else the one selected, else the task's only tool."""
+        released = isinstance(load, n.Name) and load.name.upper() == "LOAD0"
+        part = None
+        if not released:
+            try:
+                mass, cog, aom, ix, iy, iz = self.c.computer.value(load).value
+                part = Load(float(mass), tuple(cog), tuple(aom), (ix, iy, iz))  # type: ignore[arg-type]
+            except Unresolvable as exc:
+                raise Untranslatable(f"GripLoad {format_expr(load)}: load only known at run time ({exc})",
+                                     Blocker.PAYLOAD) from exc  # fmt: skip
+            except (TypeError, ValueError) as exc:
+                raise Untranslatable(f"GripLoad {format_expr(load)}: not a loaddata", Blocker.PAYLOAD) from exc
+        use = len(self.c.payload_uses)
+        name = None if released else format_expr(load)
+        self.c.payload_uses.append((self._carrying_tool(), name, part, self.name, call.span.line, call))
+        self.emit(f"PAYLOAD[{{PL:{use}}}]")
+
+    def _carrying_tool(self) -> n.Expr | None:
+        """The tool the moves after a GripLoad use, up to the next one; None: decided when the task is known."""
+        tools: list[n.Expr] = []
+        for stmt in walk_statements(self.after):
+            if isinstance(stmt, n.ProcCall) and stmt.name.upper() == "GRIPLOAD":
+                break
+            if isinstance(stmt, n.Move) and stmt.tool is not None:
+                tools.append(stmt.tool)
+            elif isinstance(stmt, n.ProcCall) and (index := _TOOL_ARGUMENT.get(stmt.name.upper())) is not None:
+                unnamed = [a.value for a in stmt.args if a.name is None and a.value is not None]
+                if index < len(unnamed):
+                    tools.append(unnamed[index])
+        names = {format_expr(t).upper() for t in tools}
+        if len(names) > 1:
+            raise Untranslatable(f"GripLoad: the moves after it use {len(names)} tools ({', '.join(sorted(names))}),"
+                                 " a FANUC payload goes with one", Blocker.PAYLOAD)  # fmt: skip
+        if tools:
+            return tools[0]
+        return self.last_tool if self.active_ut is not None else None
 
     def analog(self, call: n.ProcCall, signal: n.Expr, value: n.Expr) -> None:
         """SetAO -> AO[n]=counts. RAPID gives the logical value, a FANUC analog output takes the module's

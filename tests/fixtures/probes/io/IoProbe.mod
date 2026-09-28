@@ -4,6 +4,9 @@ MODULE IoProbe
     VAR num nPulse:=0;
     VAR num nTime:=0;
     VAR clock ckProbe;
+    PERS tooldata tProbe:=[TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,50],[1,0,0,0],0,0,0]];
+    PERS loaddata lProbe:=[2,[0,0,20],[1,0,0,0],0,0,0];
+    CONST jointtarget jProbe:=[[0,0,0,0,-90,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
 
     PROC IoProbe()
         nInvert:=0;
@@ -26,5 +29,8 @@ MODULE IoProbe
         ClkStop ckProbe;
         nTime:=ClkRead(ckProbe);
         SetAO aoProbe,2.5;
+        MoveAbsJ jProbe,v1000,fine,tProbe;
+        GripLoad lProbe;
+        MoveAbsJ jProbe,v1000,fine,tProbe;
     ENDPROC
 ENDMODULE

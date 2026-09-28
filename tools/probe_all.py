@@ -20,7 +20,8 @@ change to CrossArm is checked on a controller and not only on text:
     banks        the same moves with frames past the limit loaded from registers: the same flanges
     compute      frames and points the programs compute, worked out by CrossArm: the flanges RobotStudio computes
     select       TEST/CASE converted to SELECT: the totals RobotStudio computes
-    io           PulseDO, InvertDO, clocks, SetAO: registers as RAPID computes them, the clock within 50 ms
+    io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
+                 50 ms, the payload schedule of the tool with the part active
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool and user frames 1 to 3 and 9, and
@@ -214,7 +215,13 @@ def probe_io() -> str:
     def check() -> str:
         values = roboguide.numreg()
         found = {name: values.get(number) for name, number in numbers.items()}
-        return f"{len(found)} registers as RAPID computes" if make_io_probe.matches(found) else f"FAIL {found}"
+        if not make_io_probe.matches(found):
+            return f"FAIL {found}"
+        payload = make_io_probe.active_payload(roboguide.page("md/SYSVARS.VA"))
+        expected = make_io_probe.payload_schedule(make_io_probe.conversion())
+        if payload != expected:
+            return f"FAIL payload schedule {payload}, expected {expected}"
+        return f"{len(found)} registers as RAPID computes, PAYLOAD[{payload}] active"
 
     return _run("io", "IOPROBE", list(numbers.values()), check)
 

@@ -17,6 +17,11 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - `SetAO` to `AO[n]=`, in the FANUC module's counts: the scale per signal comes from the mapping
   file (`analog_scales`, written with `null` for each analog output until it is filled in); without
   it the line stays TODO rather than write a value in the wrong unit.
+- `GripLoad` to `PAYLOAD[n]`. A FANUC payload schedule is all the flange carries, so a tool holding a
+  part has one of its own: CrossArm works out the two masses together, their common centre of
+  gravity and the inertia about it, lists the schedule in the report, and numbers it from the top
+  down past the tools' own; `GripLoad load0` goes back to the tool's schedule, its UTOOL number. The
+  tool is the one the moves after it use, else the one selected, else the task's only tool.
 - Motion settings: `ConfL`, `ConfJ`, `SingArea` and `CirPathMode` are left out, with a warning where
   FANUC does it its own way. `AccSet` and `VelSet` that slow the robot down stay TODO, as dropping
   them would run it faster than the ABB.
@@ -26,8 +31,8 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   no longer mixed with calls with arguments.
 
 ### Mapping file
-- `analog_outputs`, `timers` and `analog_scales`, optional: a mapping file written for 1.0 gives the
-  same numbers.
+- `analog_outputs`, `timers`, `analog_scales` and `payloads`, optional: a mapping file written for 1.0
+  gives the same numbers.
 
 ### Validated
 - A probe runs `TEST` in ten shapes (several values, negative and decimal values, empty and
@@ -35,7 +40,8 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   RobotStudio and, converted, on ROBOGUIDE: the same branches, register for register
   ([docs/validation.md](docs/validation.md#16-test-and-case-run)).
 - The I/O probe, converted and run on ROBOGUIDE: the pulse is on during its length and off after,
-  the output inverted and back, the clock reads the half second it timed
+  the output inverted and back, the clock reads the half second it timed, and the payload schedule of
+  the tool with the part is the active one
   ([docs/validation.md](docs/validation.md#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)).
 
 ## 1.0.0 — 2026-09-26

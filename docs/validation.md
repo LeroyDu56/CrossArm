@@ -12,14 +12,14 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | What | Result |
 |---|---|
 | Every program converted from the test corpus, loaded on a FANUC controller | 118 of 118 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (175 forms) |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (176 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
 | Corners, approaches, retracts, reversals, zigzags, converted, against the ABB | the path within 4 mm |
 | Frames and points the programs compute, worked out by CrossArm, run on ROBOGUIDE | within 0.005 mm and 0.001° of RobotStudio |
 | `TEST` / `CASE` converted to `SELECT`, run on both controllers | the branches RAPID takes |
-| Pulses, inverted outputs, clocks, converted and run on ROBOGUIDE | what RAPID does, the clock within 50 ms |
+| Pulses, inverted outputs, clocks, payloads, converted and run on ROBOGUIDE | what RAPID does, the clock within 50 ms |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -192,7 +192,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 175 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 176 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
@@ -390,12 +390,14 @@ the length is in tenths of a second: 0.25 is stored `0.3sec`, 0.05 `0.1sec`, a l
 dropped (the controller's default then applies), and 25.5 s is the longest (25.6 is refused). So
 CrossArm rounds the length of a `PulseDO` to the tenth, with a warning when that changes it, and
 leaves a longer pulse TODO. `DO[1]=(!DO[1])` loads. `AO[1]=` takes a constant, decimal or negative,
-or a register, but not a calculation.
+or a register, but not a calculation. `PAYLOAD[3]` loads and selects schedule 3 (`$PLST_PARNUM[1]`
+reads 3 after it, 7 after `PAYLOAD[7]`); `PAYLOAD[11]` loads but stops the program when it runs.
 
 **Run.** [tools/make_io_probe.py](../tools/make_io_probe.py) converts a module that inverts an output
 twice, pulses another for half a second and reads it 0.1 s and 0.7 s in, times half a second with a
-clock, and sets an analog output with a scale from the mapping file. On ROBOGUIDE the output is
-inverted and back, the pulse is on during its length and off after, and the clock reads 0.500 s:
-every register as RAPID computes it. The virtual ABB controller has none of these signals, so the
+clock, sets an analog output with a scale from the mapping file, and grips a part between two joint
+moves. On ROBOGUIDE the output is inverted and back, the pulse is on during its length and off
+after, and the clock reads 0.500 s: every register as RAPID computes it; after the run the active
+payload schedule is the one CrossArm gave the tool with the part. The virtual ABB controller has none of these signals, so the
 RAPID side is worked out by hand, as for the argument probe. An analog output is not read back: the
 probe checks that the line loads and runs.

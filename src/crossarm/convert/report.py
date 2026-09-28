@@ -129,7 +129,9 @@ def _payload_section(result: ConversionResult, config: ConversionConfig) -> list
     collision detection and dynamics wrong, so it is listed here for every tool.
     """
     known, unknown = result.payloads(), result.unknown_payloads()
-    if not known and not unknown:
+    listed = {f.rapid_name.upper() for f in known}
+    gripped = [s for s in result.grip_payloads if s.load is not None or s.tool.upper() not in listed]
+    if not known and not unknown and not gripped:
         return []
     limit = config.limits.get("UTOOL")
     lines = [
@@ -140,7 +142,9 @@ def _payload_section(result: ConversionResult, config: ConversionConfig) -> list
             " robot. Unlike the frames, a program cannot do it: the controller holds the payload schedules"
             " read-only for TP programs. Values are converted to the units of that screen: centre of"
             " gravity in cm in the flange frame (RAPID mm / 10), inertia in kgf.cm.s2 (RAPID kg.m2 /"
-            f" {KGF_CM_S2:g}). The schedule number is the tool's UTOOL number."
+            f" {KGF_CM_S2:g}). The schedule number is the tool's UTOOL number; a tool holding a part"
+            " (GripLoad) has a schedule of its own, which the programs select with PAYLOAD[n] where the"
+            " RAPID grips or releases."
         ),
         "",
         (
@@ -165,6 +169,17 @@ def _payload_section(result: ConversionResult, config: ConversionConfig) -> list
                      ", ".join(_fixed(i / KGF_CM_S2, 4) for i in (ix, iy, iz)), "; ".join(notes)])  # fmt: skip
     for f in unknown:
         rows.append([str(f.number), f.rapid_name, "—", "—", "—", "tool built at run time: load unknown too"])
+    for s in gripped:
+        p = s.payload
+        notes = [f"GripLoad in {', '.join(sorted({program for program, _ in s.uses}))}"]
+        if s.load is not None:
+            notes.insert(0, "tool and part together, about their common centre")
+        if p.products / KGF_CM_S2 >= 0.00005:
+            notes.append(f"products of inertia up to {_fixed(p.products / KGF_CM_S2, 4)} left out")
+        name = s.tool if s.load is None else f"{s.tool} + {s.load} (GripLoad)"
+        rows.append([str(s.number) if s.number is not None else "—", name, f"{p.mass:g}",
+                     ", ".join(_fixed(c / 10, 3) for c in p.cog), ", ".join(_fixed(i / KGF_CM_S2, 4) for i in p.inertia),
+                     "; ".join(notes)])  # fmt: skip
     headers = ["PAYLOAD", "RAPID tooldata", "Mass (kg)", "Centre X, Y, Z (cm)", "Inertia X, Y, Z (kgf.cm.s2)", "Note"]
     lines += _table(headers, rows)
     return lines
