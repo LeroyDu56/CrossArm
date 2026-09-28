@@ -506,7 +506,8 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
                     + _allocation_rows(result.group_outputs, "GO")
                     + _allocation_rows(result.group_inputs, "GI")
                     + _allocation_rows(result.analog_outputs, "AO")
-                    + _allocation_rows(result.timers, "TIMER"))  # fmt: skip
+                    + _allocation_rows(result.timers, "TIMER")
+                    + _allocation_rows(result.point_registers, "PR"))  # fmt: skip
 
     lines += _motion_section(result, config)
 

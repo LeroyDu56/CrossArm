@@ -26,6 +26,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   open',3)`), 38 characters at most, an apostrophe written as a backquote. A TP program cannot show
   a string it is given (MESSAGE takes fixed text), so a `TPWrite` of it stays TODO in the routine;
   the routine and its calls are converted. A string only known at run time stays TODO at the call.
+- Routines with `robtarget` parameters: the point goes in a position register of its own, which the
+  caller sets before the CALL (`PR[99]=P[1]`) and the routine moves to (`L PR[99]`), in the frames it
+  selects, as a RAPID move takes its own tool and work object. `Offs()` of the point is a copy offset
+  component by component (`PR[98,3]=PR[98,3]+40`); a routine passes its point on, as it is or with
+  `Offs()`. A point only known at run time (an array element indexed by a loop) or turned with
+  `RelTool()` stays TODO.
 - Motion settings: `ConfL`, `ConfJ`, `SingArea` and `CirPathMode` are left out, with a warning where
   FANUC does it its own way. `AccSet` and `VelSet` that slow the robot down stay TODO, as dropping
   them would run it faster than the ABB.
@@ -35,8 +41,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   no longer mixed with calls with arguments.
 
 ### Mapping file
-- `analog_outputs`, `timers`, `analog_scales` and `payloads`, optional: a mapping file written for 1.0
-  gives the same numbers.
+- `analog_outputs`, `timers`, `analog_scales`, `payloads` and `point_registers`, optional: a mapping
+  file written for 1.0 gives the same numbers; the new position registers are taken after the frame
+  banks and the computed frames.
 
 ### Validated
 - A probe runs `TEST` in ten shapes (several values, negative and decimal values, empty and
@@ -47,6 +54,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   the output inverted and back, the clock reads the half second it timed, and the payload schedule of
   the tool with the part is the active one
   ([docs/validation.md](docs/validation.md#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)).
+- The point probe makes twelve moves on ROBOGUIDE through routines given their points, and the
+  same moves written out: the same poses, to the thousandth of a millimetre
+  ([docs/validation.md](docs/validation.md#18-routines-given-their-points-run)).
 
 ## 1.0.0 — 2026-09-26
 

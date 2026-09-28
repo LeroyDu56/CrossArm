@@ -20,6 +20,7 @@ change to CrossArm is checked on a controller and not only on text:
     banks        the same moves with frames past the limit loaded from registers: the same flanges
     compute      frames and points the programs compute, worked out by CrossArm: the flanges RobotStudio computes
     select       TEST/CASE converted to SELECT: the totals RobotStudio computes
+    points       routines given their points (robtarget parameters): the poses of the moves written out
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
 
@@ -45,6 +46,7 @@ import make_bank_probe
 import make_compute_probe
 import make_condition_probe
 import make_io_probe
+import make_point_probe
 import make_select_probe
 import make_setup_probe
 import make_wait_probe
@@ -226,6 +228,18 @@ def probe_io() -> str:
     return _run("io", "IOPROBE", list(numbers.values()), check)
 
 
+def probe_points() -> str:
+    def check() -> str:
+        rows = make_point_probe.gaps(make_point_probe.read_poses(make_point_probe.poses(roboguide.page("md/POSREG.VA"))))
+        if len(rows) != make_point_probe.MOVES:
+            return f"FAIL {len(rows)} of {make_point_probe.MOVES} moves measured"
+        gap, turn = max(r[1] for r in rows), max(r[2] for r in rows)
+        verdict = "" if gap <= 0.01 and turn <= 0.001 else "FAIL "
+        return f"{verdict}{len(rows)} moves within {gap:.4f} mm, {turn:.4f} deg of the moves written out"
+
+    return _run("points", make_point_probe.PROGRAM, [make_point_probe.COUNTER], check, timeout=300)
+
+
 LOADED: list[str] = []
 
 
@@ -253,7 +267,7 @@ def _run(folder: str, program: str, zero: list[int], check: Callable[[], str] | 
 def main() -> int:
     probes = {"negative": probe_negative, "args": probe_args, "conditions": probe_conditions, "waits": probe_waits,
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
-              "compute": probe_compute, "select": probe_select, "io": probe_io,
+              "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points,
               "abb": probe_abb}  # fmt: skip
     chosen = sys.argv[1:] or list(probes)
     failed = 0

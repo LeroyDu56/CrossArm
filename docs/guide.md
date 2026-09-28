@@ -104,13 +104,14 @@ crossarm stats   backup/RAPID                                          # parser 
 | `FOR` (step ±1), `WHILE` | `FOR R[n]=a TO/DOWNTO b`, `LBL`/`JMP` loop | |
 | `TEST` / `CASE` / `DEFAULT` | `SELECT R[n]=1,JMP LBL[2]` / `=2,CALL PICK` / `ELSE,JMP LBL[3]` | One line per `CASE` value; a `CASE` that only calls a routine calls it on its line, the other branches are behind labels. A `TEST` on an argument or a group input selects a copy (`R[n:TestValue]`). On a string, or with a `CASE` value only known at run time: TODO |
 | routine call, `Stop`, `RETURN`, `EXIT` | `CALL`, `PAUSE`, `END`, `ABORT` | A routine of a system module the programs call is written too: the robot needs it |
-| routine with `num`, `bool`, `string`, switch parameters | `CALL NAME(3,(-2.5),1,0)`, `CALL FAULT('Gripper not open')`, read as `AR[n]` | Every argument on every call (a switch as 1 / 0). A parameter the routine changes is copied to a register. A string is text written in the call, 38 characters at most; the routine cannot show it (`MESSAGE` takes fixed text), so a `TPWrite` of it stays TODO. Other parameters (robtarget, tooldata, INOUT...) stay TODO, with the reason |
+| routine with `num`, `bool`, `string`, switch parameters | `CALL NAME(3,(-2.5),1,0)`, `CALL FAULT('Gripper not open')`, read as `AR[n]` | Every argument on every call (a switch as 1 / 0). A parameter the routine changes is copied to a register. A string is text written in the call, 38 characters at most; the routine cannot show it (`MESSAGE` takes fixed text), so a `TPWrite` of it stays TODO. A point (robtarget) goes in a position register of its own: the caller sets it (`PR[99]=P[1]`), the routine moves to it (`L PR[99]`) in the frames it selects; `Offs()` of it is a copy offset component by component, and it can be passed on. Other parameters (tooldata, INOUT...) stay TODO, with the reason |
 | call to a routine that makes one move (`MyMoveL p10,v500,z10,tool1`) | `L P[n] …` | Converted when the routine does nothing else; otherwise listed in the report and converted on request ([`move_routines`](#the-mapping-file)) |
 | `IF FALSE` / `WHILE FALSE`, `TEST` on a constant | a remark | Code switched off by hand: left out, `IF TRUE` converted without a test, a `TEST` on a constant as the branch it takes |
 | comments | `!remark` | Split to 32 characters, accents folded to ASCII |
 
 **Reported as TODO**:
-- routines with other parameters (robtarget, tooldata, INOUT...), a string argument only known at run time, `FUNC` doing more than return a test, `TRAP`;
+- routines with other parameters (tooldata, INOUT...), a string or a point argument only known at run time
+  (an array element indexed by a loop), a point parameter turned with `RelTool()`, `FUNC` doing more than return a test, `TRAP`;
 - frames and points computed from data that changes at run time, with that data and where it changes;
   frames **measured on the robot** (`CRobT`, a calibration), with what reads the robot;
 - payload changes (`tool.tload`), to redo with the FANUC `PAYLOAD[n]` schedules;
@@ -209,6 +210,7 @@ A mapping file can also be written from scratch, with only the keys you care abo
   "analog_scales": {"aoGlueFlow": 409.5},
   "timers": {"ckCycle": 1},
   "payloads": {"tGripper+lBox": 9},
+  "point_registers": {"PickAt.pPick": 90},
   "tpwrite_values": "text",
   "program_name_max_length": 8,
   "limits": {"UFRAME": 9, "UTOOL": 10, "R": 200, "PR": 100, "F": 1024},
@@ -237,6 +239,8 @@ A mapping file can also be written from scratch, with only the keys you care abo
   logical value. `SetAO aoGlueFlow,4.5` with 409.5 is `AO[1]=1843`. The generated file lists each
   analog output with `null`: until a number replaces it, `SetAO` on that signal stays TODO.
 - `payloads` gives the payload schedule of a tool holding a part (`GripLoad`), as `tool+load`.
+- `point_registers` gives the position register each point parameter is passed in, as
+  `Routine.parameter`; `CROSSARM.POINT` is the one a routine offsets its point in (`Offs()`).
 - `frame_registers` gives the position register that keeps each
   [frame the programs compute](#frames-and-points-the-programs-compute), by its value X, Y, Z, W, P, R
   as the report writes it. The generated file lists them; change a number to a register the robot

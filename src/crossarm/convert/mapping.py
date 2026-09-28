@@ -40,6 +40,11 @@ ANALOG_SCALES_README = (
     "AO[n]=1843 (4.5 of 10 V on a 0-4095 module). null: not known, and SetAO on that signal stays TODO. "
     "The counts depend on the FANUC analog module: see its manual."
 )
+POINT_REGISTERS_README = (
+    "Position registers a point is passed to a routine in (a robtarget parameter): the caller sets it "
+    "before the CALL, the routine moves to it. CROSSARM.POINT is where a routine offsets one (Offs). Change "
+    "a number to a register the robot does not use."
+)
 PAYLOADS_README = (
     "Payload schedules of a tool holding a part (GripLoad), numbered from the top down past the tools' "
     "own (a tool alone is its UTOOL number). Change a number to a schedule the robot does not use (see the "
@@ -82,6 +87,9 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     if wrappers:
         data["_move_routines"] = MOVE_ROUTINES_README
         data["move_routines"] = {use.name: use.converted for use in wrappers}
+    if result.point_registers:
+        data["_point_registers"] = POINT_REGISTERS_README
+        data["point_registers"] = {a.rapid_name: a.number for a in result.point_registers}
     gripped = [s for s in result.grip_payloads if s.load is not None and s.number is not None]
     if gripped:
         data["_payloads"] = PAYLOADS_README

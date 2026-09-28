@@ -7,8 +7,13 @@ TP passes up to ten untyped values to a program called with CALL NAME(a,b,...), 
 them as AR[1], AR[2]... and cannot change them. That holds the RAPID parameters passed by
 value that TP can represent: `num`, `bool` (1 / 0), `string` (text written in the call, 38
 characters at most: ROBOGUIDE refuses 39) and optional switches (1 when given, 0 otherwise).
-A routine with any other parameter — a robtarget, a tooldata, one passed by reference (INOUT,
-VAR, PERS), an optional num — is not converted, and its calls stay TODO with the reason.
+A routine with any other parameter — a tooldata, one passed by reference (INOUT, VAR, PERS), an
+optional num — is not converted, and its calls stay TODO with the reason.
+
+A `robtarget` has no place in AR[n]: it goes in a position register of its own, which the caller
+sets before the CALL (PR[k]=P[j]) and the routine moves to (L PR[k]). A move to a position register
+takes the frames selected when it runs, and the configuration the register holds (ROBOGUIDE), as
+a RAPID move takes its own tool and work object with the robtarget it is given.
 
 A TP program can keep a string argument (SR[n]=AR[1]) and measure it (STRLEN), but not show it:
 MESSAGE takes fixed text. So a TPWrite of a string parameter stays TODO in the routine, while
@@ -35,7 +40,7 @@ _NAME = re.compile(r"([A-Za-z_]\w*)\s*(\{[^}]*\})?\s*$")
 @dataclass(frozen=True, slots=True)
 class Slot:
     name: str  # as declared
-    kind: str  # "num" | "bool" | "string" | "switch"
+    kind: str  # "num" | "bool" | "string" | "switch" | "robtarget" (in a position register, not in AR[n])
 
     @property
     def key(self) -> str:
@@ -48,10 +53,22 @@ class Signature:
 
     slots: tuple[Slot, ...]
     copied: frozenset[str] = frozenset()  # upper-case num parameters the routine changes: copied to R[n]
+    routine: str = ""  # its name, as declared
+    # robtarget parameter (upper case) -> the tool and work object of the first move the routine makes to it
+    point_frames: tuple[tuple[str, n.Expr | None, n.Expr | None], ...] = ()
+
+    @property
+    def arguments(self) -> tuple[Slot, ...]:
+        """The slots passed as AR[n], in order: every one but the points."""
+        return tuple(s for s in self.slots if s.kind != "robtarget")
+
+    def frames_of(self, name: str) -> tuple[n.Expr | None, n.Expr | None]:
+        """(tool, work object) the routine moves to its point `name` with; (None, None) if it only passes it on."""
+        return next(((tool, wobj) for key, tool, wobj in self.point_frames if key == name.upper()), (None, None))
 
     def register(self, name: str) -> str | None:
         """'AR[2]' for the parameter of that name, None if it is not one."""
-        for i, slot in enumerate(self.slots, start=1):
+        for i, slot in enumerate(self.arguments, start=1):
             if slot.key == name.upper():
                 return f"AR[{i}]"
         return None
@@ -88,13 +105,14 @@ def signature(routine: n.Routine) -> Signature | str:
                 if type_name.lower() != "switch":
                     return f"optional {type_name} parameter {name}: only optional switches are converted"
                 switches.append(Slot(name, "switch"))
-            elif type_name.lower() in ("num", "bool", "string"):
+            elif type_name.lower() in ("num", "bool", "string", "robtarget"):
                 required.append(Slot(name, type_name.lower()))
             else:
                 return f"{type_name} parameter {name}: TP arguments are numbers or text"
     slots = tuple(required + switches)
-    if len(slots) > MAX_ARGS:
-        return f"{len(slots)} parameters: a TP CALL takes at most {MAX_ARGS} arguments"
+    arguments = [s for s in slots if s.kind != "robtarget"]
+    if len(arguments) > MAX_ARGS:
+        return f"{len(arguments)} parameters: a TP CALL takes at most {MAX_ARGS} arguments"
     kinds = {s.key: s.kind for s in slots}
     copied: set[str] = set()
     for stmt in walk_statements(routine.body):
@@ -104,7 +122,16 @@ def signature(routine: n.Routine) -> Signature | str:
             copied.add(target.upper())
         elif isinstance(stmt, n.For) and stmt.var.upper() in kinds:
             return f"it uses its parameter {stmt.var} as a FOR variable"
-    return Signature(slots, frozenset(copied))
+    points = {s.key for s in slots if s.kind == "robtarget"}
+    frames: dict[str, tuple[n.Expr | None, n.Expr | None]] = {}
+    for stmt in walk_statements(routine.body):
+        if isinstance(stmt, n.Move):
+            for target in (stmt.via_point, stmt.to_point):
+                base = target.args[0].value if isinstance(target, n.FuncCall) and target.args else target
+                if isinstance(base, n.Name) and base.name.upper() in points:
+                    frames.setdefault(base.name.upper(), (stmt.tool, stmt.wobj))
+    return Signature(slots, frozenset(copied), routine.name,
+                     tuple((key, tool, wobj) for key, (tool, wobj) in frames.items()))  # fmt: skip
 
 
 __all__ = ["MAX_ARGS", "Signature", "Slot", "signature"]

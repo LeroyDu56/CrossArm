@@ -33,5 +33,7 @@ def test_the_corpus_converts():
         for line in info.program.lines:
             if isinstance(line, Motion):
                 for ref in filter(None, (line.target, line.via)):
+                    if ref.startswith("PR["):  # a point passed to the routine: in a position register
+                        continue
                     assert int(re.search(r"\d+", ref)[0]) in numbers, (info.program.name, ref)
     build_report(result, ConversionConfig(), [p.name for p in FILES])

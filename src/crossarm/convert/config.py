@@ -35,6 +35,7 @@ be pinned in a JSON file passed with --map:
   "analog_scales":   {"aoFlow": 409.5}         FANUC analog output counts per RAPID unit: SetAO aoFlow,4.5
                                                -> AO[1]=1843 (null: not known yet, SetAO stays TODO)
   "payloads":        {"tGrip+lBox": 9}         the payload schedule of a tool holding a part (GripLoad)
+  "point_registers": {"PickAt.pPick": 90}      the position register a robtarget parameter is passed in
 }
 
 Names are matched case-insensitively, like RAPID.
@@ -139,6 +140,8 @@ class ConversionConfig:
     analog_scales: dict[str, float] = field(default_factory=dict)
     # Payload schedules of a tool holding a part (GripLoad), upper-cased "TOOL+LOAD" -> PAYLOAD number.
     payloads: dict[str, int] = field(default_factory=dict)
+    # The position register a robtarget parameter is passed in, upper-cased "ROUTINE.PARAMETER" -> PR number.
+    point_registers: dict[str, int] = field(default_factory=dict)
 
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
@@ -160,7 +163,7 @@ class ConversionConfig:
         unknown = set(data) - set(_MAPPING_KEYS) - {
             "joint_speed_ref_mm_s", "cnt_per_mm", "config_mapping", "joint_mapping", "default_config",
             "program_name_max_length", "tpwrite_values", "tool_pin", "limits", "reserved", "move_routines",
-            "zone_mapping", "motion_profile", "frame_registers", "analog_scales", "payloads",
+            "zone_mapping", "motion_profile", "frame_registers", "analog_scales", "payloads", "point_registers",
         }  # fmt: skip
         if unknown:
             raise ValueError(f"unknown keys in mapping file: {', '.join(sorted(unknown))}")
@@ -189,6 +192,10 @@ class ConversionConfig:
             if not isinstance(scale, int | float) or isinstance(scale, bool):
                 raise TypeError(f"analog_scales.{name}: expected a number or null, got {scale!r}")
             config.analog_scales[name.upper()] = float(scale)
+        for key, number in data.get("point_registers", {}).items():
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise TypeError(f"point_registers.{key}: expected an integer, got {number!r}")
+            config.point_registers[key.upper()] = number
         for key, number in data.get("payloads", {}).items():
             if not isinstance(number, int) or isinstance(number, bool):
                 raise TypeError(f"payloads.{key}: expected an integer, got {number!r}")

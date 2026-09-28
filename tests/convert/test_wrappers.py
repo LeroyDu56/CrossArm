@@ -129,7 +129,7 @@ ENDPROC"""
     cfg = config(move_routines={"TWICE": True, "SHIFTED": True})
     result = run("Twice pHome,v100,fine,tGrip;\nShifted pHome,v100,fine,tGrip;\nMaybe pHome,v100,fine,tGrip;",
                  DATA, cfg, extra_procs=procs)  # fmt: skip
-    assert all("is not converted: robtarget parameter p" in m for m in todos(result))
+    assert all("is not converted: speeddata parameter s" in m for m in todos(result))
     assert not result.move_routines
     # Asked for, but not recognised: said once each, not left to be discovered.
     assert sum("is not a routine CrossArm recognises as one move" in n.message for n in result.notes) == 2

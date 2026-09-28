@@ -26,6 +26,7 @@ Mapping rules (see the report for the values actually used):
   IF FALSE / WHILE FALSE (code switched off by hand) -> left out, with a remark
 """
 
+import dataclasses
 import math
 import re
 import traceback
@@ -304,6 +305,7 @@ class ConversionResult:
     analog_outputs: list[Allocation] = field(default_factory=list)
     timers: list[Allocation] = field(default_factory=list)  # RAPID clocks
     grip_payloads: list[GripPayload] = field(default_factory=list)  # schedules GripLoad selects
+    point_registers: list[Allocation] = field(default_factory=list)  # PR a robtarget argument is passed in
     uframes: list[FrameInfo] = field(default_factory=list)
     utools: list[FrameInfo] = field(default_factory=list)
     computed_frames: list[ComputedFrame] = field(default_factory=list)  # in the order the programs first load them
@@ -602,6 +604,9 @@ class Converter:
         # GripLoad: (tool, or None for the task's one tool; load name, or None to release; its value; program;
         # RAPID line; statement). A program line selecting it reads `PAYLOAD[{PL:use}]` until _place_payloads().
         self.payload_uses: list[tuple[n.Expr | None, str | None, Load | None, str, int, n.Stmt]] = []
+        # Position registers robtarget arguments are passed in: upper-cased "ROUTINE.PARAMETER" -> as written.
+        # Program lines read `PR[{PA:KEY}]` until _place_points() numbers them.
+        self.point_keys: dict[str, str] = {}
         self.frames_in_moves: dict[str, set[str]] = {"UF": set(), "UT": set()}  # upper-case names, _plan_slots
         self.registers = TableView(shared.registers)
         self.flags = TableView(shared.flags)
@@ -629,6 +634,7 @@ class Converter:
         self.signatures: dict[str, Signature | str] = {
             r.name.upper(): signature(r) for m in modules for r in m.routines if r.kind == "PROC" and r.params
         }
+        self.procs = {r.name.upper(): r for m in modules for r in m.routines if r.kind == "PROC"}
         self.move_routine_calls: Counter[str] = Counter()
         self.not_converted: set[int] = set()  # id() of the statements that ended up in a TODO, for coverage
         self.parameters: set[str] = set()  # of the routine being translated (upper case)
@@ -676,6 +682,7 @@ class Converter:
 
         self._controller_comments()
         self._place_computed()
+        self._place_points()
         self._place_payloads()
         res = self.result
         res.registers = self.registers.allocations()
@@ -812,6 +819,68 @@ class Converter:
                 key, self.computed_uses[uses[0]][5], numbers[key], key in pinned,  # type: ignore[arg-type]
                 tuple(("UFRAME" if u[0] == "UF" else "UTOOL", u[1], u[2], u[3]) for u in map(self.computed_uses.__getitem__, uses)),
             ))  # fmt: skip
+
+    def point_frames(self, routine: str, parameter: str, seen: frozenset[str] = frozenset()) -> tuple[n.Expr | None, n.Expr | None]:
+        """The tool and work object a point parameter is moved to with, followed into the routines it is passed
+        on to; (None, None) if no routine moves to it."""
+        layout = self.signatures.get(routine.upper())
+        key = f"{routine}.{parameter}".upper()
+        if not isinstance(layout, Signature) or key in seen:
+            return None, None
+        frames = layout.frames_of(parameter)
+        if frames != (None, None) or routine.upper() not in self.procs:
+            return frames
+        for stmt in walk_statements(self.procs[routine.upper()].body):
+            callee = self.signatures.get(stmt.name.upper()) if isinstance(stmt, n.ProcCall) else None
+            if not isinstance(callee, Signature):
+                continue
+            given = [a.value for a in stmt.args if a.name is None]  # type: ignore[union-attr]
+            for value, slot in zip(given, [s for s in callee.slots if s.kind != "switch"], strict=False):
+                if slot.kind == "robtarget" and isinstance(value, n.Name) and value.name.upper() == parameter.upper():
+                    found = self.point_frames(callee.routine, slot.name, seen | {key})
+                    if found != (None, None):
+                        return found
+        return None, None
+
+    def point_register(self, key: str) -> str:
+        """The position register the point `ROUTINE.PARAMETER` is passed in, as `PR[{PA:KEY}]` until numbered."""
+        self.point_keys.setdefault(key.upper(), key)
+        return f"PR[{{PA:{key.upper()}}}]"
+
+    def _place_points(self) -> None:
+        """Number the position registers of the robtarget arguments, after the frame banks and the computed
+        frames (numbered first, so that theirs do not move), unless the mapping file pins them."""
+        if not self.point_keys:
+            return
+        pinned = self.config.point_registers
+        taken = {f.number for f in self.result.computed_frames if f.number is not None}
+        taken |= set(self.config.frame_registers.values()) | set(pinned.values())
+        free = [k for k in self._banks if k not in taken]
+        numbers = {key: pinned.get(key) or (free.pop(0) if free else None) for key in self.point_keys}
+        placeholder = re.compile(r"\{PA:([^}]*)\}")
+
+        def number(match: re.Match[str]) -> str:
+            found = numbers[match[1]]
+            if found is None:
+                raise LookupError(match[1])
+            return str(found)
+
+        for info in self.result.programs:
+            lines = info.program.lines
+            for i, line in enumerate(lines):
+                try:
+                    if isinstance(line, Instruction) and "{PA:" in line.text:
+                        lines[i] = Instruction(placeholder.sub(number, line.text), line.pad)
+                    elif isinstance(line, Motion) and "{PA:" in line.target + (line.via or ""):
+                        via = placeholder.sub(number, line.via) if line.via else line.via
+                        lines[i] = dataclasses.replace(line, target=placeholder.sub(number, line.target), via=via)
+                except LookupError as missing:
+                    lines[i] = Instruction(("!" + ascii_text(f"TODO no PR left for {missing}")[:REMARK_MAX]).rstrip())
+                    self.note(info.program.name, None, "TODO", f"no position register left to pass the point"
+                              f" {self.point_keys[str(missing.args[0])]} in", Blocker.CAPACITY)  # fmt: skip
+        self.result.point_registers = sorted(
+            (Allocation(number, self.point_keys[key], key in pinned) for key, number in numbers.items() if number),
+            key=lambda a: a.number)  # fmt: skip
 
     def _place_payloads(self) -> None:
         """Number the payload schedules GripLoad selects and write them into the programs.
@@ -1044,10 +1113,11 @@ class Converter:
         """The position registers CrossArm takes: SETUP_FRAMES' scratch one, the frame banks, the computed frames."""
         banks = [info.bank for info in self.frames.values() if info.bank is not None]
         computed = self.result.computed_frames
-        if not banks and not computed:
+        if not banks and not computed and not self.result.point_registers:
             return
         numbers = set(self.config.free_position_registers()[0][:1]) | set(banks)
         numbers |= {f.number for f in computed if f.number is not None}
+        numbers |= {a.number for a in self.result.point_registers}
         over = tuple(f"{f.uses[0][1]} ({f.key})" for f in computed if f.number is None)
         taken = len(self.config.reserved.get("PR", {}))
         self.result.capacity.append(
@@ -1537,8 +1607,13 @@ class _RoutineTranslator:
             self.last_tool = m.tool
         motion = "J" if m.kind in (n.MoveKind.J, n.MoveKind.ABSJ) else m.kind.value
         evaluator = self.c.evaluator
-        to_value = evaluator.jointtarget(m.to_point) if m.kind is n.MoveKind.ABSJ else evaluator.robtarget(m.to_point)
-        via_value = evaluator.robtarget(m.via_point) if m.via_point is not None else None
+        passed = self.passed_point(m.to_point, "CROSSARM.POINT") if m.kind is not n.MoveKind.ABSJ else None
+        passed_via = self.passed_point(m.via_point, "CROSSARM.VIA") if m.via_point is not None else None
+        if passed is not None:
+            to_value = None
+        else:
+            to_value = evaluator.jointtarget(m.to_point) if m.kind is n.MoveKind.ABSJ else evaluator.robtarget(m.to_point)
+        via_value = evaluator.robtarget(m.via_point) if m.via_point is not None and passed_via is None else None
         if isinstance(to_value, JointTarget) and len(to_value.joints) < 6:
             raise Untranslatable(f"jointtarget with {len(to_value.joints)} axes", Blocker.MOTION)
         speed, rapid_speed, fanuc_speed = self.speed(m.speed, motion)
@@ -1547,8 +1622,8 @@ class _RoutineTranslator:
         if ignored:
             self.warn(m, f"motion options ignored: {', '.join(ignored)}", Blocker.OPTIONS_IGNORED)
 
-        via = self.point(m.via_point, via_value, uf, ut, line) if via_value is not None else None
-        target = self.point(m.to_point, to_value, uf, ut, line)
+        via = passed_via or (self.point(m.via_point, via_value, uf, ut, line) if via_value is not None else None)
+        target = passed or self.point(m.to_point, to_value, uf, ut, line)  # type: ignore[arg-type]
         for selected, active, kind in ((uf, self.active_uf, "UFRAME"), (ut, self.active_ut, "UTOOL")):
             if selected != active:
                 number, bank = selected
@@ -1557,6 +1632,32 @@ class _RoutineTranslator:
                 self.emit(f"{kind}_NUM={number}")
         self.active_uf, self.active_ut = uf, ut
         self.lines.append(Motion(motion, target, speed, termination, via))
+
+    def passed_point(self, expr: n.Expr, scratch: str, into: str | None = None) -> str | None:
+        """The position register a move goes to when its point is a robtarget parameter of the routine: the
+        register the caller set, or, for Offs() of it, a copy offset along the work object's axes (component by
+        component, as Offs adds), in `into` when given (a point passed on). None when the point is not a parameter."""
+        if self.args is None:
+            return None
+        points = {s.key for s in self.args.slots if s.kind == "robtarget"}
+        names = {word.upper() for word in re.findall(r"[A-Za-z_]\w*", format_expr(expr))}
+        if not names & points:
+            return None
+        if isinstance(expr, n.Name):
+            return self.c.point_register(f"{self.args.routine}.{expr.name}")
+        if (isinstance(expr, n.FuncCall) and expr.name.upper() == "OFFS" and len(expr.args) == 4
+                and all(a.name is None and a.value is not None for a in expr.args)
+                and isinstance(expr.args[0].value, n.Name) and expr.args[0].value.name.upper() in points):  # fmt: skip
+            offsets = [operand(self.numeric(a.value)) for a in expr.args[1:]]  # type: ignore[arg-type]
+            register = self.c.point_register(f"{self.args.routine}.{expr.args[0].value.name}")
+            copy = into or self.c.point_register(scratch)
+            self.emit(f"{copy}={register}")
+            for axis, offset in enumerate(offsets, start=1):
+                if offset != "0":
+                    self.emit(f"{copy[:-1]},{axis}]={copy[:-1]},{axis}]+{offset}")
+            return copy
+        raise Untranslatable(f"'{format_expr(expr)}': a point passed to the routine is moved to as it is or with"
+                             " Offs() here", Blocker.RUNTIME_POSITION)  # fmt: skip
 
     def joint_frame(self, kind: str, expr: n.Expr | None, line: int, number: bool = True) -> tuple[int, int | None]:
         """The frame a MoveAbsJ selects. A joint target does not depend on the tool or the work object, so a
@@ -1897,7 +1998,12 @@ class _RoutineTranslator:
         unknown = set(given) - {s.key for s in layout.slots if s.kind == "switch"}
         if unknown:
             raise Untranslatable(f"{call.name} has no switch \\{min(unknown)}", Blocker.CALL_ARGS)
-        values = [self.argument(a.value, slot) for a, slot in zip(positional, required, strict=True)]
+        values, points = [], []
+        for a, slot in zip(positional, required, strict=True):
+            if slot.kind == "robtarget":
+                points.append(self.point_argument(a.value, slot, layout, call.span.line))
+            else:
+                values.append(self.argument(a.value, slot))
         for slot in layout.slots[len(required):]:
             arg = given.get(slot.key)
             if arg is None:
@@ -1909,7 +2015,10 @@ class _RoutineTranslator:
                 values.append(forwarded)
             else:
                 values.append("1")
-        self.emit(f"CALL {self.c.program_names[call.name.upper()]}({','.join(values)})")
+        for text in filter(None, points):
+            self.emit(text)
+        name = self.c.program_names[call.name.upper()]
+        self.emit(f"CALL {name}({','.join(values)})" if values else f"CALL {name}")
 
     def argument(self, expr: n.Expr | None, slot) -> str:
         """One TP CALL argument: a constant, a register, or this routine's own AR[n]."""
@@ -1932,6 +2041,29 @@ class _RoutineTranslator:
         except Untranslatable as exc:
             raise Untranslatable(f"argument {slot.name}: {exc}", Blocker.CALL_ARGS) from exc
         return decimal(text)  # CALL P(.5), not CALL P(0.5)
+
+    def point_argument(self, expr: n.Expr | None, slot, layout: Signature, line: int) -> str:
+        """`PR[k]=P[j]` for a robtarget argument: the point worked out here, recorded with the frames the routine
+        moves to it with; `PR[k]=PR[m]` for a point this routine was given itself."""
+        if expr is None:
+            raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
+        register = self.c.point_register(f"{layout.routine}.{slot.name}")
+        if isinstance(expr, n.Name) and self.args and self.args.kind(expr.name) == "robtarget":
+            return f"{register}={self.c.point_register(f'{self.args.routine}.{expr.name}')}"
+        if self.args and self.passed_point(expr, "CROSSARM.POINT", into=register):  # Offs() of this routine's own point
+            return ""
+        try:
+            value = self.c.evaluator.robtarget(expr)
+        except Unresolvable as exc:
+            raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' is only known at run time ({exc})",
+                                 Blocker.RUNTIME_POSITION) from exc  # fmt: skip
+        tool, wobj = self.c.point_frames(layout.routine, slot.name)
+        if tool is None and self.active_uf is not None and self.active_ut is not None:
+            uf, ut = self.active_uf, self.active_ut  # no routine moves to it: recorded in the frames selected here
+        else:
+            uf = self.c.selection("UF", self.c.frame_number("UF", wobj, self.name, line))
+            ut = self.c.selection("UT", self.c.frame_number("UT", tool or n.Name(expr.span, "tool0"), self.name, line))
+        return f"{register}={self.point(expr, value, uf, ut, line)}"
 
     def text_argument(self, expr: n.Expr, slot) -> str:
         """A string argument: text written in the call ('...'), as TP takes it. An apostrophe ends the text
