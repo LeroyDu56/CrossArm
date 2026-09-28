@@ -267,6 +267,7 @@ _BLENDED_PAST = frozenset({"SET", "RESET", "SETDO", "SETGO", "SETAO", "PULSEDO",
 _MOTION_SETTINGS = frozenset({"CONFL", "CONFJ", "SINGAREA", "CIRPATHMODE", "ACCSET", "VELSET"})
 _INTERRUPTS = frozenset({"IDELETE", "ISIGNALDI", "ISIGNALDO", "ISIGNALGI", "ISIGNALGO", "ISIGNALAI", "ISIGNALAO",
                          "ITIMER", "IPERS", "IWATCH", "ISLEEP", "IENABLE", "IDISABLE", "IERROR"})
+STRING_ARGUMENT_MAX = 38  # characters of a string CALL argument (ROBOGUIDE: 38 loads, 39 is refused)
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
 PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
 PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAYLOAD[11] loads, stops when run)
@@ -1916,6 +1917,8 @@ class _RoutineTranslator:
             raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
         if isinstance(expr, n.Name) and self.args and self.args.register(expr.name):
             return self.args.register(expr.name)  # type: ignore[return-value]
+        if slot.kind == "string":
+            return self.text_argument(expr, slot)
         if slot.kind == "bool":
             if isinstance(expr, n.Bool):
                 return "1" if expr.value else "0"
@@ -1929,6 +1932,20 @@ class _RoutineTranslator:
         except Untranslatable as exc:
             raise Untranslatable(f"argument {slot.name}: {exc}", Blocker.CALL_ARGS) from exc
         return decimal(text)  # CALL P(.5), not CALL P(0.5)
+
+    def text_argument(self, expr: n.Expr, slot) -> str:
+        """A string argument: text written in the call ('...'), as TP takes it. An apostrophe ends the text
+        on FANUC (ROBOGUIDE refuses l''a): it becomes a backquote. Past 38 characters it is cut, with a warning."""
+        text, dropped = self.split_text(expr)
+        if dropped:
+            raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' is only known at run time, and a TP CALL"
+                                 " passes text written in the program", Blocker.CALL_ARGS)  # fmt: skip
+        text = ascii_text(text).replace("'", "`")
+        if len(text) > STRING_ARGUMENT_MAX:
+            self.c.note(self.name, expr.span.line, "WARNING", f"argument {slot.name} cut to {STRING_ARGUMENT_MAX}"
+                        f" characters (the most a TP string argument takes): '{text}'", Blocker.MESSAGE_CUT)  # fmt: skip
+            text = text[:STRING_ARGUMENT_MAX].rstrip()
+        return f"'{text}'"
 
     def routine_move(self, call: n.ProcCall, routine: MoveRoutine) -> None:
         """A call to a routine wrapping one move, written as that move when that is allowed."""

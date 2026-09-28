@@ -134,3 +134,27 @@ def test_a_routine_out_of_scope_says_why_at_every_call():
     procs = "PROC Grip(robtarget p)\n  Stop;\nENDPROC"
     assert todos(run("Grip pHome;", extra_procs=procs))[0].startswith(
         "Grip is not converted: robtarget parameter p: TP arguments are numbers or text")
+
+
+def test_a_string_parameter_is_passed_as_text_written_in_the_call():
+    """ROBOGUIDE takes CALL X('text') up to 38 characters and refuses an apostrophe inside: a backquote."""
+    procs = "PROC Fault(string sText,num nCode)\n  SetGO goCode,nCode;\n  Stop;\nENDPROC"
+    body = 'Fault "Gripper not open",3;\nFault "l\'usinage",4;\nFault MSG,5;\nFault "' + "x" * 45 + '",6;'
+    result = run(body, 'CONST string MSG:="From a CONST";', extra_procs=procs)
+    assert [line for line in tp_lines(result) if line.startswith("CALL")] == [
+        "CALL FAULT('Gripper not open',3)", "CALL FAULT('l`usinage',4)", "CALL FAULT('From a CONST',5)",
+        f"CALL FAULT('{'x' * 38}',6)",
+    ]  # fmt: skip
+    assert any("cut to 38 characters" in n.message for n in result.notes if n.kind == "WARNING")
+
+
+def test_a_string_known_only_at_run_time_stays_todo_and_so_does_showing_it():
+    """A TP program keeps a string argument but cannot show it: MESSAGE takes fixed text."""
+    procs = "PROC Fault(string sText)\n  Set doFault;\n  TPWrite sText;\nENDPROC"
+    assert todos(run('Fault "Part "+NumToStr(n,0);', "VAR num n;", extra_procs=procs))[0].startswith(
+        "argument sText: '\"Part \" + NumToStr(n, 0)' is only known at run time")
+    source = f"MODULE M\nPROC main()\nFault \"Stop\";\nENDPROC\n{procs}\nENDMODULE\n"
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    fault = next(p for p in result.programs if p.program.name == "FAULT").program
+    assert fault.lines[1].text == "DO[1]=ON"
+    assert [n.category for n in result.notes if n.kind == "TODO"] == ["TPWrite showing a value"]

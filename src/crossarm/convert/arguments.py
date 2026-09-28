@@ -5,10 +5,14 @@
 
 TP passes up to ten untyped values to a program called with CALL NAME(a,b,...), which reads
 them as AR[1], AR[2]... and cannot change them. That holds the RAPID parameters passed by
-value that TP can represent: `num`, `bool` (1 / 0) and optional switches (1 when given,
-0 otherwise). A routine with any other parameter — a robtarget, a tooldata, a string, one
-passed by reference (INOUT, VAR, PERS), an optional num — is not converted, and its calls
-stay TODO with the reason.
+value that TP can represent: `num`, `bool` (1 / 0), `string` (text written in the call, 38
+characters at most: ROBOGUIDE refuses 39) and optional switches (1 when given, 0 otherwise).
+A routine with any other parameter — a robtarget, a tooldata, one passed by reference (INOUT,
+VAR, PERS), an optional num — is not converted, and its calls stay TODO with the reason.
+
+A TP program can keep a string argument (SR[n]=AR[1]) and measure it (STRLEN), but not show it:
+MESSAGE takes fixed text. So a TPWrite of a string parameter stays TODO in the routine, while
+the routine and its calls are converted.
 
 Every argument is passed on every call, switches included: on a FANUC controller reading an
 AR[n] the caller did not pass stops the program, where RAPID's Present() just says FALSE.
@@ -31,7 +35,7 @@ _NAME = re.compile(r"([A-Za-z_]\w*)\s*(\{[^}]*\})?\s*$")
 @dataclass(frozen=True, slots=True)
 class Slot:
     name: str  # as declared
-    kind: str  # "num" | "bool" | "switch"
+    kind: str  # "num" | "bool" | "string" | "switch"
 
     @property
     def key(self) -> str:
@@ -84,7 +88,7 @@ def signature(routine: n.Routine) -> Signature | str:
                 if type_name.lower() != "switch":
                     return f"optional {type_name} parameter {name}: only optional switches are converted"
                 switches.append(Slot(name, "switch"))
-            elif type_name.lower() in ("num", "bool"):
+            elif type_name.lower() in ("num", "bool", "string"):
                 required.append(Slot(name, type_name.lower()))
             else:
                 return f"{type_name} parameter {name}: TP arguments are numbers or text"

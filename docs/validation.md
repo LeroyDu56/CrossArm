@@ -11,8 +11,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 
 | What | Result |
 |---|---|
-| Every program converted from the test corpus, loaded on a FANUC controller | 118 of 118 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (176 forms) |
+| Every program converted from the test corpus, loaded on a FANUC controller | 121 of 121 |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (179 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -160,6 +160,12 @@ controller's own forms: `(-2.5)` in assignments, calculations, FOR bounds and CA
 the bare form is refused — and `-2.5` in conditions. No `.LS` written by a controller had shown one
 before.
 
+**Text arguments.** A string passed in a call (`CALL FAULT('Pince non ouverte')`) reaches the routine
+whole: `SR[5]=AR[1]` holds it, `STRLEN AR[1]` measures it. The controller takes 38 characters per
+string, whatever the length of the line, refuses an apostrophe inside, and has no way to show the
+text: `MESSAGE` takes fixed text, and writing it into a user alarm (`$UALRM_MSG[1]=AR[1]`) runs
+without setting anything. So CrossArm passes the text, and leaves a `TPWrite` of it TODO.
+
 ## 8. Conditions from the backup's own functions, run
 
 [tools/make_condition_probe.py](../tools/make_condition_probe.py) converts conditions calling bool
@@ -182,8 +188,8 @@ not `<0.5`, in conditions.
 
 ## 10. Every program of the test corpus, loaded
 
-The 118 programs converted from the three RobotWare backups of the test corpus were loaded on
-ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 118 load. Earlier
+The 121 programs converted from the three RobotWare backups of the test corpus were loaded on
+ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 121 load. Earlier
 conversions of larger backups found two causes of refusal, both fixed: a group output set from a
 group input (`GO[4]=GI[3]`), and selecting more tool or user frames than the controller holds. The
 frames past the limit are loaded from position registers before use;
@@ -192,7 +198,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 176 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 179 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.

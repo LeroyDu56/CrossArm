@@ -22,6 +22,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   gravity and the inertia about it, lists the schedule in the report, and numbers it from the top
   down past the tools' own; `GripLoad load0` goes back to the tool's schedule, its UTOOL number. The
   tool is the one the moves after it use, else the one selected, else the task's only tool.
+- Routines with `string` parameters: the text is passed in the call (`CALL FAULT('Gripper not
+  open',3)`), 38 characters at most, an apostrophe written as a backquote. A TP program cannot show
+  a string it is given (MESSAGE takes fixed text), so a `TPWrite` of it stays TODO in the routine;
+  the routine and its calls are converted. A string only known at run time stays TODO at the call.
 - Motion settings: `ConfL`, `ConfJ`, `SingArea` and `CirPathMode` are left out, with a warning where
   FANUC does it its own way. `AccSet` and `VelSet` that slow the robot down stay TODO, as dropping
   them would run it faster than the ABB.
