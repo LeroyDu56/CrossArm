@@ -1,0 +1,2329 @@
+{
+  "encoding": "utf-8",
+  "diagnostics": [],
+  "module": {
+    "node": "Module",
+    "line": 1,
+    "col": 1,
+    "name": "PickAndPlace",
+    "attributes": [],
+    "body": [
+      {
+        "node": "Comment",
+        "line": 2,
+        "col": 5,
+        "text": "============================================================="
+      },
+      {
+        "node": "Comment",
+        "line": 3,
+        "col": 5,
+        "text": " Synthetic demo cell: pick parts from a conveyor, place them"
+      },
+      {
+        "node": "Comment",
+        "line": 4,
+        "col": 5,
+        "text": " on a 3-slot fixture. Written from scratch for the test suite."
+      },
+      {
+        "node": "Comment",
+        "line": 5,
+        "col": 5,
+        "text": "============================================================="
+      },
+      {
+        "node": "Comment",
+        "line": 7,
+        "col": 5,
+        "text": " ---- Tools and work objects ----"
+      },
+      {
+        "node": "DataDecl",
+        "line": 8,
+        "col": 5,
+        "storage": "PERS",
+        "type_name": "tooldata",
+        "name": "tGripper",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 8,
+          "col": 29,
+          "items": [
+            {
+              "node": "Bool",
+              "line": 8,
+              "col": 30,
+              "value": true
+            },
+            {
+              "node": "Aggregate",
+              "line": 8,
+              "col": 35,
+              "items": [
+                {
+                  "node": "Aggregate",
+                  "line": 8,
+                  "col": 36,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 37,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 39,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 41,
+                      "value": 185.5,
+                      "text": "185.5"
+                    }
+                  ]
+                },
+                {
+                  "node": "Aggregate",
+                  "line": 8,
+                  "col": 48,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 49,
+                      "value": 1,
+                      "text": "1"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 51,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 53,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 55,
+                      "value": 0,
+                      "text": "0"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 8,
+              "col": 59,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 60,
+                  "value": 2.4,
+                  "text": "2.4"
+                },
+                {
+                  "node": "Aggregate",
+                  "line": 8,
+                  "col": 64,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 65,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 67,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 69,
+                      "value": 90,
+                      "text": "90"
+                    }
+                  ]
+                },
+                {
+                  "node": "Aggregate",
+                  "line": 8,
+                  "col": 73,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 74,
+                      "value": 1,
+                      "text": "1"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 76,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 78,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 8,
+                      "col": 80,
+                      "value": 0,
+                      "text": "0"
+                    }
+                  ]
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 83,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 85,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 87,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 9,
+        "col": 5,
+        "storage": "PERS",
+        "type_name": "wobjdata",
+        "name": "wobjFixture",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 9,
+          "col": 37,
+          "items": [
+            {
+              "node": "Bool",
+              "line": 9,
+              "col": 38,
+              "value": false
+            },
+            {
+              "node": "Bool",
+              "line": 9,
+              "col": 44,
+              "value": true
+            },
+            {
+              "node": "String",
+              "line": 9,
+              "col": 49,
+              "value": ""
+            },
+            {
+              "node": "Aggregate",
+              "line": 9,
+              "col": 52,
+              "items": [
+                {
+                  "node": "Aggregate",
+                  "line": 9,
+                  "col": 53,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 54,
+                      "value": 1250,
+                      "text": "1250"
+                    },
+                    {
+                      "node": "UnaryOp",
+                      "line": 9,
+                      "col": 59,
+                      "op": "-",
+                      "operand": {
+                        "node": "Number",
+                        "line": 9,
+                        "col": 60,
+                        "value": 400,
+                        "text": "400"
+                      }
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 64,
+                      "value": 720,
+                      "text": "720"
+                    }
+                  ]
+                },
+                {
+                  "node": "Aggregate",
+                  "line": 9,
+                  "col": 69,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 70,
+                      "value": 0.707107,
+                      "text": "0.707107"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 79,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 81,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 83,
+                      "value": 0.707107,
+                      "text": "0.707107"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 9,
+              "col": 94,
+              "items": [
+                {
+                  "node": "Aggregate",
+                  "line": 9,
+                  "col": 95,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 96,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 98,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 100,
+                      "value": 0,
+                      "text": "0"
+                    }
+                  ]
+                },
+                {
+                  "node": "Aggregate",
+                  "line": 9,
+                  "col": 103,
+                  "items": [
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 104,
+                      "value": 1,
+                      "text": "1"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 106,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 108,
+                      "value": 0,
+                      "text": "0"
+                    },
+                    {
+                      "node": "Number",
+                      "line": 9,
+                      "col": 110,
+                      "value": 0,
+                      "text": "0"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "scope": "TASK"
+      },
+      {
+        "node": "Comment",
+        "line": 11,
+        "col": 5,
+        "text": " ---- Positions ----"
+      },
+      {
+        "node": "DataDecl",
+        "line": 12,
+        "col": 5,
+        "storage": "CONST",
+        "type_name": "robtarget",
+        "name": "pHome",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 12,
+          "col": 28,
+          "items": [
+            {
+              "node": "Aggregate",
+              "line": 12,
+              "col": 29,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 30,
+                  "value": 600,
+                  "text": "600"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 34,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 36,
+                  "value": 900,
+                  "text": "900"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 12,
+              "col": 41,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 42,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 44,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 46,
+                  "value": 1,
+                  "text": "1"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 48,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 12,
+              "col": 51,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 52,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 54,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 56,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 58,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 12,
+              "col": 61,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 62,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 68,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 74,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 80,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 86,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 12,
+                  "col": 92,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                }
+              ]
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 13,
+        "col": 5,
+        "storage": "CONST",
+        "type_name": "robtarget",
+        "name": "pPick",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 13,
+          "col": 28,
+          "items": [
+            {
+              "node": "Aggregate",
+              "line": 13,
+              "col": 29,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 30,
+                  "value": 812.35,
+                  "text": "812.35"
+                },
+                {
+                  "node": "UnaryOp",
+                  "line": 13,
+                  "col": 37,
+                  "op": "-",
+                  "operand": {
+                    "node": "Number",
+                    "line": 13,
+                    "col": 38,
+                    "value": 245.1,
+                    "text": "245.1"
+                  }
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 44,
+                  "value": 305,
+                  "text": "305"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 13,
+              "col": 49,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 50,
+                  "value": 0.004363,
+                  "text": "0.004363"
+                },
+                {
+                  "node": "UnaryOp",
+                  "line": 13,
+                  "col": 59,
+                  "op": "-",
+                  "operand": {
+                    "node": "Number",
+                    "line": 13,
+                    "col": 60,
+                    "value": 0.707094,
+                    "text": "0.707094"
+                  }
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 69,
+                  "value": 0.707094,
+                  "text": "0.707094"
+                },
+                {
+                  "node": "UnaryOp",
+                  "line": 13,
+                  "col": 78,
+                  "op": "-",
+                  "operand": {
+                    "node": "Number",
+                    "line": 13,
+                    "col": 79,
+                    "value": 0.004363,
+                    "text": "0.004363"
+                  }
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 13,
+              "col": 89,
+              "items": [
+                {
+                  "node": "UnaryOp",
+                  "line": 13,
+                  "col": 90,
+                  "op": "-",
+                  "operand": {
+                    "node": "Number",
+                    "line": 13,
+                    "col": 91,
+                    "value": 1,
+                    "text": "1"
+                  }
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 93,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "UnaryOp",
+                  "line": 13,
+                  "col": 95,
+                  "op": "-",
+                  "operand": {
+                    "node": "Number",
+                    "line": 13,
+                    "col": 96,
+                    "value": 1,
+                    "text": "1"
+                  }
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 98,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 13,
+              "col": 101,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 102,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 108,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 114,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 120,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 126,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 13,
+                  "col": 132,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                }
+              ]
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "Comment",
+        "line": 13,
+        "col": 142,
+        "text": " conveyor end"
+      },
+      {
+        "node": "DataDecl",
+        "line": 14,
+        "col": 5,
+        "storage": "CONST",
+        "type_name": "robtarget",
+        "name": "pArcMid",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 14,
+          "col": 30,
+          "items": [
+            {
+              "node": "Aggregate",
+              "line": 14,
+              "col": 31,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 32,
+                  "value": 900,
+                  "text": "900"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 36,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 38,
+                  "value": 500,
+                  "text": "500"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 14,
+              "col": 43,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 44,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 46,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 48,
+                  "value": 1,
+                  "text": "1"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 50,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 14,
+              "col": 53,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 54,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 56,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 58,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 60,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 14,
+              "col": 63,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 64,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 68,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 72,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 76,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 80,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 14,
+                  "col": 84,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                }
+              ]
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 15,
+        "col": 5,
+        "storage": "CONST",
+        "type_name": "robtarget",
+        "name": "pArcEnd",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 15,
+          "col": 30,
+          "items": [
+            {
+              "node": "Aggregate",
+              "line": 15,
+              "col": 31,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 32,
+                  "value": 950,
+                  "text": "950"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 36,
+                  "value": 100,
+                  "text": "100"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 40,
+                  "value": 450,
+                  "text": "450"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 15,
+              "col": 45,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 46,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 48,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 50,
+                  "value": 1,
+                  "text": "1"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 52,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 15,
+              "col": 55,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 56,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 58,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 60,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 62,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 15,
+              "col": 65,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 66,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 70,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 74,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 78,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 82,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 86,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                }
+              ]
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 16,
+        "col": 5,
+        "storage": "CONST",
+        "type_name": "jointtarget",
+        "name": "jParking",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 16,
+          "col": 33,
+          "items": [
+            {
+              "node": "Aggregate",
+              "line": 16,
+              "col": 34,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 35,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "UnaryOp",
+                  "line": 16,
+                  "col": 37,
+                  "op": "-",
+                  "operand": {
+                    "node": "Number",
+                    "line": 16,
+                    "col": 38,
+                    "value": 30,
+                    "text": "30"
+                  }
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 41,
+                  "value": 30,
+                  "text": "30"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 44,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 46,
+                  "value": 90,
+                  "text": "90"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 49,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 16,
+              "col": 52,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 53,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 59,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 65,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 71,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 77,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                },
+                {
+                  "node": "Number",
+                  "line": 16,
+                  "col": 83,
+                  "value": 9000000000.0,
+                  "text": "9E+09"
+                }
+              ]
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 17,
+        "col": 5,
+        "storage": "VAR",
+        "type_name": "robtarget",
+        "name": "pPlace",
+        "dims": [],
+        "init": null,
+        "scope": null
+      },
+      {
+        "node": "Comment",
+        "line": 19,
+        "col": 5,
+        "text": " ---- Counters ----"
+      },
+      {
+        "node": "DataDecl",
+        "line": 20,
+        "col": 5,
+        "storage": "VAR",
+        "type_name": "num",
+        "name": "nSlot",
+        "dims": [],
+        "init": {
+          "node": "Number",
+          "line": 20,
+          "col": 20,
+          "value": 0,
+          "text": "0"
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 21,
+        "col": 5,
+        "storage": "PERS",
+        "type_name": "num",
+        "name": "nCycles",
+        "dims": [],
+        "init": {
+          "node": "Number",
+          "line": 21,
+          "col": 23,
+          "value": 0,
+          "text": "0"
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 22,
+        "col": 5,
+        "storage": "CONST",
+        "type_name": "num",
+        "name": "NB_SLOTS",
+        "dims": [],
+        "init": {
+          "node": "Number",
+          "line": 22,
+          "col": 25,
+          "value": 3,
+          "text": "3"
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 23,
+        "col": 5,
+        "storage": "VAR",
+        "type_name": "num",
+        "name": "nOffsets",
+        "dims": [
+          {
+            "node": "Number",
+            "line": 23,
+            "col": 22,
+            "value": 3,
+            "text": "3"
+          }
+        ],
+        "init": {
+          "node": "Aggregate",
+          "line": 23,
+          "col": 26,
+          "items": [
+            {
+              "node": "Number",
+              "line": 23,
+              "col": 27,
+              "value": 0,
+              "text": "0"
+            },
+            {
+              "node": "Number",
+              "line": 23,
+              "col": 29,
+              "value": 120,
+              "text": "120"
+            },
+            {
+              "node": "Number",
+              "line": 23,
+              "col": 33,
+              "value": 240,
+              "text": "240"
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 24,
+        "col": 5,
+        "storage": "VAR",
+        "type_name": "bool",
+        "name": "bPartPresent",
+        "dims": [],
+        "init": {
+          "node": "Bool",
+          "line": 24,
+          "col": 34,
+          "value": false
+        },
+        "scope": "LOCAL"
+      },
+      {
+        "node": "Unsupported",
+        "line": 26,
+        "col": 5,
+        "kind": "RECORD",
+        "reason": "user-defined RECORD types are not supported",
+        "raw": "RECORD partdata\n        num id;\n        string label;\n    ENDRECORD"
+      },
+      {
+        "node": "Routine",
+        "line": 31,
+        "col": 5,
+        "kind": "PROC",
+        "name": "main",
+        "body": [
+          {
+            "node": "Move",
+            "line": 32,
+            "col": 9,
+            "kind": "ABSJ",
+            "to_point": {
+              "node": "Name",
+              "line": 32,
+              "col": 18,
+              "name": "jParking"
+            },
+            "speed": {
+              "node": "Name",
+              "line": 32,
+              "col": 35,
+              "name": "v1000"
+            },
+            "zone": {
+              "node": "Name",
+              "line": 32,
+              "col": 41,
+              "name": "fine"
+            },
+            "tool": {
+              "node": "Name",
+              "line": 32,
+              "col": 46,
+              "name": "tool0"
+            },
+            "via_point": null,
+            "wobj": null,
+            "options": [
+              {
+                "node": "Arg",
+                "line": 32,
+                "col": 26,
+                "value": null,
+                "name": "NoEOffs",
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "Move",
+            "line": 33,
+            "col": 9,
+            "kind": "J",
+            "to_point": {
+              "node": "Name",
+              "line": 33,
+              "col": 15,
+              "name": "pHome"
+            },
+            "speed": {
+              "node": "Name",
+              "line": 33,
+              "col": 21,
+              "name": "v1000"
+            },
+            "zone": {
+              "node": "Name",
+              "line": 33,
+              "col": 27,
+              "name": "z50"
+            },
+            "tool": {
+              "node": "Name",
+              "line": 33,
+              "col": 31,
+              "name": "tGripper"
+            },
+            "via_point": null,
+            "wobj": null,
+            "options": []
+          },
+          {
+            "node": "While",
+            "line": 34,
+            "col": 9,
+            "condition": {
+              "node": "Bool",
+              "line": 34,
+              "col": 15,
+              "value": true
+            },
+            "body": [
+              {
+                "node": "If",
+                "line": 35,
+                "col": 13,
+                "branches": [
+                  {
+                    "node": "IfBranch",
+                    "condition": {
+                      "node": "BinaryOp",
+                      "line": 35,
+                      "col": 16,
+                      "op": "=",
+                      "left": {
+                        "node": "Name",
+                        "line": 35,
+                        "col": 16,
+                        "name": "DI_PartReady"
+                      },
+                      "right": {
+                        "node": "Number",
+                        "line": 35,
+                        "col": 29,
+                        "value": 1,
+                        "text": "1"
+                      }
+                    },
+                    "body": [
+                      {
+                        "node": "ProcCall",
+                        "line": 35,
+                        "col": 31,
+                        "name": "Pick",
+                        "args": []
+                      }
+                    ]
+                  }
+                ],
+                "else_body": [],
+                "compact": true
+              },
+              {
+                "node": "For",
+                "line": 36,
+                "col": 13,
+                "var": "i",
+                "start": {
+                  "node": "Number",
+                  "line": 36,
+                  "col": 24,
+                  "value": 1,
+                  "text": "1"
+                },
+                "end": {
+                  "node": "Name",
+                  "line": 36,
+                  "col": 29,
+                  "name": "NB_SLOTS"
+                },
+                "step": null,
+                "body": [
+                  {
+                    "node": "Assign",
+                    "line": 37,
+                    "col": 17,
+                    "target": {
+                      "node": "Name",
+                      "line": 37,
+                      "col": 17,
+                      "name": "nSlot"
+                    },
+                    "value": {
+                      "node": "Name",
+                      "line": 37,
+                      "col": 24,
+                      "name": "i"
+                    }
+                  },
+                  {
+                    "node": "ProcCall",
+                    "line": 38,
+                    "col": 17,
+                    "name": "Place",
+                    "args": []
+                  }
+                ]
+              },
+              {
+                "node": "Assign",
+                "line": 40,
+                "col": 13,
+                "target": {
+                  "node": "Name",
+                  "line": 40,
+                  "col": 13,
+                  "name": "nCycles"
+                },
+                "value": {
+                  "node": "BinaryOp",
+                  "line": 40,
+                  "col": 22,
+                  "op": "+",
+                  "left": {
+                    "node": "Name",
+                    "line": 40,
+                    "col": 22,
+                    "name": "nCycles"
+                  },
+                  "right": {
+                    "node": "Number",
+                    "line": 40,
+                    "col": 30,
+                    "value": 1,
+                    "text": "1"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "params": "",
+        "return_type": null,
+        "scope": null,
+        "handlers": []
+      },
+      {
+        "node": "Routine",
+        "line": 44,
+        "col": 5,
+        "kind": "PROC",
+        "name": "Pick",
+        "body": [
+          {
+            "node": "Comment",
+            "line": 45,
+            "col": 9,
+            "text": " approach, grip, retract"
+          },
+          {
+            "node": "Move",
+            "line": 46,
+            "col": 9,
+            "kind": "J",
+            "to_point": {
+              "node": "FuncCall",
+              "line": 46,
+              "col": 15,
+              "name": "Offs",
+              "args": [
+                {
+                  "node": "Arg",
+                  "line": 46,
+                  "col": 20,
+                  "value": {
+                    "node": "Name",
+                    "line": 46,
+                    "col": 20,
+                    "name": "pPick"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 46,
+                  "col": 26,
+                  "value": {
+                    "node": "Number",
+                    "line": 46,
+                    "col": 26,
+                    "value": 0,
+                    "text": "0"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 46,
+                  "col": 28,
+                  "value": {
+                    "node": "Number",
+                    "line": 46,
+                    "col": 28,
+                    "value": 0,
+                    "text": "0"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 46,
+                  "col": 30,
+                  "value": {
+                    "node": "Number",
+                    "line": 46,
+                    "col": 30,
+                    "value": 100,
+                    "text": "100"
+                  },
+                  "name": null,
+                  "conditional": false
+                }
+              ]
+            },
+            "speed": {
+              "node": "Name",
+              "line": 46,
+              "col": 35,
+              "name": "v1000"
+            },
+            "zone": {
+              "node": "Name",
+              "line": 46,
+              "col": 41,
+              "name": "z20"
+            },
+            "tool": {
+              "node": "Name",
+              "line": 46,
+              "col": 45,
+              "name": "tGripper"
+            },
+            "via_point": null,
+            "wobj": null,
+            "options": []
+          },
+          {
+            "node": "Move",
+            "line": 47,
+            "col": 9,
+            "kind": "L",
+            "to_point": {
+              "node": "Name",
+              "line": 47,
+              "col": 15,
+              "name": "pPick"
+            },
+            "speed": {
+              "node": "Name",
+              "line": 47,
+              "col": 21,
+              "name": "v200"
+            },
+            "zone": {
+              "node": "Name",
+              "line": 47,
+              "col": 26,
+              "name": "fine"
+            },
+            "tool": {
+              "node": "Name",
+              "line": 47,
+              "col": 31,
+              "name": "tGripper"
+            },
+            "via_point": null,
+            "wobj": null,
+            "options": []
+          },
+          {
+            "node": "SetSignal",
+            "line": 48,
+            "col": 9,
+            "signal": {
+              "node": "Name",
+              "line": 48,
+              "col": 13,
+              "name": "DO_GripperClose"
+            },
+            "value": 1
+          },
+          {
+            "node": "WaitTime",
+            "line": 49,
+            "col": 9,
+            "seconds": {
+              "node": "Number",
+              "line": 49,
+              "col": 18,
+              "value": 0.3,
+              "text": "0.3"
+            },
+            "options": []
+          },
+          {
+            "node": "Move",
+            "line": 50,
+            "col": 9,
+            "kind": "L",
+            "to_point": {
+              "node": "FuncCall",
+              "line": 50,
+              "col": 15,
+              "name": "Offs",
+              "args": [
+                {
+                  "node": "Arg",
+                  "line": 50,
+                  "col": 20,
+                  "value": {
+                    "node": "Name",
+                    "line": 50,
+                    "col": 20,
+                    "name": "pPick"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 50,
+                  "col": 26,
+                  "value": {
+                    "node": "Number",
+                    "line": 50,
+                    "col": 26,
+                    "value": 0,
+                    "text": "0"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 50,
+                  "col": 28,
+                  "value": {
+                    "node": "Number",
+                    "line": 50,
+                    "col": 28,
+                    "value": 0,
+                    "text": "0"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 50,
+                  "col": 30,
+                  "value": {
+                    "node": "Number",
+                    "line": 50,
+                    "col": 30,
+                    "value": 100,
+                    "text": "100"
+                  },
+                  "name": null,
+                  "conditional": false
+                }
+              ]
+            },
+            "speed": {
+              "node": "Name",
+              "line": 50,
+              "col": 35,
+              "name": "v500"
+            },
+            "zone": {
+              "node": "Name",
+              "line": 50,
+              "col": 40,
+              "name": "z10"
+            },
+            "tool": {
+              "node": "Name",
+              "line": 50,
+              "col": 44,
+              "name": "tGripper"
+            },
+            "via_point": null,
+            "wobj": null,
+            "options": []
+          }
+        ],
+        "params": "",
+        "return_type": null,
+        "scope": null,
+        "handlers": []
+      },
+      {
+        "node": "Routine",
+        "line": 53,
+        "col": 5,
+        "kind": "PROC",
+        "name": "Place",
+        "body": [
+          {
+            "node": "Assign",
+            "line": 54,
+            "col": 9,
+            "target": {
+              "node": "Name",
+              "line": 54,
+              "col": 9,
+              "name": "pPlace"
+            },
+            "value": {
+              "node": "FuncCall",
+              "line": 54,
+              "col": 17,
+              "name": "Offs",
+              "args": [
+                {
+                  "node": "Arg",
+                  "line": 54,
+                  "col": 22,
+                  "value": {
+                    "node": "Name",
+                    "line": 54,
+                    "col": 22,
+                    "name": "pHome"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 54,
+                  "col": 28,
+                  "value": {
+                    "node": "Index",
+                    "line": 54,
+                    "col": 28,
+                    "base": {
+                      "node": "Name",
+                      "line": 54,
+                      "col": 28,
+                      "name": "nOffsets"
+                    },
+                    "indices": [
+                      {
+                        "node": "Name",
+                        "line": 54,
+                        "col": 37,
+                        "name": "nSlot"
+                      }
+                    ]
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 54,
+                  "col": 44,
+                  "value": {
+                    "node": "Number",
+                    "line": 54,
+                    "col": 44,
+                    "value": 0,
+                    "text": "0"
+                  },
+                  "name": null,
+                  "conditional": false
+                },
+                {
+                  "node": "Arg",
+                  "line": 54,
+                  "col": 46,
+                  "value": {
+                    "node": "UnaryOp",
+                    "line": 54,
+                    "col": 46,
+                    "op": "-",
+                    "operand": {
+                      "node": "Number",
+                      "line": 54,
+                      "col": 47,
+                      "value": 400,
+                      "text": "400"
+                    }
+                  },
+                  "name": null,
+                  "conditional": false
+                }
+              ]
+            }
+          },
+          {
+            "node": "Assign",
+            "line": 55,
+            "col": 9,
+            "target": {
+              "node": "Component",
+              "line": 55,
+              "col": 9,
+              "base": {
+                "node": "Component",
+                "line": 55,
+                "col": 9,
+                "base": {
+                  "node": "Name",
+                  "line": 55,
+                  "col": 9,
+                  "name": "pPlace"
+                },
+                "field": "trans"
+              },
+              "field": "z"
+            },
+            "value": {
+              "node": "BinaryOp",
+              "line": 55,
+              "col": 25,
+              "op": "+",
+              "left": {
+                "node": "Component",
+                "line": 55,
+                "col": 25,
+                "base": {
+                  "node": "Component",
+                  "line": 55,
+                  "col": 25,
+                  "base": {
+                    "node": "Name",
+                    "line": 55,
+                    "col": 25,
+                    "name": "pPlace"
+                  },
+                  "field": "trans"
+                },
+                "field": "z"
+              },
+              "right": {
+                "node": "Number",
+                "line": 55,
+                "col": 40,
+                "value": 2.5,
+                "text": "2.5"
+              }
+            }
+          },
+          {
+            "node": "If",
+            "line": 56,
+            "col": 9,
+            "branches": [
+              {
+                "node": "IfBranch",
+                "condition": {
+                  "node": "BinaryOp",
+                  "line": 56,
+                  "col": 12,
+                  "op": "=",
+                  "left": {
+                    "node": "Name",
+                    "line": 56,
+                    "col": 12,
+                    "name": "nSlot"
+                  },
+                  "right": {
+                    "node": "Number",
+                    "line": 56,
+                    "col": 18,
+                    "value": 1,
+                    "text": "1"
+                  }
+                },
+                "body": [
+                  {
+                    "node": "Move",
+                    "line": 57,
+                    "col": 13,
+                    "kind": "J",
+                    "to_point": {
+                      "node": "Name",
+                      "line": 57,
+                      "col": 19,
+                      "name": "pPlace"
+                    },
+                    "speed": {
+                      "node": "Name",
+                      "line": 57,
+                      "col": 26,
+                      "name": "v800"
+                    },
+                    "zone": {
+                      "node": "Name",
+                      "line": 57,
+                      "col": 31,
+                      "name": "z20"
+                    },
+                    "tool": {
+                      "node": "Name",
+                      "line": 57,
+                      "col": 35,
+                      "name": "tGripper"
+                    },
+                    "via_point": null,
+                    "wobj": {
+                      "node": "Name",
+                      "line": 57,
+                      "col": 50,
+                      "name": "wobjFixture"
+                    },
+                    "options": []
+                  }
+                ]
+              },
+              {
+                "node": "IfBranch",
+                "condition": {
+                  "node": "BinaryOp",
+                  "line": 58,
+                  "col": 16,
+                  "op": "=",
+                  "left": {
+                    "node": "Name",
+                    "line": 58,
+                    "col": 16,
+                    "name": "nSlot"
+                  },
+                  "right": {
+                    "node": "Number",
+                    "line": 58,
+                    "col": 22,
+                    "value": 2,
+                    "text": "2"
+                  }
+                },
+                "body": [
+                  {
+                    "node": "Move",
+                    "line": 59,
+                    "col": 13,
+                    "kind": "C",
+                    "to_point": {
+                      "node": "Name",
+                      "line": 59,
+                      "col": 27,
+                      "name": "pArcEnd"
+                    },
+                    "speed": {
+                      "node": "Name",
+                      "line": 59,
+                      "col": 35,
+                      "name": "v300"
+                    },
+                    "zone": {
+                      "node": "Name",
+                      "line": 59,
+                      "col": 40,
+                      "name": "z10"
+                    },
+                    "tool": {
+                      "node": "Name",
+                      "line": 59,
+                      "col": 44,
+                      "name": "tGripper"
+                    },
+                    "via_point": {
+                      "node": "Name",
+                      "line": 59,
+                      "col": 19,
+                      "name": "pArcMid"
+                    },
+                    "wobj": {
+                      "node": "Name",
+                      "line": 59,
+                      "col": 59,
+                      "name": "wobjFixture"
+                    },
+                    "options": []
+                  }
+                ]
+              }
+            ],
+            "else_body": [
+              {
+                "node": "Move",
+                "line": 61,
+                "col": 13,
+                "kind": "L",
+                "to_point": {
+                  "node": "Name",
+                  "line": 61,
+                  "col": 19,
+                  "name": "pPlace"
+                },
+                "speed": {
+                  "node": "Name",
+                  "line": 61,
+                  "col": 26,
+                  "name": "v300"
+                },
+                "zone": {
+                  "node": "Name",
+                  "line": 61,
+                  "col": 31,
+                  "name": "fine"
+                },
+                "tool": {
+                  "node": "Name",
+                  "line": 61,
+                  "col": 36,
+                  "name": "tGripper"
+                },
+                "via_point": null,
+                "wobj": {
+                  "node": "Name",
+                  "line": 61,
+                  "col": 51,
+                  "name": "wobjFixture"
+                },
+                "options": []
+              }
+            ],
+            "compact": false
+          },
+          {
+            "node": "SetSignal",
+            "line": 63,
+            "col": 9,
+            "signal": {
+              "node": "Name",
+              "line": 63,
+              "col": 15,
+              "name": "DO_GripperClose"
+            },
+            "value": 0
+          },
+          {
+            "node": "WaitTime",
+            "line": 64,
+            "col": 9,
+            "seconds": {
+              "node": "Number",
+              "line": 64,
+              "col": 24,
+              "value": 0.2,
+              "text": "0.2"
+            },
+            "options": [
+              {
+                "node": "Arg",
+                "line": 64,
+                "col": 17,
+                "value": null,
+                "name": "InPos",
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "Unsupported",
+            "line": 65,
+            "col": 9,
+            "kind": "GOTO",
+            "reason": "GOTO is not supported",
+            "raw": "GOTO skip_log;"
+          },
+          {
+            "node": "ProcCall",
+            "line": 66,
+            "col": 9,
+            "name": "TPWrite",
+            "args": [
+              {
+                "node": "Arg",
+                "line": 66,
+                "col": 17,
+                "value": {
+                  "node": "String",
+                  "line": 66,
+                  "col": 17,
+                  "value": "Placed in slot "
+                },
+                "name": null,
+                "conditional": false
+              },
+              {
+                "node": "Arg",
+                "line": 66,
+                "col": 34,
+                "value": {
+                  "node": "Name",
+                  "line": 66,
+                  "col": 40,
+                  "name": "nSlot"
+                },
+                "name": "Num",
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "Unsupported",
+            "line": 67,
+            "col": 9,
+            "kind": "LABEL",
+            "reason": "labels (GOTO targets) are not supported",
+            "raw": "skip_log:"
+          }
+        ],
+        "params": "",
+        "return_type": null,
+        "scope": null,
+        "handlers": [
+          {
+            "node": "Unsupported",
+            "line": 68,
+            "col": 5,
+            "kind": "ERROR_HANDLER",
+            "reason": "ERROR handlers are not supported",
+            "raw": "ERROR\n        IF ERRNO=ERR_WAIT_MAXTIME RETRY;\n        RAISE;"
+          }
+        ]
+      },
+      {
+        "node": "Routine",
+        "line": 73,
+        "col": 5,
+        "kind": "FUNC",
+        "name": "IsFixtureFull",
+        "body": [
+          {
+            "node": "Return",
+            "line": 74,
+            "col": 9,
+            "value": {
+              "node": "BinaryOp",
+              "line": 74,
+              "col": 16,
+              "op": "AND",
+              "left": {
+                "node": "BinaryOp",
+                "line": 74,
+                "col": 16,
+                "op": ">=",
+                "left": {
+                  "node": "Name",
+                  "line": 74,
+                  "col": 16,
+                  "name": "nSlot"
+                },
+                "right": {
+                  "node": "Name",
+                  "line": 74,
+                  "col": 23,
+                  "name": "NB_SLOTS"
+                }
+              },
+              "right": {
+                "node": "UnaryOp",
+                "line": 74,
+                "col": 36,
+                "op": "NOT",
+                "operand": {
+                  "node": "Name",
+                  "line": 74,
+                  "col": 40,
+                  "name": "bPartPresent"
+                }
+              }
+            }
+          }
+        ],
+        "params": "",
+        "return_type": "bool",
+        "scope": null,
+        "handlers": []
+      }
+    ]
+  }
+}

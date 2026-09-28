@@ -1,0 +1,313 @@
+{
+  "encoding": "cp1252",
+  "diagnostics": [],
+  "module": {
+    "node": "Module",
+    "line": 6,
+    "col": 1,
+    "name": "Legacy_Palette",
+    "attributes": [
+      "SYSMODULE",
+      "NOSTEPIN"
+    ],
+    "body": [
+      {
+        "node": "Comment",
+        "line": 7,
+        "col": 3,
+        "text": " Palettisation - réglage opérateur, écrit à la main pour les tests"
+      },
+      {
+        "node": "DataDecl",
+        "line": 8,
+        "col": 3,
+        "storage": "CONST",
+        "type_name": "robtarget",
+        "name": "pDepose",
+        "dims": [],
+        "init": {
+          "node": "Aggregate",
+          "line": 8,
+          "col": 28,
+          "items": [
+            {
+              "node": "Aggregate",
+              "line": 8,
+              "col": 29,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 30,
+                  "value": 100,
+                  "text": "100"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 34,
+                  "value": 200,
+                  "text": "200"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 38,
+                  "value": 300,
+                  "text": "300"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 8,
+              "col": 43,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 44,
+                  "value": 1,
+                  "text": "1"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 46,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 48,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 50,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 8,
+              "col": 53,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 54,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 56,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 58,
+                  "value": 0,
+                  "text": "0"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 60,
+                  "value": 0,
+                  "text": "0"
+                }
+              ]
+            },
+            {
+              "node": "Aggregate",
+              "line": 8,
+              "col": 63,
+              "items": [
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 64,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 68,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 72,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 76,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 80,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                },
+                {
+                  "node": "Number",
+                  "line": 8,
+                  "col": 84,
+                  "value": 9000000000.0,
+                  "text": "9E9"
+                }
+              ]
+            }
+          ]
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 9,
+        "col": 3,
+        "storage": "VAR",
+        "type_name": "num",
+        "name": "nCouche",
+        "dims": [],
+        "init": {
+          "node": "Number",
+          "line": 9,
+          "col": 20,
+          "value": 0,
+          "text": "0"
+        },
+        "scope": null
+      },
+      {
+        "node": "Routine",
+        "line": 11,
+        "col": 3,
+        "kind": "PROC",
+        "name": "Depose",
+        "body": [
+          {
+            "node": "Move",
+            "line": 12,
+            "col": 5,
+            "kind": "L",
+            "to_point": {
+              "node": "Name",
+              "line": 12,
+              "col": 11,
+              "name": "pDepose"
+            },
+            "speed": {
+              "node": "Name",
+              "line": 12,
+              "col": 20,
+              "name": "v100"
+            },
+            "zone": {
+              "node": "Name",
+              "line": 12,
+              "col": 26,
+              "name": "z10"
+            },
+            "tool": {
+              "node": "Name",
+              "line": 12,
+              "col": 31,
+              "name": "tool0"
+            },
+            "via_point": null,
+            "wobj": null,
+            "options": []
+          },
+          {
+            "node": "Comment",
+            "line": 12,
+            "col": 39,
+            "text": " approche lente"
+          },
+          {
+            "node": "If",
+            "line": 13,
+            "col": 5,
+            "branches": [
+              {
+                "node": "IfBranch",
+                "condition": {
+                  "node": "BinaryOp",
+                  "line": 13,
+                  "col": 8,
+                  "op": ">",
+                  "left": {
+                    "node": "Name",
+                    "line": 13,
+                    "col": 8,
+                    "name": "nCouche"
+                  },
+                  "right": {
+                    "node": "Number",
+                    "line": 13,
+                    "col": 18,
+                    "value": 2,
+                    "text": "2"
+                  }
+                },
+                "body": [
+                  {
+                    "node": "SetSignal",
+                    "line": 14,
+                    "col": 7,
+                    "signal": {
+                      "node": "Name",
+                      "line": 14,
+                      "col": 13,
+                      "name": "doVentouse"
+                    },
+                    "value": 0
+                  }
+                ]
+              }
+            ],
+            "else_body": [],
+            "compact": false
+          },
+          {
+            "node": "WaitTime",
+            "line": 16,
+            "col": 5,
+            "seconds": {
+              "node": "Number",
+              "line": 16,
+              "col": 14,
+              "value": 1.5,
+              "text": "1.5"
+            },
+            "options": []
+          }
+        ],
+        "params": "",
+        "return_type": null,
+        "scope": null,
+        "handlers": []
+      }
+    ]
+  }
+}

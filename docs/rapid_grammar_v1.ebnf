@@ -1,0 +1,65 @@
+(* RAPID grammar accepted by CrossArm V1 — reference for src/crossarm/rapid/parser.py.
+   One rule here = one Parser method. Keywords are case-insensitive.
+   Constructs marked [UNSUPPORTED] are recognised, skipped as a whole and kept
+   as an Unsupported node with their raw text. *)
+
+module          = [ legacy_header ] "MODULE" IDENT [ "(" attribute { "," attribute } ")" ]
+                  { module_item } "ENDMODULE" ;
+legacy_header   = "%%%" ... "%%%" ;                       (* skipped by the lexer *)
+attribute       = IDENT | KEYWORD ;                        (* SYSMODULE, NOSTEPIN, ... *)
+
+module_item     = data_decl | routine
+                | record_decl                              (* [UNSUPPORTED] RECORD ... ENDRECORD *)
+                | alias_decl ;                             (* [UNSUPPORTED] ALIAS type name; *)
+data_decl       = [ "LOCAL" | "TASK" ] ( "VAR" | "PERS" | "CONST" ) IDENT IDENT
+                  [ "{" expr_list "}" ] [ ":=" expr ] ";" ;
+
+routine         = [ "LOCAL" ] ( proc | func | trap ) ;
+proc            = "PROC" IDENT "(" raw_params ")" body { handler } "ENDPROC" ;
+func            = "FUNC" IDENT IDENT "(" raw_params ")" body { handler } "ENDFUNC" ;
+trap            = "TRAP" IDENT body { handler } "ENDTRAP" ;
+raw_params      = ? any balanced tokens, kept as text ? ; (* parameterised routines: out of V1 *)
+handler         = ( "ERROR" | "UNDO" | "BACKWARD" ) ... ;  (* [UNSUPPORTED] up to the next handler or routine end *)
+
+body            = { statement } ;
+statement       = if_stmt | for_stmt | while_stmt | test_stmt
+                | "RETURN" [ expr ] ";" | "EXIT" ";"
+                | data_decl                                (* routine-local, no LOCAL/TASK *)
+                | assignment | proc_call
+                | ( "GOTO" | "RAISE" | "RETRY" | "TRYNEXT" | "CONNECT" ) ... ";"   (* [UNSUPPORTED] *)
+                | IDENT ":"                                (* [UNSUPPORTED] label *)
+                | "%" expr "%" [ args ] ";" ;              (* [UNSUPPORTED] late-binding call *)
+
+if_stmt         = "IF" expr "THEN" body { "ELSEIF" expr "THEN" body } [ "ELSE" body ] "ENDIF"
+                | "IF" expr statement ;                    (* compact one-line IF *)
+for_stmt        = "FOR" IDENT "FROM" expr "TO" expr [ "STEP" expr ] "DO" body "ENDFOR" ;
+while_stmt      = "WHILE" expr "DO" body "ENDWHILE" ;
+test_stmt       = "TEST" expr { "CASE" expr_list ":" body } [ "DEFAULT" ":" body ] "ENDTEST" ;
+
+assignment      = postfix ":=" expr ";" ;
+proc_call       = IDENT [ args ] ";" ;                     (* MoveJ/L/C/AbsJ, Set, Reset, WaitTime
+                                                              are specialised after parsing *)
+args            = arg { [ "," ] arg } ;                    (* comma optional before "\" args only *)
+arg             = expr
+                | "\" IDENT [ ":=" expr ]                  (* optional argument or switch *)
+                | "\" IDENT "?" IDENT ;                    (* conditional argument *)
+
+(* Expressions, lowest precedence first *)
+expr            = and_expr { ( "OR" | "XOR" ) and_expr } ;
+and_expr        = not_expr { "AND" not_expr } ;
+not_expr        = "NOT" not_expr | relational ;
+relational      = additive [ ( "=" | "<>" | "<" | "<=" | ">" | ">=" ) additive ] ;
+additive        = multiplicative { ( "+" | "-" ) multiplicative } ;
+multiplicative  = unary { ( "*" | "/" | "DIV" | "MOD" ) unary } ;
+unary           = ( "-" | "+" ) unary | postfix ;
+postfix         = primary { "." IDENT | "{" expr_list "}" } ;
+primary         = NUMBER | STRING | "TRUE" | "FALSE"
+                | IDENT [ "(" [ args ] ")" ]               (* name or function call *)
+                | "(" expr ")"
+                | "[" [ expr_list ] "]" ;                  (* aggregate: robtarget, array... *)
+expr_list       = expr { "," expr } ;
+
+(* Lexical *)
+NUMBER          = digits [ "." [ digits ] ] [ exponent ] | "." digits [ exponent ] ;   (* 9E+09 *)
+STRING          = '"' { char | '""' | '\\' } '"' ;       (* single line *)
+comment         = "!" ? to end of line ? ;                (* kept, re-attached between statements *)

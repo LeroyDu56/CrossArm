@@ -1,0 +1,353 @@
+{
+ "runs": {
+  "joint 5%": {
+   "time": 3.333
+  },
+  "joint 10%": {
+   "time": 1.805
+  },
+  "joint 15%": {
+   "time": 1.296
+  },
+  "joint 20%": {
+   "time": 1.041
+  },
+  "joint 25%": {
+   "time": 0.888
+  },
+  "joint 30%": {
+   "time": 0.788
+  },
+  "joint 40%": {
+   "time": 0.745
+  },
+  "joint 50%": {
+   "time": 0.823
+  },
+  "joint 70%": {
+   "time": 0.767
+  },
+  "joint 100%": {
+   "time": 0.769
+  },
+  "swing 5%": {
+   "time": 4.816
+  },
+  "swing 10%": {
+   "time": 2.488
+  },
+  "swing 15%": {
+   "time": 1.712
+  },
+  "swing 20%": {
+   "time": 1.324
+  },
+  "swing 25%": {
+   "time": 1.092
+  },
+  "swing 30%": {
+   "time": 0.936
+  },
+  "swing 40%": {
+   "time": 0.742
+  },
+  "swing 50%": {
+   "time": 0.626
+  },
+  "swing 70%": {
+   "time": 0.529
+  },
+  "swing 100%": {
+   "time": 0.591
+  },
+  "rise 5%": {
+   "time": 3.324
+  },
+  "rise 10%": {
+   "time": 1.772
+  },
+  "rise 15%": {
+   "time": 1.255
+  },
+  "rise 20%": {
+   "time": 0.996
+  },
+  "rise 25%": {
+   "time": 0.841
+  },
+  "rise 30%": {
+   "time": 0.738
+  },
+  "rise 40%": {
+   "time": 0.608
+  },
+  "rise 50%": {
+   "time": 0.548
+  },
+  "rise 70%": {
+   "time": 0.561
+  },
+  "rise 100%": {
+   "time": 0.517
+  },
+  "linear 100mm/sec": {
+   "time": 6.148
+  },
+  "linear 200mm/sec": {
+   "time": 3.148
+  },
+  "linear 500mm/sec": {
+   "time": 1.348
+  },
+  "linear 1000mm/sec": {
+   "time": 0.748
+  },
+  "linear 1500mm/sec": {
+   "time": 0.548
+  },
+  "linear 2000mm/sec": {
+   "time": 0.463
+  },
+  "corner 200mm/sec FINE": {
+   "time": 3.9,
+   "cut": 0.0
+  },
+  "corner 200mm/sec CNT0": {
+   "time": 3.899,
+   "cut": 0.0
+  },
+  "corner 200mm/sec CNT10": {
+   "time": 3.814,
+   "cut": 0.182
+  },
+  "corner 200mm/sec CNT20": {
+   "time": 3.788,
+   "cut": 0.5
+  },
+  "corner 200mm/sec CNT30": {
+   "time": 3.768,
+   "cut": 0.909
+  },
+  "corner 200mm/sec CNT40": {
+   "time": 3.751,
+   "cut": 1.393
+  },
+  "corner 200mm/sec CNT50": {
+   "time": 3.736,
+   "cut": 1.943
+  },
+  "corner 200mm/sec CNT60": {
+   "time": 3.722,
+   "cut": 2.569
+  },
+  "corner 200mm/sec CNT70": {
+   "time": 3.71,
+   "cut": 3.205
+  },
+  "corner 200mm/sec CNT80": {
+   "time": 3.701,
+   "cut": 3.876
+  },
+  "corner 200mm/sec CNT90": {
+   "time": 3.701,
+   "cut": 4.368
+  },
+  "corner 200mm/sec CNT100": {
+   "time": 3.703,
+   "cut": 4.753
+  },
+  "corner 500mm/sec FINE": {
+   "time": 1.8,
+   "cut": 0.0
+  },
+  "corner 500mm/sec CNT0": {
+   "time": 1.799,
+   "cut": 0.0
+  },
+  "corner 500mm/sec CNT10": {
+   "time": 1.714,
+   "cut": 0.456
+  },
+  "corner 500mm/sec CNT20": {
+   "time": 1.688,
+   "cut": 1.251
+  },
+  "corner 500mm/sec CNT30": {
+   "time": 1.668,
+   "cut": 2.271
+  },
+  "corner 500mm/sec CNT40": {
+   "time": 1.651,
+   "cut": 3.482
+  },
+  "corner 500mm/sec CNT50": {
+   "time": 1.636,
+   "cut": 4.855
+  },
+  "corner 500mm/sec CNT60": {
+   "time": 1.622,
+   "cut": 6.425
+  },
+  "corner 500mm/sec CNT70": {
+   "time": 1.61,
+   "cut": 8.012
+  },
+  "corner 500mm/sec CNT80": {
+   "time": 1.601,
+   "cut": 9.686
+  },
+  "corner 500mm/sec CNT90": {
+   "time": 1.601,
+   "cut": 10.92
+  },
+  "corner 500mm/sec CNT100": {
+   "time": 1.603,
+   "cut": 11.885
+  },
+  "corner 1000mm/sec FINE": {
+   "time": 1.1,
+   "cut": 0.0
+  },
+  "corner 1000mm/sec CNT0": {
+   "time": 1.099,
+   "cut": 0.0
+  },
+  "corner 1000mm/sec CNT10": {
+   "time": 1.024,
+   "cut": 1.016
+  },
+  "corner 1000mm/sec CNT20": {
+   "time": 0.996,
+   "cut": 2.821
+  },
+  "corner 1000mm/sec CNT30": {
+   "time": 0.974,
+   "cut": 5.208
+  },
+  "corner 1000mm/sec CNT40": {
+   "time": 0.956,
+   "cut": 7.945
+  },
+  "corner 1000mm/sec CNT50": {
+   "time": 0.94,
+   "cut": 11.069
+  },
+  "corner 1000mm/sec CNT60": {
+   "time": 0.925,
+   "cut": 14.653
+  },
+  "corner 1000mm/sec CNT70": {
+   "time": 0.915,
+   "cut": 18.052
+  },
+  "corner 1000mm/sec CNT80": {
+   "time": 0.916,
+   "cut": 20.491
+  },
+  "corner 1000mm/sec CNT90": {
+   "time": 0.915,
+   "cut": 23.359
+  },
+  "corner 1000mm/sec CNT100": {
+   "time": 0.917,
+   "cut": 25.572
+  },
+  "jcorner 9% FINE": {
+   "time": 2.475,
+   "cut": 0.0
+  },
+  "jcorner 9% CNT0": {
+   "time": 2.474,
+   "cut": 0.0
+  },
+  "jcorner 9% CNT10": {
+   "time": 2.404,
+   "cut": 0.264
+  },
+  "jcorner 9% CNT20": {
+   "time": 2.375,
+   "cut": 0.761
+  },
+  "jcorner 9% CNT30": {
+   "time": 2.354,
+   "cut": 1.359
+  },
+  "jcorner 9% CNT40": {
+   "time": 2.335,
+   "cut": 2.117
+  },
+  "jcorner 9% CNT50": {
+   "time": 2.319,
+   "cut": 2.944
+  },
+  "jcorner 9% CNT60": {
+   "time": 2.305,
+   "cut": 3.822
+  },
+  "jcorner 9% CNT70": {
+   "time": 2.291,
+   "cut": 4.859
+  },
+  "jcorner 9% CNT80": {
+   "time": 2.283,
+   "cut": 5.786
+  },
+  "jcorner 9% CNT90": {
+   "time": 2.282,
+   "cut": 6.611
+  },
+  "jcorner 9% CNT100": {
+   "time": 2.284,
+   "cut": 7.25
+  },
+  "jcorner 19% FINE": {
+   "time": 1.388,
+   "cut": 0.0
+  },
+  "jcorner 19% CNT0": {
+   "time": 1.387,
+   "cut": 0.0
+  },
+  "jcorner 19% CNT10": {
+   "time": 1.317,
+   "cut": 0.559
+  },
+  "jcorner 19% CNT20": {
+   "time": 1.288,
+   "cut": 1.6
+  },
+  "jcorner 19% CNT30": {
+   "time": 1.267,
+   "cut": 2.867
+  },
+  "jcorner 19% CNT40": {
+   "time": 1.248,
+   "cut": 4.47
+  },
+  "jcorner 19% CNT50": {
+   "time": 1.232,
+   "cut": 6.215
+  },
+  "jcorner 19% CNT60": {
+   "time": 1.218,
+   "cut": 8.07
+  },
+  "jcorner 19% CNT70": {
+   "time": 1.204,
+   "cut": 10.272
+  },
+  "jcorner 19% CNT80": {
+   "time": 1.196,
+   "cut": 12.218
+  },
+  "jcorner 19% CNT90": {
+   "time": 1.195,
+   "cut": 13.961
+  },
+  "jcorner 19% CNT100": {
+   "time": 1.197,
+   "cut": 15.313
+  }
+ },
+ "samples": 189574
+}

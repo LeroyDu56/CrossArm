@@ -1,0 +1,34 @@
+/PROG  WAITTIME
+/ATTR
+OWNER		= MNEDITOR;
+COMMENT		= "wait probe";
+PROG_SIZE	= 0;
+CREATE		= DATE 26-01-01  TIME 00:00:00;
+MODIFIED	= DATE 26-01-01  TIME 00:00:00;
+FILE_NAME	= ;
+VERSION		= 0;
+LINE_COUNT	= 11;
+MEMORY_SIZE	= 0;
+PROTECT		= READ_WRITE;
+TCD:  STACK_SIZE	= 0,
+      TASK_PRIORITY	= 50,
+      TIME_SLICE	= 0,
+      BUSY_LAMP_OFF	= 0,
+      ABORT_REQUEST	= 0,
+      PAUSE_REQUEST	= 0;
+DEFAULT_GROUP	= 1,*,*,*,*;
+CONTROL_CODE	= 00000000 00000000;
+/MN
+   1:  !wait probe: timing ;
+   2:  TIMER[1]=RESET ;
+   3:  TIMER[1]=START ;
+   4:  WAIT   1.00(sec) ;
+   5:  TIMER[1]=STOP ;
+   6:  R[41]=TIMER[1]    ;
+   7:  TIMER[1]=RESET ;
+   8:  TIMER[1]=START ;
+   9:  CALL WAITPROBE    ;
+  10:  TIMER[1]=STOP ;
+  11:  R[42]=TIMER[1]    ;
+/POS
+/END

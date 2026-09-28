@@ -1,0 +1,67 @@
+name: release
+
+# Builds CrossArm.exe from a version tag (git tag v1.0.0 && git push origin v1.0.0)
+# and publishes it, with its SHA-256, as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]" pyinstaller
+      - name: Tests
+        run: python -m pytest -q
+      - name: Build
+        # --splash: shown the moment the exe starts, while it unpacks (1 to 2 s with nothing on screen otherwise)
+        run: python -m PyInstaller --onefile --windowed --name CrossArm --icon packaging/crossarm.ico --splash packaging/splash.png --paths src packaging/crossarm_app.py
+      - name: Smoke test (no window)
+        shell: pwsh
+        run: |
+          $env:CROSSARM_NO_GUI = "1"
+          Copy-Item tests/fixtures/rapid/pick_and_place.mod $env:RUNNER_TEMP
+          $p = Start-Process dist/CrossArm.exe -ArgumentList "$env:RUNNER_TEMP\pick_and_place.mod" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { exit 1 }
+          if (-not (Test-Path "$env:RUNNER_TEMP\crossarm_pick_and_place\MAIN.LS")) { exit 1 }
+      - name: Smoke test (ABB + target FANUC backup dropped together)
+        shell: pwsh
+        run: |
+          $env:CROSSARM_NO_GUI = "1"
+          Copy-Item tests/fixtures/rapid/logic_and_io.mod $env:RUNNER_TEMP
+          Copy-Item tests/fixtures/fanuc/roboguide_export "$env:RUNNER_TEMP\fanuc_target" -Recurse
+          $p = Start-Process dist/CrossArm.exe -Wait -PassThru -NoNewWindow `
+            -ArgumentList "$env:RUNNER_TEMP\logic_and_io.mod", "$env:RUNNER_TEMP\fanuc_target"
+          if ($p.ExitCode -ne 0) { exit 1 }
+          $out = "$env:RUNNER_TEMP\crossarm_logic_and_io"
+          if (-not (Test-Path "$out\crossarm_mapping.json")) { Write-Error "no mapping file"; exit 1 }
+          if (-not (Select-String -Path "$out\crossarm_report.md" -Pattern '\| Taken \|' -Quiet)) {
+            Write-Error "the FANUC backup was not used"; exit 1
+          }
+      - name: Bundle the Python licence (THIRD_PARTY_LICENSES.md)
+        shell: pwsh
+        run: |
+          $license = Join-Path (Split-Path (Get-Command python).Source) "LICENSE.txt"
+          if (-not (Test-Path $license)) { Write-Error "Python LICENSE.txt not found"; exit 1 }
+          Copy-Item $license dist/python_license.txt
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/CrossArm.exe -Algorithm SHA256).Hash.ToLower()
+          # LF, not the CRLF Out-File writes: `sha256sum -c` would read the file name as "CrossArm.exe\r"
+          [System.IO.File]::WriteAllText("$PWD/dist/CrossArm.exe.sha256", "$hash  CrossArm.exe`n")
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create $env:GITHUB_REF_NAME dist/CrossArm.exe dist/CrossArm.exe.sha256 dist/python_license.txt
+          --title "CrossArm $env:GITHUB_REF_NAME" --notes-file packaging/release_notes.md

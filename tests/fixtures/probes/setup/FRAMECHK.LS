@@ -1,0 +1,29 @@
+/PROG  FRAMECHK
+/ATTR
+OWNER		= MNEDITOR;
+COMMENT		= "setup probe";
+PROG_SIZE	= 0;
+CREATE		= DATE 26-01-01  TIME 00:00:00;
+MODIFIED	= DATE 26-01-01  TIME 00:00:00;
+FILE_NAME	= ;
+VERSION		= 0;
+LINE_COUNT	= 6;
+MEMORY_SIZE	= 0;
+PROTECT		= READ_WRITE;
+TCD:  STACK_SIZE	= 0,
+      TASK_PRIORITY	= 50,
+      TIME_SLICE	= 0,
+      BUSY_LAMP_OFF	= 0,
+      ABORT_REQUEST	= 0,
+      PAUSE_REQUEST	= 0;
+DEFAULT_GROUP	= 1,*,*,*,*;
+CONTROL_CODE	= 00000000 00000000;
+/MN
+   1:  !CrossArm setup probe: read back ;
+   2:  PR[31]=UTOOL[1] ;
+   3:  PR[32]=UTOOL[2] ;
+   4:  PR[33]=UTOOL[3] ;
+   5:  PR[41]=UFRAME[1] ;
+   6:  PR[42]=UFRAME[2] ;
+/POS
+/END

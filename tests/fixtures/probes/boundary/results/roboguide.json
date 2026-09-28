@@ -1,0 +1,26 @@
+{
+ "R-2000iC/190S": {
+  "status": "done",
+  "configs": {
+   "pAhead": "N U T, 0, 0, 1",
+   "pAheadTool": "N U T, 0, 0, 1",
+   "pAheadHigh": "N U T, 0, 0, 1",
+   "pTurned": "N U T, 0, 0, 1",
+   "pTurnedBack": "N U T, 0, 0, 0",
+   "pAside": "N U T, 0, 0, 1",
+   "pSide45": "N U T, 0, 0, 1"
+  }
+ },
+ "R-1000iA/80F": {
+  "status": "done",
+  "configs": {
+   "pAhead": "N U T, 0, 0, 1",
+   "pAheadTool": "N U T, 0, 0, 1",
+   "pAheadHigh": "N U T, 0, 0, 1",
+   "pTurned": "N U T, 0, 0, 1",
+   "pTurnedBack": "N U T, 0, 0, 0",
+   "pAside": "N U T, 0, 0, 1",
+   "pSide45": "N U T, 0, 0, 1"
+  }
+ }
+}

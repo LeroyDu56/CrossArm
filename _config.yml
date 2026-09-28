@@ -1,0 +1,32 @@
+# GitHub Pages site (Settings > Pages > Deploy from a branch > main / root).
+# The README becomes the home page; docs/*.md become pages of their own.
+title: "CrossArm — ABB RAPID to FANUC TP converter"
+description: >-
+  Convert ABB robot programs (RAPID .mod, .modx, .sys) and RobotWare backups into FANUC TP
+  programs (.LS), with a report of everything left to review. Offline, Windows exe or Python.
+url: "https://leroydu56.github.io"
+baseurl: "/CrossArm"
+lang: en
+author:
+  name: Enzo LEROY
+image: /docs/images/social_preview.png
+twitter:
+  card: summary_large_image
+social:
+  name: Enzo LEROY
+  links:
+    - https://github.com/LeroyDu56
+
+plugins:
+  - jekyll-seo-tag   # title, description, Open Graph and JSON-LD on every page
+  - jekyll-sitemap   # sitemap.xml for search engines
+
+# Code and test data are browsed on GitHub, not published as pages.
+exclude:
+  - src
+  - tests
+  - tools
+  - packaging
+  - .github
+  - pyproject.toml
+  - CITATION.cff

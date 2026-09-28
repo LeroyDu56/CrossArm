@@ -1,0 +1,287 @@
+{
+  "encoding": "utf-8",
+  "diagnostics": [],
+  "module": {
+    "node": "Module",
+    "line": 1,
+    "col": 1,
+    "name": "HmiAndGroups",
+    "attributes": [],
+    "body": [
+      {
+        "node": "Comment",
+        "line": 2,
+        "col": 5,
+        "text": "============================================================="
+      },
+      {
+        "node": "Comment",
+        "line": 3,
+        "col": 5,
+        "text": " Synthetic demo: operator messages and group I/O."
+      },
+      {
+        "node": "Comment",
+        "line": 4,
+        "col": 5,
+        "text": " Written from scratch for the test suite."
+      },
+      {
+        "node": "Comment",
+        "line": 5,
+        "col": 5,
+        "text": "============================================================="
+      },
+      {
+        "node": "DataDecl",
+        "line": 6,
+        "col": 5,
+        "storage": "CONST",
+        "type_name": "string",
+        "name": "MSG_READY",
+        "dims": [],
+        "init": {
+          "node": "String",
+          "line": 6,
+          "col": 29,
+          "value": "Cell ready"
+        },
+        "scope": null
+      },
+      {
+        "node": "DataDecl",
+        "line": 7,
+        "col": 5,
+        "storage": "VAR",
+        "type_name": "num",
+        "name": "nCode",
+        "dims": [],
+        "init": {
+          "node": "Number",
+          "line": 7,
+          "col": 20,
+          "value": 0,
+          "text": "0"
+        },
+        "scope": null
+      },
+      {
+        "node": "Routine",
+        "line": 9,
+        "col": 5,
+        "kind": "PROC",
+        "name": "ReportCycle",
+        "body": [
+          {
+            "node": "ProcCall",
+            "line": 10,
+            "col": 9,
+            "name": "TPErase",
+            "args": []
+          },
+          {
+            "node": "ProcCall",
+            "line": 11,
+            "col": 9,
+            "name": "TPWrite",
+            "args": [
+              {
+                "node": "Arg",
+                "line": 11,
+                "col": 17,
+                "value": {
+                  "node": "Name",
+                  "line": 11,
+                  "col": 17,
+                  "name": "MSG_READY"
+                },
+                "name": null,
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "ProcCall",
+            "line": 12,
+            "col": 9,
+            "name": "TPWrite",
+            "args": [
+              {
+                "node": "Arg",
+                "line": 12,
+                "col": 17,
+                "value": {
+                  "node": "String",
+                  "line": 12,
+                  "col": 17,
+                  "value": "Waiting for [code]"
+                },
+                "name": null,
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "Assign",
+            "line": 13,
+            "col": 9,
+            "target": {
+              "node": "Name",
+              "line": 13,
+              "col": 9,
+              "name": "nCode"
+            },
+            "value": {
+              "node": "FuncCall",
+              "line": 13,
+              "col": 16,
+              "name": "GInput",
+              "args": [
+                {
+                  "node": "Arg",
+                  "line": 13,
+                  "col": 23,
+                  "value": {
+                    "node": "Name",
+                    "line": 13,
+                    "col": 23,
+                    "name": "giCycleCode"
+                  },
+                  "name": null,
+                  "conditional": false
+                }
+              ]
+            }
+          },
+          {
+            "node": "ProcCall",
+            "line": 14,
+            "col": 9,
+            "name": "SetGO",
+            "args": [
+              {
+                "node": "Arg",
+                "line": 14,
+                "col": 15,
+                "value": {
+                  "node": "Name",
+                  "line": 14,
+                  "col": 15,
+                  "name": "goEchoCode"
+                },
+                "name": null,
+                "conditional": false
+              },
+              {
+                "node": "Arg",
+                "line": 14,
+                "col": 26,
+                "value": {
+                  "node": "Name",
+                  "line": 14,
+                  "col": 26,
+                  "name": "nCode"
+                },
+                "name": null,
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "ProcCall",
+            "line": 15,
+            "col": 9,
+            "name": "SetGO",
+            "args": [
+              {
+                "node": "Arg",
+                "line": 15,
+                "col": 15,
+                "value": {
+                  "node": "Name",
+                  "line": 15,
+                  "col": 15,
+                  "name": "goStatus"
+                },
+                "name": null,
+                "conditional": false
+              },
+              {
+                "node": "Arg",
+                "line": 15,
+                "col": 24,
+                "value": {
+                  "node": "Number",
+                  "line": 15,
+                  "col": 24,
+                  "value": 3,
+                  "text": "3"
+                },
+                "name": null,
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "ProcCall",
+            "line": 16,
+            "col": 9,
+            "name": "TPWrite",
+            "args": [
+              {
+                "node": "Arg",
+                "line": 16,
+                "col": 17,
+                "value": {
+                  "node": "String",
+                  "line": 16,
+                  "col": 17,
+                  "value": "Exactly 24 characters ok"
+                },
+                "name": null,
+                "conditional": false
+              }
+            ]
+          },
+          {
+            "node": "ProcCall",
+            "line": 17,
+            "col": 9,
+            "name": "TPWrite",
+            "args": [
+              {
+                "node": "Arg",
+                "line": 17,
+                "col": 17,
+                "value": {
+                  "node": "BinaryOp",
+                  "line": 17,
+                  "col": 17,
+                  "op": "+",
+                  "left": {
+                    "node": "String",
+                    "line": 17,
+                    "col": 17,
+                    "value": "Cycle "
+                  },
+                  "right": {
+                    "node": "String",
+                    "line": 17,
+                    "col": 26,
+                    "value": "started"
+                  }
+                },
+                "name": null,
+                "conditional": false
+              }
+            ]
+          }
+        ],
+        "params": "",
+        "return_type": null,
+        "scope": null,
+        "handlers": []
+      }
+    ]
+  }
+}

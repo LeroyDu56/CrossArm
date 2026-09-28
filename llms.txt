@@ -1,0 +1,25 @@
+# CrossArm
+
+> CrossArm converts ABB industrial robot programs written in RAPID into FANUC TP programs (.LS). It reads a complete RobotWare backup (every robot task, EIO.cfg, system modules) or loose .mod/.modx/.sys files and writes one FANUC program per routine, plus an HTML report of everything that still needs a person. Offline; Windows executable or Python 3.11+ with no runtime dependency. Licence: Business Source License 1.1 (free for evaluation and other non-production use).
+
+Key facts:
+
+- Converts: MoveJ/MoveL/MoveC/MoveAbsJ with their targets (including Offs and RelTool), robtarget quaternion to W,P,R, ABB confdata to FANUC CONFIG, tool and work objects to UTOOL/UFRAME, speed and zone data, num/bool data to R[]/F[], digital and group I/O typed by EIO.cfg, IF/ELSEIF/FOR/WHILE, conditions calling the backup's own bool functions (written as the test they make), calls with num/bool/switch arguments (CALL NAME(args) / AR[n]), calls to the integrator's own move routines, waits with MaxTime and their ERROR handler's timeout path, TPWrite to MESSAGE. SETUP_FRAMES.LS sets the tool and user frames on the robot.
+- Reports as TODO rather than guessing: other parameter types, FUNC doing more than return a test, TRAP, frames and targets computed from data that changes at run time (frames computed from fixed values are worked out at conversion time), error handlers beyond wait timeouts, RECORD, GOTO, late binding, ABB-specific instructions. The report gives the share of the RAPID instructions converted, by area.
+- Measured, not assumed: the arm-configuration and joint-axis conventions of both makers were measured with RobotStudio and ROBOGUIDE; generated programs were loaded in ROBOGUIDE and matched its re-export byte for byte; on 16 test moves (rotated tools and work objects, Offs, RelTool) the flange pose computed by RobotStudio and the one reached by ROBOGUIDE running the converted program agree within 0.004 mm and 0.001 degree. Speeds and zones are measured on both robots (RobotStudio and ROBOGUIDE): joint % = RAPID speed / 4500 mm/s, and each zone is written as the CNT that rounds a corner as much at the move's speed; converted moves take within 20 % of the ABB's time and round corners to within 0.8 mm.
+- Numbering fits the target cell: given the FANUC robot's own backup, CrossArm leaves its frame, register and I/O numbers and its program names free; a mapping file pins any number.
+- Output is a starting point for commissioning: payloads, reachability and every TODO must be checked before running a robot, and the points touched up: they are the ABB's, as theoretical points. CrossArm aims for a path within 10 mm of the ABB's; measured against an IRB 6700 on two FANUC robots, within 4 mm (approaches, retracts, corners, reversals, zigzags).
+
+## Docs
+
+- [README](https://github.com/LeroyDu56/CrossArm#readme): what CrossArm does, how to use it, what to expect, FAQ
+- [User guide](https://github.com/LeroyDu56/CrossArm/blob/main/docs/guide.md): full conversion table, report, numbering and mapping file, tool on the flange, speeds and zones
+- [Validation](https://github.com/LeroyDu56/CrossArm/blob/main/docs/validation.md): every probe and measurement on RobotStudio and ROBOGUIDE
+- [FANUC .LS format status](https://github.com/LeroyDu56/CrossArm/blob/main/docs/fanuc_ls_format.md): every emitted construct and its source of truth
+- [Design notes](https://github.com/LeroyDu56/CrossArm/blob/main/docs/design.md)
+- [Changelog](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md)
+- [Licensing](https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md): free versus production use
+
+## Download
+
+- [Latest release (CrossArm.exe)](https://github.com/LeroyDu56/CrossArm/releases/latest)

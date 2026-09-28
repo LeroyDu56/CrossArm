@@ -1,0 +1,261 @@
+{
+ "system": "IRB6700_140_285_MH6",
+ "runs": {
+  "approach 100 z10": {
+   "cut": {
+    "pAbove100": 4.86
+   },
+   "straight_in": 85.5,
+   "straight_out": 2.0,
+   "deviation": 3.64
+  },
+  "approach 100 z50": {
+   "cut": {
+    "pAbove100": 12.98
+   },
+   "straight_in": 54.8,
+   "straight_out": 2.0,
+   "deviation": 10.3
+  },
+  "approach 100 z100": {
+   "cut": {
+    "pAbove100": 24.8
+   },
+   "straight_in": 12.2,
+   "straight_out": 2.0,
+   "deviation": 20.2
+  },
+  "approach 50 z10": {
+   "cut": {
+    "pAbove50": 4.46
+   },
+   "straight_in": 35.9,
+   "straight_out": 2.4,
+   "deviation": 3.71
+  },
+  "approach 50 z50": {
+   "cut": {
+    "pAbove50": 11.88
+   },
+   "straight_in": 7.8,
+   "straight_out": 2.4,
+   "deviation": 10.05
+  },
+  "approach 50 z100": {
+   "cut": {
+    "pAbove50": 15.99
+   },
+   "straight_in": 5.2,
+   "straight_out": 2.4,
+   "deviation": 13.43
+  },
+  "approach 20 z10": {
+   "cut": {
+    "pAbove20": 4.18
+   },
+   "straight_in": 7.6,
+   "straight_out": 2.4,
+   "deviation": 3.55
+  },
+  "approach 20 z50": {
+   "cut": {
+    "pAbove20": 7.3
+   },
+   "straight_in": 2.5,
+   "straight_out": 2.4,
+   "deviation": 6.1
+  },
+  "approach 20 z100": {
+   "cut": {
+    "pAbove20": 8.87
+   },
+   "straight_in": 2.1,
+   "straight_out": 2.4,
+   "deviation": 7.62
+  },
+  "japproach z10": {
+   "cut": {
+    "pAbove100": 4.84
+   },
+   "straight_in": 84.6
+  },
+  "japproach z50": {
+   "cut": {
+    "pAbove100": 12.81
+   },
+   "straight_in": 53.5
+  },
+  "japproach z100": {
+   "cut": {
+    "pAbove100": 24.35
+   },
+   "straight_in": 10.8
+  },
+  "retract 100 z10": {
+   "cut": {
+    "pAbove100": 4.94
+   },
+   "straight_in": 2.3,
+   "straight_out": 85.1,
+   "deviation": 3.69
+  },
+  "retract 100 z50": {
+   "cut": {
+    "pAbove100": 12.97
+   },
+   "straight_in": 2.5,
+   "straight_out": 53.8,
+   "deviation": 10.31
+  },
+  "retract 100 z100": {
+   "cut": {
+    "pAbove100": 24.8
+   },
+   "straight_in": 2.3,
+   "straight_out": 12.2,
+   "deviation": 20.17
+  },
+  "retract 20 z10": {
+   "cut": {
+    "pAbove20": 4.18
+   },
+   "straight_in": 2.3,
+   "straight_out": 7.4,
+   "deviation": 3.49
+  },
+  "retract 20 z50": {
+   "cut": {
+    "pAbove20": 7.28
+   },
+   "straight_in": 2.6,
+   "straight_out": 2.7,
+   "deviation": 6.15
+  },
+  "retract 20 z100": {
+   "cut": {
+    "pAbove20": 8.86
+   },
+   "straight_in": 2.5,
+   "straight_out": 2.1,
+   "deviation": 7.63
+  },
+  "jretract z10": {
+   "cut": {
+    "pAbove100": 5.01
+   },
+   "straight_out": 85.0
+  },
+  "jretract z50": {
+   "cut": {
+    "pAbove100": 12.81
+   },
+   "straight_out": 52.6
+  },
+  "jretract z100": {
+   "cut": {
+    "pAbove100": 24.36
+   },
+   "straight_out": 11.1
+  },
+  "reversal z5": {
+   "cut": {
+    "pDownB": 2.61
+   },
+   "straight_in": 178.1,
+   "straight_out": 176.1,
+   "deviation": 0.35
+  },
+  "reversal z20": {
+   "cut": {
+    "pDownB": 9.48
+   },
+   "straight_in": 172.9,
+   "straight_out": 172.9,
+   "deviation": 0.38
+  },
+  "reversal z50": {
+   "cut": {
+    "pDownB": 22.35
+   },
+   "straight_in": 157.6,
+   "straight_out": 153.9,
+   "deviation": 0.56
+  },
+  "turn45 z10": {
+   "cut": {
+    "pTurn": 2.85
+   },
+   "straight_in": 2.4,
+   "straight_out": 3.5,
+   "deviation": 2.6
+  },
+  "turn45 z50": {
+   "cut": {
+    "pTurn": 9.38
+   },
+   "straight_in": 2.3,
+   "straight_out": 3.5,
+   "deviation": 8.51
+  },
+  "turn135 z10": {
+   "cut": {
+    "pTurn": 4.69
+   },
+   "straight_in": 2.1,
+   "straight_out": 3.5,
+   "deviation": 1.71
+  },
+  "turn135 z50": {
+   "cut": {
+    "pTurn": 20.4
+   },
+   "straight_in": 2.3,
+   "straight_out": 3.5,
+   "deviation": 7.71
+  },
+  "zigzag v300 z10": {
+   "cut": {
+    "pZig1": 5.0,
+    "pZig2": 4.84,
+    "pZig3": 5.14,
+    "pZig4": 3.46
+   },
+   "straight_in": 2.3,
+   "straight_out": 2.4,
+   "deviation": 3.47
+  },
+  "zigzag v300 z20": {
+   "cut": {
+    "pZig1": 7.77,
+    "pZig2": 7.81,
+    "pZig3": 7.85,
+    "pZig4": 6.34
+   },
+   "straight_in": 2.0,
+   "straight_out": 2.4,
+   "deviation": 5.33
+  },
+  "zigzag v600 z10": {
+   "cut": {
+    "pZig1": 5.18,
+    "pZig2": 4.85,
+    "pZig3": 5.52,
+    "pZig4": 3.35
+   },
+   "straight_in": 2.4,
+   "straight_out": 2.4,
+   "deviation": 3.76
+  },
+  "zigzag v600 z20": {
+   "cut": {
+    "pZig1": 8.15,
+    "pZig2": 8.15,
+    "pZig3": 8.39,
+    "pZig4": 6.36
+   },
+   "straight_in": 2.4,
+   "straight_out": 2.4,
+   "deviation": 5.81
+  }
+ }
+}

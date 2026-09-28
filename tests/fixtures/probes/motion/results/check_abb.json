@@ -1,0 +1,63 @@
+{
+ "runs": {
+  "check joint v400": {
+   "time": 2.34
+  },
+  "check joint v600": {
+   "time": 1.62
+  },
+  "check swing v400": {
+   "time": 2.724
+  },
+  "check swing v600": {
+   "time": 1.88
+  },
+  "check rise v400": {
+   "time": 1.676
+  },
+  "check rise v600": {
+   "time": 1.192
+  },
+  "check corner v300 z5": {
+   "time": 2.504,
+   "cut": 3.624
+  },
+  "check corner v300 z10": {
+   "time": 2.488,
+   "cut": 5.071
+  },
+  "check corner v300 z20": {
+   "time": 2.464,
+   "cut": 7.935
+  },
+  "check corner v300 z30": {
+   "time": 2.456,
+   "cut": 10.644
+  },
+  "check corner v600 z5": {
+   "time": 1.428,
+   "cut": 3.744
+  },
+  "check corner v600 z10": {
+   "time": 1.42,
+   "cut": 5.368
+  },
+  "check corner v600 z20": {
+   "time": 1.388,
+   "cut": 8.559
+  },
+  "check corner v600 z30": {
+   "time": 1.38,
+   "cut": 11.559
+  },
+  "check jcorner v600 z10": {
+   "time": 1.42,
+   "cut": 5.129
+  },
+  "check jcorner v600 z20": {
+   "time": 1.388,
+   "cut": 8.074
+  }
+ },
+ "samples": 10494
+}

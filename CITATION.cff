@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use CrossArm in your work, please cite it as below."
+type: software
+title: "CrossArm: ABB RAPID to FANUC TP converter"
+abstract: >-
+  CrossArm converts ABB industrial robot programs written in RAPID, from a RobotWare
+  backup or loose modules, into FANUC TP programs (.LS): motions, positions, tool and
+  user frames, arm configuration, I/O, registers and program logic, with a conversion
+  report of everything left to review. The two robot makers' conventions for arm
+  configuration and joint axes, their speeds, zones and paths were measured on both
+  controllers, not assumed.
+authors:
+  - family-names: LEROY
+    given-names: Enzo
+    email: enzoleroy56@gmail.com
+repository-code: "https://github.com/LeroyDu56/CrossArm"
+url: "https://github.com/LeroyDu56/CrossArm"
+license: BUSL-1.1
+version: 1.0.0
+date-released: 2026-09-26
+keywords:
+  - ABB
+  - RAPID
+  - FANUC
+  - TP
+  - robot program conversion
+  - industrial robotics
+  - RobotStudio
+  - ROBOGUIDE
+  - offline programming

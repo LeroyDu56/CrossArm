@@ -1,0 +1,25 @@
+{% comment %}
+  Added to <head> by the GitHub Pages theme. On the home page only: tells search engines
+  and assistants what CrossArm is, in schema.org terms. No price or rating: none is claimed.
+{% endcomment %}
+{% if page.url == "/" %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "CrossArm",
+  "alternateName": "CrossArm — ABB RAPID to FANUC TP converter",
+  "description": "Converts ABB robot programs written in RAPID (.mod, .modx, .sys, RobotWare backups) into FANUC TP programs (.LS): motions, positions, tool and user frames, arm configuration, I/O, registers and program logic, with a report of everything left to review.",
+  "applicationCategory": "DeveloperApplication",
+  "applicationSubCategory": "Industrial robot program converter",
+  "operatingSystem": "Windows, macOS, Linux",
+  "softwareRequirements": "Windows 10/11 for CrossArm.exe; Python 3.11 or later otherwise",
+  "downloadUrl": "https://github.com/LeroyDu56/CrossArm/releases/latest",
+  "sameAs": "https://github.com/LeroyDu56/CrossArm",
+  "license": "https://github.com/LeroyDu56/CrossArm/blob/main/LICENSE",
+  "image": "https://leroydu56.github.io/CrossArm/docs/images/social_preview.png",
+  "author": { "@type": "Person", "name": "Enzo LEROY" },
+  "keywords": "ABB, RAPID, FANUC, TP, LS, robot program converter, RobotStudio, ROBOGUIDE, RobotWare, robot migration, offline programming"
+}
+</script>
+{% endif %}

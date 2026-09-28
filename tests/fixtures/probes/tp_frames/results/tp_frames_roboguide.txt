@@ -1,0 +1,33 @@
+syntax pr_product loaded
+syntax pr_quotient loaded
+syntax pr_colon refused ASBN-092
+syntax pr_sum loaded
+syntax pr_copy loaded
+syntax pr_frame_sum refused ASBN-092
+syntax pr_times_number refused ASBN-092
+syntax component_copy loaded
+syntax component_sum loaded
+syntax sin_brackets refused ASBN-092
+syntax sin_parentheses refused ASBN-092
+syntax atan2 refused ASBN-092
+syntax sqrt refused ASBN-092
+syntax several_operators loaded
+syntax nested_parentheses loaded
+syntax sin_in_expression refused ASBN-092
+syntax offset_condition loaded
+syntax offset_condition_frame loaded
+syntax tool_offset_condition loaded
+syntax move_offset loaded
+syntax move_tool_offset loaded
+syntax uframe_from_pr loaded
+syntax pr_from_uframe loaded
+syntax payload loaded
+run paused at line 60 step 6 INTP-202
+pr 30 1212.000 -0.000 785.000 -180.000 0.000 0.000
+pr 31 150.000 -30.000 30.000 10.000 20.000 120.000
+pr 32 100.000 -50.000 30.000 10.000 0.000 90.000
+pr 33 1222.000 20.000 815.000 -175.000 0.000 10.000
+pr 34 50.000 -964.002 936.627 -180.000 -10.000 -90.000
+pr 38 1212.000 10.000 785.000 180.000 -0.000 0.000
+pr 39 1232.000 -0.000 735.000 -175.000 -0.000 -10.000
+pr 40 1197.513 10.000 818.017 -173.272 -0.148 9.847

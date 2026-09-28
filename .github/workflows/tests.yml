@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: python -m ruff check src tests tools
+      - name: Tests
+        # The local test corpus is not in the repository: those tests are skipped.
+        # Windows runners can open a Tk window: the desktop app's tests must run there, not skip.
+        env:
+          CROSSARM_REQUIRE_GUI: ${{ runner.os == 'Windows' && '1' || '' }}
+        run: python -m pytest -ra

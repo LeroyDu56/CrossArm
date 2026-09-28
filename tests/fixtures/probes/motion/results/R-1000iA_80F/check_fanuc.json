@@ -1,0 +1,64 @@
+{
+ "robot": "R-1000iA/80F",
+ "runs": {
+  "check joint v400": {
+   "time": 1.888
+  },
+  "check joint v600": {
+   "time": 1.364
+  },
+  "check swing v400": {
+   "time": 2.639
+  },
+  "check swing v600": {
+   "time": 1.84
+  },
+  "check rise v400": {
+   "time": 2.06
+  },
+  "check rise v600": {
+   "time": 1.478
+  },
+  "check corner v300 z5": {
+   "time": 2.576,
+   "cut": 3.477
+  },
+  "check corner v300 z10": {
+   "time": 2.558,
+   "cut": 4.812
+  },
+  "check corner v300 z20": {
+   "time": 2.546,
+   "cut": 7.428
+  },
+  "check corner v300 z30": {
+   "time": 2.546,
+   "cut": 7.423
+  },
+  "check corner v600 z5": {
+   "time": 1.446,
+   "cut": 3.103
+  },
+  "check corner v600 z10": {
+   "time": 1.431,
+   "cut": 4.418
+  },
+  "check corner v600 z20": {
+   "time": 1.406,
+   "cut": 7.355
+  },
+  "check corner v600 z30": {
+   "time": 1.388,
+   "cut": 10.134
+  },
+  "check jcorner v600 z10": {
+   "time": 1.698,
+   "cut": 5.257
+  },
+  "check jcorner v600 z20": {
+   "time": 1.666,
+   "cut": 8.174
+  }
+ },
+ "samples": 32670
+}

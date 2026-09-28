@@ -1,0 +1,313 @@
+{
+ "runs": {
+  "joint v100": {
+   "time": 8.852
+  },
+  "joint v200": {
+   "time": 4.5
+  },
+  "joint v300": {
+   "time": 3.056
+  },
+  "joint v500": {
+   "time": 1.9
+  },
+  "joint v800": {
+   "time": 1.268
+  },
+  "joint v1000": {
+   "time": 1.052
+  },
+  "joint v1500": {
+   "time": 0.792
+  },
+  "joint v2000": {
+   "time": 0.676
+  },
+  "joint v3000": {
+   "time": 0.584
+  },
+  "joint vmax": {
+   "time": 0.588
+  },
+  "swing v100": {
+   "time": 10.416
+  },
+  "swing v200": {
+   "time": 5.28
+  },
+  "swing v300": {
+   "time": 3.576
+  },
+  "swing v500": {
+   "time": 2.216
+  },
+  "swing v800": {
+   "time": 1.464
+  },
+  "swing v1000": {
+   "time": 1.22
+  },
+  "swing v1500": {
+   "time": 0.904
+  },
+  "swing v2000": {
+   "time": 0.776
+  },
+  "swing v3000": {
+   "time": 0.72
+  },
+  "swing vmax": {
+   "time": 0.72
+  },
+  "rise v100": {
+   "time": 6.184
+  },
+  "rise v200": {
+   "time": 3.168
+  },
+  "rise v300": {
+   "time": 2.168
+  },
+  "rise v500": {
+   "time": 1.384
+  },
+  "rise v800": {
+   "time": 0.964
+  },
+  "rise v1000": {
+   "time": 0.836
+  },
+  "rise v1500": {
+   "time": 0.696
+  },
+  "rise v2000": {
+   "time": 0.656
+  },
+  "rise v3000": {
+   "time": 0.652
+  },
+  "rise vmax": {
+   "time": 0.652
+  },
+  "linear v100": {
+   "time": 6.092
+  },
+  "linear v200": {
+   "time": 3.116
+  },
+  "linear v500": {
+   "time": 1.352
+  },
+  "linear v1000": {
+   "time": 0.784
+  },
+  "linear v1500": {
+   "time": 0.62
+  },
+  "linear v2000": {
+   "time": 0.556
+  },
+  "corner v200 fine": {
+   "time": 3.732,
+   "cut": 0.038
+  },
+  "corner v200 z1": {
+   "time": 3.656,
+   "cut": 1.976
+  },
+  "corner v200 z5": {
+   "time": 3.632,
+   "cut": 3.281
+  },
+  "corner v200 z10": {
+   "time": 3.616,
+   "cut": 4.617
+  },
+  "corner v200 z20": {
+   "time": 3.6,
+   "cut": 7.144
+  },
+  "corner v200 z30": {
+   "time": 3.58,
+   "cut": 9.917
+  },
+  "corner v200 z50": {
+   "time": 3.548,
+   "cut": 15.76
+  },
+  "corner v200 z100": {
+   "time": 3.464,
+   "cut": 30.807
+  },
+  "corner v200 z150": {
+   "time": 3.384,
+   "cut": 45.992
+  },
+  "corner v200 z200": {
+   "time": 3.3,
+   "cut": 61.206
+  },
+  "corner v500 fine": {
+   "time": 1.724,
+   "cut": 0.037
+  },
+  "corner v500 z1": {
+   "time": 1.64,
+   "cut": 2.544
+  },
+  "corner v500 z5": {
+   "time": 1.636,
+   "cut": 3.727
+  },
+  "corner v500 z10": {
+   "time": 1.624,
+   "cut": 5.349
+  },
+  "corner v500 z20": {
+   "time": 1.592,
+   "cut": 8.555
+  },
+  "corner v500 z30": {
+   "time": 1.576,
+   "cut": 11.488
+  },
+  "corner v500 z50": {
+   "time": 1.552,
+   "cut": 17.35
+  },
+  "corner v500 z100": {
+   "time": 1.52,
+   "cut": 31.853
+  },
+  "corner v500 z150": {
+   "time": 1.488,
+   "cut": 46.715
+  },
+  "corner v500 z200": {
+   "time": 1.448,
+   "cut": 61.773
+  },
+  "corner v1000 fine": {
+   "time": 1.14,
+   "cut": 0.036
+  },
+  "corner v1000 z1": {
+   "time": 1.056,
+   "cut": 2.544
+  },
+  "corner v1000 z5": {
+   "time": 1.068,
+   "cut": 3.746
+  },
+  "corner v1000 z10": {
+   "time": 1.06,
+   "cut": 5.36
+  },
+  "corner v1000 z20": {
+   "time": 1.028,
+   "cut": 8.564
+  },
+  "corner v1000 z30": {
+   "time": 1.02,
+   "cut": 11.534
+  },
+  "corner v1000 z50": {
+   "time": 1.0,
+   "cut": 17.712
+  },
+  "corner v1000 z100": {
+   "time": 0.952,
+   "cut": 32.967
+  },
+  "corner v1000 z150": {
+   "time": 0.916,
+   "cut": 48.221
+  },
+  "corner v1000 z200": {
+   "time": 0.892,
+   "cut": 63.34
+  },
+  "jcorner v500 fine": {
+   "time": 1.732,
+   "cut": 0.033
+  },
+  "jcorner v500 z1": {
+   "time": 1.64,
+   "cut": 2.498
+  },
+  "jcorner v500 z5": {
+   "time": 1.632,
+   "cut": 3.655
+  },
+  "jcorner v500 z10": {
+   "time": 1.628,
+   "cut": 5.129
+  },
+  "jcorner v500 z20": {
+   "time": 1.592,
+   "cut": 8.0
+  },
+  "jcorner v500 z30": {
+   "time": 1.584,
+   "cut": 10.703
+  },
+  "jcorner v500 z50": {
+   "time": 1.56,
+   "cut": 15.992
+  },
+  "jcorner v500 z100": {
+   "time": 1.532,
+   "cut": 29.139
+  },
+  "jcorner v500 z150": {
+   "time": 1.496,
+   "cut": 42.686
+  },
+  "jcorner v500 z200": {
+   "time": 1.468,
+   "cut": 56.327
+  },
+  "jcorner v1000 fine": {
+   "time": 1.144,
+   "cut": 0.034
+  },
+  "jcorner v1000 z1": {
+   "time": 1.052,
+   "cut": 2.525
+  },
+  "jcorner v1000 z5": {
+   "time": 1.056,
+   "cut": 3.709
+  },
+  "jcorner v1000 z10": {
+   "time": 1.052,
+   "cut": 5.138
+  },
+  "jcorner v1000 z20": {
+   "time": 1.028,
+   "cut": 8.076
+  },
+  "jcorner v1000 z30": {
+   "time": 1.016,
+   "cut": 10.805
+  },
+  "jcorner v1000 z50": {
+   "time": 0.992,
+   "cut": 16.413
+  },
+  "jcorner v1000 z100": {
+   "time": 0.94,
+   "cut": 30.393
+  },
+  "jcorner v1000 z150": {
+   "time": 0.912,
+   "cut": 44.286
+  },
+  "jcorner v1000 z200": {
+   "time": 0.884,
+   "cut": 57.846
+  }
+ },
+ "samples": 58313
+}

@@ -1,0 +1,27 @@
+# --- Local test corpus and working files: not distributed ----------------
+/abb/
+/fanuc/
+/local/
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+
+# Drop folder for files exchanged during development (ROBOGUIDE exports, screenshots).
+/awnser/
+
+# Local working notes.
+/CLAUDE.md
+
+# Licence files and the licensor signing key: never in the repository
+*.licence
+*signing_key*
+robconv_private/

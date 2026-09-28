@@ -1,0 +1,2 @@
+# Test fixtures must keep their exact bytes (CRLF, cp1252) like controller exports.
+tests/fixtures/** -text

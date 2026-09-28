@@ -1,0 +1,64 @@
+{
+ "robot": "R-2000iC/190S",
+ "runs": {
+  "check joint v400": {
+   "time": 2.094
+  },
+  "check joint v600": {
+   "time": 1.518
+  },
+  "check swing v400": {
+   "time": 2.667
+  },
+  "check swing v600": {
+   "time": 1.891
+  },
+  "check rise v400": {
+   "time": 2.082
+  },
+  "check rise v600": {
+   "time": 1.508
+  },
+  "check corner v300 z5": {
+   "time": 2.72,
+   "cut": 3.069
+  },
+  "check corner v300 z10": {
+   "time": 2.696,
+   "cut": 4.361
+  },
+  "check corner v300 z20": {
+   "time": 2.668,
+   "cut": 7.01
+  },
+  "check corner v300 z30": {
+   "time": 2.668,
+   "cut": 9.426
+  },
+  "check corner v600 z5": {
+   "time": 1.707,
+   "cut": 4.444
+  },
+  "check corner v600 z10": {
+   "time": 1.685,
+   "cut": 6.069
+  },
+  "check corner v600 z20": {
+   "time": 1.649,
+   "cut": 9.507
+  },
+  "check corner v600 z30": {
+   "time": 1.621,
+   "cut": 12.937
+  },
+  "check jcorner v600 z10": {
+   "time": 1.786,
+   "cut": 5.127
+  },
+  "check jcorner v600 z20": {
+   "time": 1.75,
+   "cut": 8.092
+  }
+ },
+ "samples": 43502
+}
