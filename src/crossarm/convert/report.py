@@ -489,7 +489,9 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
                     + _allocation_rows(result.digital_outputs, "DO")
                     + _allocation_rows(result.digital_inputs, "DI")
                     + _allocation_rows(result.group_outputs, "GO")
-                    + _allocation_rows(result.group_inputs, "GI"))  # fmt: skip
+                    + _allocation_rows(result.group_inputs, "GI")
+                    + _allocation_rows(result.analog_outputs, "AO")
+                    + _allocation_rows(result.timers, "TIMER"))  # fmt: skip
 
     lines += _motion_section(result, config)
 

@@ -35,6 +35,11 @@ FRAME_REGISTERS_README = (
     "SETUP_FRAMES sets and the programs load into UTOOL/UFRAME where the RAPID computes the frame. "
     "Change a number to a register the robot does not use (see the report, 'Frames computed at conversion time')."
 )
+ANALOG_SCALES_README = (
+    "FANUC analog output counts per unit of the RAPID value, per signal: SetAO aoFlow,4.5 with 409.5 is "
+    "AO[n]=1843 (4.5 of 10 V on a 0-4095 module). null: not known, and SetAO on that signal stays TODO. "
+    "The counts depend on the FANUC analog module: see its manual."
+)
 TOOL_PIN_README = (
     "The pin hole of the FANUC flange the tool's guide pin goes in, which the adapter plate decides. "
     "-x: where the ABB pin was, tool frames as they are. +x: the ISO 9409-1 hole, tool frames turned "
@@ -51,6 +56,8 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
         ("digital_inputs", result.digital_inputs),
         ("group_outputs", result.group_outputs),
         ("group_inputs", result.group_inputs),
+        ("analog_outputs", result.analog_outputs),
+        ("timers", result.timers),
         ("uframes", result.uframes),
         ("utools", result.utools),
     ]
@@ -61,6 +68,10 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     if any(f.frame is not None and f.frame.robhold and f.number for f in result.utools):
         data["_tool_pin"] = TOOL_PIN_README
         data["tool_pin"] = config.tool_pin
+    if result.analog_outputs:
+        data["_analog_scales"] = ANALOG_SCALES_README
+        data["analog_scales"] = {a.rapid_name: config.analog_scales.get(a.rapid_name.upper())
+                                 for a in result.analog_outputs}  # fmt: skip
     data["limits"] = dict(config.limits)
     wrappers = [use for use in result.move_routines if not use.pure]
     if wrappers:

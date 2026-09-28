@@ -14,6 +14,8 @@ be pinned in a JSON file passed with --map:
   "digital_inputs":  {"diPartReady": 7},       RAPID signal   -> DI[n]
   "group_outputs":   {"goStatus": 1},          RAPID signal   -> GO[n]
   "group_inputs":    {"giCode": 2},            RAPID signal   -> GI[n]
+  "analog_outputs":  {"aoFlow": 1},            RAPID signal   -> AO[n]
+  "timers":          {"ckCycle": 1},           RAPID clock    -> TIMER[n]
   "uframes":         {"wobjFixture": 2},       wobjdata       -> UFRAME n
   "utools":          {"tGripper": 1},          tooldata       -> UTOOL n
   "joint_speed_ref_mm_s": 4500,               RAPID TCP speed that is J 100 % (default: the profile's)
@@ -30,6 +32,8 @@ be pinned in a JSON file passed with --map:
                                                move (see crossarm.convert.wrappers)
   "frame_registers": {"10,0,185.5,0,0,90": 95}  a frame the programs compute, by its value X,Y,Z,W,P,R
                                                -> the PR SETUP_FRAMES keeps it in (crossarm.convert.compute)
+  "analog_scales":   {"aoFlow": 409.5}         FANUC analog output counts per RAPID unit: SetAO aoFlow,4.5
+                                               -> AO[1]=1843 (null: not known yet, SetAO stays TODO)
 }
 
 Names are matched case-insensitively, like RAPID.
@@ -46,6 +50,7 @@ from crossarm.convert.motion import M20ID_25, MotionProfile
 
 _MAPPING_KEYS = (
     "registers", "flags", "digital_outputs", "digital_inputs", "group_outputs", "group_inputs", "uframes", "utools",
+    "analog_outputs", "timers",
 )  # fmt: skip
 
 
@@ -66,6 +71,8 @@ class ConversionConfig:
     digital_inputs: dict[str, int] = field(default_factory=dict)
     group_outputs: dict[str, int] = field(default_factory=dict)
     group_inputs: dict[str, int] = field(default_factory=dict)
+    analog_outputs: dict[str, int] = field(default_factory=dict)
+    timers: dict[str, int] = field(default_factory=dict)  # RAPID clock -> TIMER[n]
     uframes: dict[str, int] = field(default_factory=lambda: {"WOBJ0": 0})
     utools: dict[str, int] = field(default_factory=dict)
 
@@ -76,6 +83,8 @@ class ConversionConfig:
     first_digital_input: int = 1
     first_group_output: int = 1
     first_group_input: int = 1
+    first_analog_output: int = 1
+    first_timer: int = 1
     first_uframe: int = 1
     first_utool: int = 1
 
@@ -124,6 +133,9 @@ class ConversionConfig:
     # Frames the programs compute, worked out at conversion time: their value as "x,y,z,w,p,r" (3 decimals,
     # as the report and the mapping file write it) -> the position register that keeps it.
     frame_registers: dict[str, int] = field(default_factory=dict)
+    # FANUC analog output counts per RAPID unit, upper-cased signal name -> scale: a FANUC AO takes the
+    # module's counts (0-4095 for 0-10 V on many), RAPID its logical value. Unknown: SetAO stays TODO.
+    analog_scales: dict[str, float] = field(default_factory=dict)
 
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
@@ -145,7 +157,7 @@ class ConversionConfig:
         unknown = set(data) - set(_MAPPING_KEYS) - {
             "joint_speed_ref_mm_s", "cnt_per_mm", "config_mapping", "joint_mapping", "default_config",
             "program_name_max_length", "tpwrite_values", "tool_pin", "limits", "reserved", "move_routines",
-            "zone_mapping", "motion_profile", "frame_registers",
+            "zone_mapping", "motion_profile", "frame_registers", "analog_scales",
         }  # fmt: skip
         if unknown:
             raise ValueError(f"unknown keys in mapping file: {', '.join(sorted(unknown))}")
@@ -168,6 +180,12 @@ class ConversionConfig:
                 config.frame_registers[frame_key(float(v) for v in value.split(","))] = number
             except ValueError as exc:
                 raise ValueError(f"frame_registers: {value!r} is not X,Y,Z,W,P,R") from exc
+        for name, scale in data.get("analog_scales", {}).items():
+            if scale is None:
+                continue  # written by CrossArm for the user to fill in
+            if not isinstance(scale, int | float) or isinstance(scale, bool):
+                raise TypeError(f"analog_scales.{name}: expected a number or null, got {scale!r}")
+            config.analog_scales[name.upper()] = float(scale)
         for key in _MAPPING_KEYS:
             table = getattr(config, key)
             for name, number in data.get(key, {}).items():

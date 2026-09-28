@@ -91,6 +91,11 @@ crossarm stats   backup/RAPID                                          # parser 
 | `WaitTime`, `WaitDI/DO`, `WaitUntil` | `WAIT` | |
 | wait with `\MaxTime` and the `ERROR` handler's `ERR_WAIT_MAXTIME` case | a loop on a `TIMER`, then the handler's steps (`RETRY` → back to the wait, `TRYNEXT` → past it) | `$WAITTMOUT`, the limit of `WAIT ... TIMEOUT`, is write-protected for programs. A handler that only passes errors on (`RAISE`) needs nothing on FANUC |
 | `SetGO`, `GInput()`, a group input read by name | `GO[n]=…`, `GI[n]` | Group signals, typed by `EIO.cfg` |
+| `PulseDO` | `DO[n]=PULSE,0.2sec` | Length in tenths of a second, 0.1 to 25.5 s (FANUC's range): rounded, with a warning when that moves it. `PULSE` sets the output ON whatever it was, as `PulseDO\High` |
+| `InvertDO` | `DO[n]=(!DO[n])` | |
+| `SetAO` | `AO[n]=counts` | A FANUC analog output takes the module's counts: give the counts per RAPID unit in the [mapping file](#the-mapping-file) (`analog_scales`); until then the line stays TODO |
+| clocks: `ClkReset`, `ClkStart`, `ClkStop`, `ClkRead` | `TIMER[n]=RESET/START/STOP`, `R[m]=TIMER[n]` | In seconds, as `ClkRead`. The timer the waits with `\MaxTime` use is kept apart |
+| `ConfL`, `ConfJ`, `SingArea`, `CirPathMode` | nothing | FANUC does without them: a warning where it does it its own way (`ConfL\Off`: each point keeps its `CONFIG`). `AccSet` / `VelSet` back to their defaults: nothing |
 | `TPWrite` | `MESSAGE[…]` | 24 characters max. A value (`\Num`, `ValToStr`…) cannot be displayed: the text is kept and the report lists the value (`"tpwrite_values": "todo"` keeps a TODO instead) |
 | `TPErase` | nothing | No equivalent on the FANUC pendant |
 | `IF / ELSEIF / ELSE` | `IF (...) THEN / ELSE / ENDIF` | `ELSEIF` unrolled, negations pushed down |
@@ -108,7 +113,9 @@ crossarm stats   backup/RAPID                                          # parser 
 - frames and points computed from data that changes at run time, with that data and where it changes;
   frames **measured on the robot** (`CRobT`, a calibration), with what reads the robot;
 - payload changes (`tool.tload`), to redo with the FANUC `PAYLOAD[n]` schedules;
-- analog I/O, error handlers beyond wait timeouts (FANUC has no exceptions), `UNDO`, `RECORD` data set at
+- `AccSet` and `VelSet` that slow the robot down (dropping them would run it faster than the ABB), a
+  `SetAO` without its scale, interrupts (`CONNECT`, `ISignalDI`, `TRAP`), which TP has not;
+- analog inputs, error handlers beyond wait timeouts (FANUC has no exceptions), `UNDO`, `RECORD` data set at
   run time, `GOTO`, late binding;
 - ABB-specific instructions (`Load`/`UnLoad`, `GetSysData`, world zones, calibration functions).
 
@@ -197,6 +204,9 @@ A mapping file can also be written from scratch, with only the keys you care abo
   "joint_mapping": true,
   "tool_pin": "-x",
   "group_outputs": {"goStatus": 1},
+  "analog_outputs": {"aoGlueFlow": 1},
+  "analog_scales": {"aoGlueFlow": 409.5},
+  "timers": {"ckCycle": 1},
   "tpwrite_values": "text",
   "program_name_max_length": 8,
   "limits": {"UFRAME": 9, "UTOOL": 10, "R": 200, "PR": 100, "F": 1024},
@@ -220,6 +230,10 @@ A mapping file can also be written from scratch, with only the keys you care abo
   the generated mapping file lists these routines set to `false`, the report says what each one
   does besides the move, and `true` converts their calls. In the window, **choose which to
   convert** in the result does the same with check boxes.
+- `analog_scales` gives, per analog output, the FANUC counts for one unit of the RAPID value: a
+  FANUC `AO` takes the module's counts (0-4095 for 0-10 V on many modules, see its manual), RAPID a
+  logical value. `SetAO aoGlueFlow,4.5` with 409.5 is `AO[1]=1843`. The generated file lists each
+  analog output with `null`: until a number replaces it, `SetAO` on that signal stays TODO.
 - `frame_registers` gives the position register that keeps each
   [frame the programs compute](#frames-and-points-the-programs-compute), by its value X, Y, Z, W, P, R
   as the report writes it. The generated file lists them; change a number to a register the robot

@@ -127,12 +127,17 @@ class Blocker:
     REAL_CONTROLLER = "RobOS() taken as TRUE (real controller)"
     HANDLER = "error handler: other errors stop the program"
     OPTIONS_IGNORED = "instruction options dropped"
+    MOTION_SETTING = "motion setting (ConfL, SingArea, AccSet, VelSet...)"
+    INTERRUPT = "interrupt (CONNECT, ISignalDI...) and its TRAP"
+    IO_ROUNDED = "I/O written approximately (pulse length)"
     INTERNAL = "CrossArm internal error"
     OTHER = "other"
 
     @staticmethod
     def rapid(kind: str) -> str:
         """Category for a construct the parser left out of scope: 'ERROR_HANDLER' -> 'RAPID error handler'."""
+        if kind == "CONNECT":
+            return Blocker.INTERRUPT
         return "RAPID " + kind.replace("_", " ").lower()
 
 
@@ -243,7 +248,13 @@ class Capacity:
 
 
 # Statements a zoned move blends past: the next move after them is the one the corner leads into.
-_BLENDED_PAST = frozenset({"SET", "RESET", "SETDO", "SETGO", "SETAO", "PULSEDO"})
+_BLENDED_PAST = frozenset({"SET", "RESET", "SETDO", "SETGO", "SETAO", "PULSEDO", "INVERTDO"})
+# Motion settings: what FANUC does without them, or where they need a person (see motion_setting()).
+_MOTION_SETTINGS = frozenset({"CONFL", "CONFJ", "SINGAREA", "CIRPATHMODE", "ACCSET", "VELSET"})
+_INTERRUPTS = frozenset({"IDELETE", "ISIGNALDI", "ISIGNALDO", "ISIGNALGI", "ISIGNALGO", "ISIGNALAI", "ISIGNALAO",
+                         "ITIMER", "IPERS", "IWATCH", "ISLEEP", "IENABLE", "IDISABLE", "IERROR"})
+PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
+PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
 
 
 def _passed_through(stmt: n.Stmt) -> bool:
@@ -270,6 +281,8 @@ class ConversionResult:
     digital_inputs: list[Allocation] = field(default_factory=list)
     group_outputs: list[Allocation] = field(default_factory=list)
     group_inputs: list[Allocation] = field(default_factory=list)
+    analog_outputs: list[Allocation] = field(default_factory=list)
+    timers: list[Allocation] = field(default_factory=list)  # RAPID clocks
     uframes: list[FrameInfo] = field(default_factory=list)
     utools: list[FrameInfo] = field(default_factory=list)
     computed_frames: list[ComputedFrame] = field(default_factory=list)  # in the order the programs first load them
@@ -330,6 +343,7 @@ class NumberTable:
         self.fixed = fixed
         self.first = first
         self.reserved = frozenset(reserved)
+        self.skip: set[int] = set()  # taken by CrossArm for its own use (the TIMER timing the waits)
         self.assigned: dict[str, Allocation] = {}
 
     def number(self, name: str, key: str | None = None, detail: str = "") -> int:
@@ -339,7 +353,7 @@ class NumberTable:
         if key in self.fixed:
             number, fixed = self.fixed[key], True
         else:
-            used = set(self.fixed.values()) | {a.number for a in self.assigned.values()} | self.reserved
+            used = set(self.fixed.values()) | {a.number for a in self.assigned.values()} | self.reserved | self.skip
             number, fixed = self.first, False
             while number in used:
                 number += 1
@@ -396,6 +410,8 @@ class ControllerScope:
     dins: NumberTable
     gouts: NumberTable
     gins: NumberTable
+    aouts: NumberTable
+    timers: NumberTable
     program_names: set[str] = field(default_factory=set)  # TP names taken: on the robot, or by a task
     existing_programs: frozenset[str] = frozenset()  # of which: already on the target robot
     # What the programs of every task can change: a PERS is shared by all tasks (crossarm.convert.compute).
@@ -413,6 +429,8 @@ class ControllerScope:
             NumberTable(cfg.digital_inputs, cfg.first_digital_input, taken.get("DI", ())),
             NumberTable(cfg.group_outputs, cfg.first_group_output, taken.get("GO", ())),
             NumberTable(cfg.group_inputs, cfg.first_group_input, taken.get("GI", ())),
+            NumberTable(cfg.analog_outputs, cfg.first_analog_output, taken.get("AO", ())),
+            NumberTable(cfg.timers, cfg.first_timer, taken.get("TIMER", ())),
             set(existing),
             existing,
         )
@@ -567,6 +585,8 @@ class Converter:
         self.dins = TableView(shared.dins)
         self.gouts = TableView(shared.gouts)
         self.gins = TableView(shared.gins)
+        self.aouts = TableView(shared.aouts)
+        self.timers = TableView(shared.timers)
         # Frames are per robot: each task starts its own.
         taken = {resource: numbers.keys() for resource, numbers in cfg.reserved.items()}
         self.uframes = NumberTable(cfg.uframes, cfg.first_uframe, taken.get("UFRAME", ()))
@@ -639,6 +659,8 @@ class Converter:
         res.digital_inputs = self.dins.allocations()
         res.group_outputs = self.gouts.allocations()
         res.group_inputs = self.gins.allocations()
+        res.analog_outputs = self.aouts.allocations()
+        res.timers = self.timers.allocations()
         res.uframes = sorted((f for (k, _), f in self.frames.items() if k == "UF"), key=lambda f: f.number)
         res.utools = sorted((f for (k, _), f in self.frames.items() if k == "UT"), key=lambda f: f.number)
         self._check_capacity()
@@ -848,10 +870,12 @@ class Converter:
         they never overlap within a task.
         """
         if self.result.wait_clock is None:
-            used = set(self.config.reserved.get("TIMER", {}))
+            used = set(self.config.reserved.get("TIMER", {})) | set(self.timers.fixed.values())
+            used |= {a.number for a in self.timers.table.assigned.values()}
             free = [i for i in range(self.config.limits.get("TIMER", 10), 0, -1) if i not in used]
             if not free:
                 raise Untranslatable("wait with MaxTime: every TIMER is used on the robot", Blocker.WAIT_TIMEOUT)
+            self.timers.table.skip.add(free[0])
             self.result.wait_clock = (f"TIMER[{free[0]}]", self.written_register(WAIT_CLOCK, key="CROSSARM.WAITCLOCK"))
         return self.result.wait_clock
 
@@ -881,7 +905,8 @@ class Converter:
         res = self.result
         tables = [
             ("UFRAME", self.uframes), ("UTOOL", self.utools), ("R", self.registers), ("F", self.flags),
-            ("DO", self.douts), ("DI", self.dins), ("GO", self.gouts), ("GI", self.gins),
+            ("DO", self.douts), ("DI", self.dins), ("GO", self.gouts), ("GI", self.gins), ("AO", self.aouts),
+            ("TIMER", self.timers),
         ]  # fmt: skip
         for resource, table in tables:
             allocations = table.allocations()
@@ -1640,6 +1665,20 @@ class _RoutineTranslator:
                 self.emit(f"{copy}={value}")
                 value = copy
             self.emit(f"{target}={value}")
+        elif name == "PULSEDO" and len(positional) == 1:
+            self.pulse(call, positional[0], options)
+        elif name == "INVERTDO" and len(positional) == 1 and not options:
+            signal = self.output(positional[0], call)
+            self.emit(f"{signal}=(!{signal})")
+        elif name == "SETAO" and len(positional) == 2 and not options:
+            self.analog(call, positional[0], positional[1])
+        elif name in ("CLKRESET", "CLKSTART", "CLKSTOP") and len(positional) == 1 and not options:
+            self.emit(f"{self.clock(positional[0])}={name[3:]}")
+        elif name in _MOTION_SETTINGS:
+            self.motion_setting(call, name, positional, options)
+        elif name in _INTERRUPTS:
+            raise Untranslatable(f"{call.name}: interrupts have no TP equivalent (a background logic or a KAREL"
+                                 " condition handler would do what the TRAP does)", Blocker.INTERRUPT)  # fmt: skip
         elif name in self.c.move_routines:
             self.routine_move(call, self.c.move_routines[name])
         elif isinstance(self.c.signatures.get(name), Signature) and name in self.c.program_names:
@@ -1870,6 +1909,100 @@ class _RoutineTranslator:
                              Blocker.SIGNAL)
         return f"{kind}[{table.number(expr.name, detail=detail)}]"
 
+    def pulse(self, call: n.ProcCall, signal: n.Expr, options: list[n.Arg]) -> None:
+        """PulseDO -> DO[n]=PULSE,0.2sec. FANUC takes tenths of a second, 0.1 to 25.5 (ROBOGUIDE rounds
+        0.25 to 0.3, drops a length below 0.05 for its default, refuses 25.6): the length is rounded
+        there, and said so when it moves. PULSE sets the output ON whatever it was, as PulseDO \\High."""
+        length = PULSE_DEFAULT_S
+        for option in options:
+            key = (option.name or "").upper()
+            if key == "HIGH":
+                continue
+            if key != "PLENGTH" or option.value is None:
+                raise Untranslatable(f"PulseDO with \\{option.name} is not converted", Blocker.OPTIONS_IGNORED)
+            try:
+                length = self.c.evaluator.constant_number(option.value)
+            except Unresolvable as exc:
+                raise Untranslatable(f"PulseDO length only known at run time ({exc})", Blocker.VALUE) from exc
+        if length > PULSE_MAX_S:
+            raise Untranslatable(f"PulseDO of {fmt_number(length)} s: a FANUC PULSE lasts {PULSE_MAX_S} s at most",
+                                 Blocker.SIGNAL)  # fmt: skip
+        tenths = max(1, math.floor(length * 10 + 0.5))
+        if abs(tenths / 10 - length) > 1e-9:
+            self.warn(call, f"PulseDO of {fmt_number(length)} s written {tenths / 10:.1f} s: FANUC pulses last whole"
+                            " tenths of a second", Blocker.IO_ROUNDED)  # fmt: skip
+        self.emit(f"{self.output(signal, call)}=PULSE,{tenths / 10:.1f}sec")
+
+    def analog(self, call: n.ProcCall, signal: n.Expr, value: n.Expr) -> None:
+        """SetAO -> AO[n]=counts. RAPID gives the logical value, a FANUC analog output takes the module's
+        counts: the scale comes from the mapping file (analog_scales), else the line stays TODO."""
+        if not isinstance(signal, n.Name):
+            raise Untranslatable(f"analog signal must be a name: {format_expr(signal)}", Blocker.SIGNAL)
+        key = signal.name.upper()
+        eio = self.c.eio.get(key)
+        if eio is not None and eio.signal_type != "AO":
+            raise Untranslatable(f"'{signal.name}' is a {eio.signal_type} signal in EIO.cfg, not AO", Blocker.SIGNAL)
+        scale = self.c.config.analog_scales.get(key)
+        detail = f"EIO.cfg: AO, device {eio.device or '-'}, map {eio.device_map or '-'}" if eio else ""
+        target = f"AO[{self.c.aouts.number(signal.name, detail=detail)}]"
+        if scale is None:
+            raise Untranslatable(f"analog output {signal.name}: FANUC takes the module's counts, RAPID its logical"
+                                 f" value: set analog_scales.{signal.name} (counts per RAPID unit) in the mapping"
+                                 " file", Blocker.SIGNAL)  # fmt: skip
+        try:
+            counts = self.c.evaluator.constant_number(value) * scale
+            self.emit(f"{target}={operand(fmt_number(round(counts)))}")
+            return
+        except Unresolvable:
+            pass
+        copy = self.c.written_register("AnalogCopy", key="CROSSARM.ANALOGCOPY")
+        self.emit(f"{copy}={self.arithmetic(value)}")  # AO[n]=R[1]/10 does not load: through a register
+        if scale != 1:
+            self.emit(f"{copy}={copy}*{operand(fmt_number(scale))}")
+        self.emit(f"{target}={copy}")
+
+    def clock(self, expr: n.Expr) -> str:
+        """TIMER[n] for a RAPID clock variable."""
+        if not isinstance(expr, n.Name) or self.c.symbols.type_of(expr.name) != "clock":
+            raise Untranslatable(f"'{format_expr(expr)}' is not a clock of the backup", Blocker.VALUE)
+        return f"TIMER[{self.c.timers.number(expr.name)}]"
+
+    def motion_setting(self, call: n.ProcCall, name: str, positional: list[n.Expr], options: list[n.Arg]) -> None:
+        """ConfL, ConfJ, SingArea, CirPathMode: nothing where FANUC does the same, a warning where it does it
+        its own way. AccSet and VelSet slow the robot down: dropping them would run it faster than the ABB,
+        so they stay TODO unless they only set the defaults back."""
+        switches = {(a.name or "").upper() for a in options}
+        numbers: list[float] = []
+        for value in positional:
+            try:
+                numbers.append(self.c.evaluator.constant_number(value))
+            except Unresolvable as exc:
+                raise Untranslatable(f"{call.name} with a value only known at run time ({exc})",
+                                     Blocker.MOTION_SETTING) from exc  # fmt: skip
+        if name in ("CONFL", "CONFJ"):
+            if "OFF" in switches:
+                self.warn(call, f"{call.name}\\Off left out: FANUC moves to each point with its CONFIG; where RAPID let"
+                                " the arm change configuration, check the moves after it", Blocker.MOTION_SETTING)  # fmt: skip
+        elif name == "SINGAREA":
+            if switches - {"OFF"}:
+                self.warn(call, f"{call.name} left out: FANUC has no such setting; check the moves after it near the"
+                                " wrist singularity (J5 near 0)", Blocker.MOTION_SETTING)  # fmt: skip
+        elif name == "CIRPATHMODE":
+            if switches - {"PATHFRAME"}:
+                self.warn(call, f"{call.name} left out: FANUC turns the tool along a circle its own way; check the"
+                                " circles after it", Blocker.MOTION_SETTING)  # fmt: skip
+        elif name == "ACCSET":
+            if len(numbers) < 2 or min(numbers[:2]) < 100:
+                raise Untranslatable(f"{call.name} {', '.join(fmt_number(v) for v in numbers)}: acceleration reduced;"
+                                     " add ACC to the moves it covers (FANUC motion option)", Blocker.MOTION_SETTING)  # fmt: skip
+        elif name == "VELSET":
+            if not numbers or numbers[0] < 100:
+                raise Untranslatable(f"{call.name}: speeds scaled in RAPID; scale the moves it covers",
+                                     Blocker.MOTION_SETTING)  # fmt: skip
+            if len(numbers) > 1:
+                self.warn(call, f"{call.name}: the {fmt_number(numbers[1])} mm/s cap on the TCP speed is left out",
+                          Blocker.MOTION_SETTING)  # fmt: skip
+
     def on_off(self, expr: n.Expr) -> str:
         value = expr.value if isinstance(expr, n.Number | n.Bool) else None
         if value in (0, False):
@@ -1991,6 +2124,10 @@ class _RoutineTranslator:
         """A single TP numeric operand: a constant (CONST or literal), a register or a group input."""
         if isinstance(expr, n.FuncCall) and expr.name.upper() == "GINPUT" and len(expr.args) == 1 and expr.args[0].value:
             return self.group(expr.args[0].value, "GI", expr.span.line)
+        if isinstance(expr, n.FuncCall) and expr.name.upper() == "CLKREAD" and expr.args and expr.args[0].value:
+            if any(a.name is not None and a.name.upper() != "HIGHRES" for a in expr.args[1:]):
+                raise Untranslatable(f"{format_expr(expr)}: only \\HighRes is converted", Blocker.OPTIONS_IGNORED)
+            return self.clock(expr.args[0].value)  # seconds, as ClkRead (wait probe: 1.000000 after 1 s)
         if isinstance(expr, n.Name):
             key = expr.name.upper()
             if key in self.loop_vars:

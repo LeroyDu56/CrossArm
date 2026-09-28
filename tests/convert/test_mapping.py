@@ -103,3 +103,21 @@ def test_a_mapping_that_exceeds_the_controller_is_still_reported(tmp_path):
     result = convert([parse_module(source)], cfg, routines=["main"], sources={"M": source})
     utool = next(c for c in result.capacity if c.resource == "UTOOL")
     assert utool.over == ("tGrip",)
+
+
+def test_analog_scales_are_written_for_the_user_to_fill_in(tmp_path):
+    """A SetAO needs the FANUC module's counts per RAPID unit: null until the user says, then converted."""
+    body, data = "SetAO aoFlow,4.5;\nClkReset ckCycle;", "VAR clock ckCycle;"
+    written = mapping_of(run(body, data))
+    assert written["analog_outputs"] == {"aoFlow": 1} and written["analog_scales"] == {"aoFlow": None}
+    assert written["timers"] == {"ckCycle": 1}
+    path = tmp_path / "map.json"
+    path.write_text(json.dumps(written), encoding="utf-8")
+    assert ConversionConfig.from_mapping_file(path).analog_scales == {}  # null: still not known
+    written["analog_scales"]["aoFlow"] = 409.5
+    written["timers"]["ckCycle"] = 4
+    path.write_text(json.dumps(written), encoding="utf-8")
+    cfg = ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1))
+    result = run(body, data, config=cfg)
+    assert [line.text for line in result.programs[0].program.lines[1:]] == ["AO[1]=1843", "TIMER[4]=RESET"]
+    assert mapping_of(result, cfg)["analog_scales"] == {"aoFlow": 409.5}

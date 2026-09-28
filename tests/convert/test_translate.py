@@ -300,6 +300,66 @@ def test_group_outputs_and_inputs():
     assert tp_lines(result) == ["R[1:GroupCopy]=GI[1]", "GO[1]=R[1:GroupCopy]"]
 
 
+def warnings(result) -> list[tuple[str, str]]:
+    return [(note.category, note.message) for note in result.notes if note.kind == "WARNING"]
+
+
+def test_pulsedo_becomes_a_pulse_in_tenths_of_a_second():
+    """ROBOGUIDE: 0.1 s steps, 0.25 stored 0.3, below 0.05 the length is dropped, 25.6 refused."""
+    result = run("PulseDO doBlow;\nPulseDO\\High\\PLength:=1,doBlow;\nPulseDO\\PLength:=0.25,doBlow;\n"
+                 "PulseDO\\PLength:=0.01,doBlow;")  # fmt: skip
+    assert tp_lines(result) == ["DO[1]=PULSE,0.2sec", "DO[1]=PULSE,1.0sec", "DO[1]=PULSE,0.3sec", "DO[1]=PULSE,0.1sec"]
+    assert [c for c, _ in warnings(result)] == [Blocker.IO_ROUNDED, Blocker.IO_ROUNDED]
+    assert "25.5 s at most" in todos(run("PulseDO\\PLength:=30,doBlow;"))[0]
+
+
+def test_invertdo_inverts_the_output():
+    assert tp_lines(run("InvertDO doLamp;")) == ["DO[1]=(!DO[1])"]
+
+
+def test_setao_needs_the_scale_of_the_fanuc_module():
+    data = "VAR num nRpm;"
+    body = "SetAO aoFlow,4.5;\nSetAO aoFlow,nRpm/1000;"
+    result = run(body, data)
+    assert all("analog_scales.aoFlow" in t for t in todos(result))
+    assert [a.rapid_name for a in result.analog_outputs] == ["aoFlow"]  # numbered, for the mapping file
+    result = run(body, data, config=ConversionConfig(analog_scales={"AOFLOW": 409.5},
+                                                     timestamp=datetime(2026, 1, 1)))  # fmt: skip
+    assert tp_lines(result) == ["AO[1]=1843", "R[1:AnalogCopy]=R[2]/1000", "R[1:AnalogCopy]=R[1:AnalogCopy]*409.5",
+                                "AO[1]=R[1:AnalogCopy]"]  # fmt: skip
+
+
+def test_rapid_clocks_become_timers_apart_from_the_wait_timer():
+    body = ("ClkReset ckCycle;\nClkStart ckCycle;\nWaitDI diGo,1\\MaxTime:=2;\nClkStop ckCycle;\n"
+            "nTime:=ClkRead(ckCycle);\nERROR\nTRYNEXT;")  # fmt: skip
+    result = run(body, "VAR clock ckCycle;\nVAR num nTime;")
+    lines = tp_lines(result)
+    assert lines[:2] == ["TIMER[1]=RESET", "TIMER[1]=START"]
+    assert "TIMER[1]=STOP" in lines and "R[2:nTime]=TIMER[1]" in lines
+    assert result.wait_clock[0] == "TIMER[10]" and [a.number for a in result.timers] == [1]
+
+
+def test_motion_settings_fanuc_does_its_own_way_are_warnings():
+    result = run("ConfL\\Off;\nConfJ\\On;\nSingArea\\Wrist;\nSingArea\\Off;\nCirPathMode\\PathFrame;\n"
+                 "AccSet 100,100;\nVelSet 100,2000;")  # fmt: skip
+    assert tp_lines(result) == []
+    assert [c for c, _ in warnings(result)] == [Blocker.MOTION_SETTING] * 3
+
+
+def test_motion_settings_that_slow_the_robot_stay_todo():
+    """Dropping them would run the FANUC faster than the ABB."""
+    result = run("AccSet 50,50;\nVelSet 50,250;")
+    assert [n.category for n in result.notes if n.kind == "TODO"] == [Blocker.MOTION_SETTING] * 2
+
+
+def test_interrupts_are_their_own_blocker():
+    source = ("MODULE M\nVAR intnum iStop;\nPROC main()\nCONNECT iStop WITH tStop;\nISignalDI diStop,1,iStop;\n"
+              "IDelete iStop;\nENDPROC\nTRAP tStop\nStop;\nENDTRAP\nENDMODULE\n")  # fmt: skip
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)),
+                     routines=["main"], sources={"M": source})  # fmt: skip
+    assert [n.category for n in result.notes if n.kind == "TODO"] == [Blocker.INTERRUPT] * 3
+
+
 def test_a_group_input_read_by_its_name():
     source = "MODULE M\nPROC main()\nIF giCode>0 AND diReady=1 THEN\nWaitTime 1;\nENDIF\nENDPROC\nENDMODULE\n"
     signals = {"GICODE": Signal("giCode", "GI"), "DIREADY": Signal("diReady", "DI")}

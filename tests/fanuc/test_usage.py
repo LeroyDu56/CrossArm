@@ -34,6 +34,8 @@ EXISTING = ls(
         "  R[R[4]]=0    ;",
         "  F[2]=(ON) ;",
         "  GO[1]=5 ;",
+        "  AO[2]=1843 ;",
+        "  TIMER[4]=START ;",
         "  PR[9]=UFRAME[3]    ;",
         "  !DO[99] mentioned in a remark only ;",
         "  //DO[98]=ON ;",
@@ -60,6 +62,8 @@ def test_every_kind_of_use_is_found():
     assert found["R"] == [4, 10]  # R[R[4]]: the index register is a use, its target is unknown
     assert found["F"] == [2]
     assert found["GO"] == [1]
+    assert found["AO"] == [2]
+    assert found["TIMER"] == [4]
 
 
 def test_comments_messages_and_look_alikes_are_not_uses():
@@ -73,7 +77,7 @@ def test_comments_messages_and_look_alikes_are_not_uses():
 def test_programs_using_each_number_are_named():
     usage = scan([parse_ls(EXISTING.replace("/PROG  SAMPLE", "/PROG  MAIN"))])
     assert usage.reserved()["DO"] == {3: ("MAIN",)}
-    assert usage.summary() == "UFRAME 2, UTOOL 1, R 2, PR 3, F 1, DO 1, DI 1, GO 1"  # UFRAME 0 left out
+    assert usage.summary() == "UFRAME 2, UTOOL 1, R 2, PR 3, F 1, DO 1, DI 1, GO 1, AO 1, TIMER 1"  # UFRAME 0 left out
 
 
 # ---------------------------------------------------------------------------

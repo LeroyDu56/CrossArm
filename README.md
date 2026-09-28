@@ -92,8 +92,8 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
 
 - **Motion**: `MoveJ`, `MoveL`, `MoveC`, `MoveAbsJ` with their targets (`Offs`, `RelTool` included),
   the arm configuration, speeds and zones, tool and user frames, payloads.
-- **I/O**: digital and group signals, typed by the backup's `EIO.cfg`; waits, including a wait with
-  a time limit and its error handler.
+- **I/O**: digital, group and analog signals, typed by the backup's `EIO.cfg`, pulses, clocks; waits,
+  including a wait with a time limit and its error handler.
 - **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR`, `WHILE`, conditions calling the backup's own functions, calls with
   num, bool and switch arguments, the integrator's own move routines.
 - **Data**: `num` and `bool` to registers and flags; operator messages; comments.
@@ -134,7 +134,7 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 | What | Result |
 |---|---|
 | Every program converted from the test corpus, loaded on a FANUC controller | 118 of 118 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (170 forms) |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (175 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -210,7 +210,7 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 
 Progress is measured as the share of RAPID instructions written as TP, on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)): 78 %, 84 % and 79 %. What is left
+controllers ([validation](docs/validation.md#1-the-test-corpus)): 80 %, 86 % and 79 %. What is left
 gives the order of the next steps:
 
 1. Routines with robtarget, string, record or INOUT parameters.

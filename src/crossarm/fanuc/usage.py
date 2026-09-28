@@ -31,12 +31,12 @@ from crossarm.fanuc.ls_parser import LSFormatError, parse_ls
 from crossarm.fanuc.tp import Instruction, Program
 from crossarm.rapid import RAPID_SUFFIXES
 
-RESOURCES = ("UFRAME", "UTOOL", "R", "PR", "F", "DO", "DI", "GO", "GI", "TIMER")
+RESOURCES = ("UFRAME", "UTOOL", "R", "PR", "F", "DO", "DI", "GO", "GI", "AO", "AI", "TIMER")
 
 # Not preceded by a letter, digit, '_' or '$': 'PR[' is not 'R[', 'SDO[' is not 'DO[',
 # '$MNUFRAME[' is a system variable.
 _BEFORE = r"(?<![A-Za-z0-9_$])"
-_REGISTER = re.compile(_BEFORE + r"(R|PR|F|DO|DI|GO|GI|TIMER)\[(\d+)")
+_REGISTER = re.compile(_BEFORE + r"(R|PR|F|DO|DI|GO|GI|AO|AI|TIMER)\[(\d+)")
 _FRAME_REGISTER = re.compile(_BEFORE + r"(UFRAME|UTOOL)\[(\d+)")
 _FRAME_SELECT = re.compile(_BEFORE + r"(UFRAME|UTOOL)_NUM\s*=\s*(\d+)")
 # MESSAGE[...] is the whole instruction, so its text runs to the last ']' of the line:

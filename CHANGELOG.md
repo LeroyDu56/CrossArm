@@ -11,12 +11,32 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   argument or a group input selects a copy of it; a `TEST` on a constant keeps its branch only. A
   `TEST` on a string, or a `CASE` value only known at run time, stays TODO. A `FUNC` choosing its
   value with `TEST` is run at conversion time like one using `IF`.
+- `PulseDO` to `DO[n]=PULSE,0.2sec`, its length rounded to the tenth of a second FANUC takes (a
+  warning when that moves it); `InvertDO` to `DO[n]=(!DO[n])`; RAPID clocks (`ClkReset`, `ClkStart`,
+  `ClkStop`, `ClkRead`) to `TIMER[n]`, apart from the timer the waits use.
+- `SetAO` to `AO[n]=`, in the FANUC module's counts: the scale per signal comes from the mapping
+  file (`analog_scales`, written with `null` for each analog output until it is filled in); without
+  it the line stays TODO rather than write a value in the wrong unit.
+- Motion settings: `ConfL`, `ConfJ`, `SingArea` and `CirPathMode` are left out, with a warning where
+  FANUC does it its own way. `AccSet` and `VelSet` that slow the robot down stay TODO, as dropping
+  them would run it faster than the ABB.
+
+### Report
+- Interrupts (`CONNECT`, `ISignalDI`, `IDelete`...) and motion settings are blockers of their own,
+  no longer mixed with calls with arguments.
+
+### Mapping file
+- `analog_outputs`, `timers` and `analog_scales`, optional: a mapping file written for 1.0 gives the
+  same numbers.
 
 ### Validated
 - A probe runs `TEST` in ten shapes (several values, negative and decimal values, empty and
   call-only `CASE`s, with and without `DEFAULT`, nested, on a constant, on an argument) on
   RobotStudio and, converted, on ROBOGUIDE: the same branches, register for register
   ([docs/validation.md](docs/validation.md#16-test-and-case-run)).
+- The I/O probe, converted and run on ROBOGUIDE: the pulse is on during its length and off after,
+  the output inverted and back, the clock reads the half second it timed
+  ([docs/validation.md](docs/validation.md#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)).
 
 ## 1.0.0 — 2026-09-26
 
