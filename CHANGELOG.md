@@ -3,6 +3,29 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+### Converts
+- RAPID interrupts to FANUC condition monitors. `CONNECT` and `ISignalDI` / `ISignalDO` become a
+  condition program named after the interrupt, `WHEN DI[n]=ON+,CALL TRAP` (`OFF-` for 0, both for
+  `edge`), armed with `MONITOR`; `ISleep` and `IDelete` end it (`MONITOR END`), `IWatch` arms it
+  again; `IPers` on a `num` compares its register with a copy of the value last seen. The `TRAP` is a
+  program without a motion group, as is every routine it calls, and arms its condition program
+  again as it ends (the controller disarms one when it fires), unless `\Single`. Measured on
+  ROBOGUIDE: one call per edge and none for a signal already set when armed, the program stopped
+  while the TRAP runs but the move under way not slowed, the monitor active in the programs called.
+  A warning says what a condition checked periodically can miss: a change within 0.05 s of
+  `MONITOR`, or held less than 0.02 s. Still TODO, with why: `ITimer` (a condition monitor cannot
+  watch a timer), `IError`, group and analog interrupts, `IDisable` / `IEnable`, a TRAP that moves
+  the robot or controls its motion (`StopMove`, `ClearPath`...), a TRAP serving several interrupts.
+- Data a TRAP changes is never taken as known where the programs read it: a point offset by a count
+  the TRAP keeps is not worked out with its value at the start.
+
+### Changes
+- The TRAP routines converted take output, input and flag numbers too: without a mapping file, the
+  numbers CrossArm gives a backup with interrupts can move. A mapping file written earlier gives
+  the same numbers.
+
 ## 1.1.0 — 2026-09-29
 
 More of RAPID converted, each construct measured on the controllers first: `TEST`, the everyday

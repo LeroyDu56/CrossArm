@@ -95,13 +95,15 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
 - **I/O**: digital, group and analog signals, typed by the backup's `EIO.cfg`, pulses, clocks; waits,
   including a wait with a time limit and its error handler.
 - **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR`, `WHILE`, conditions calling the backup's own functions, calls with
-  num, bool, string, point (robtarget) and switch arguments, the integrator's own move routines.
+  num, bool, string, point (robtarget) and switch arguments, the integrator's own move routines;
+  interrupts (`ISignalDI`, `ISignalDO`, `IPers`) as FANUC condition monitors calling the `TRAP`.
 - **Data**: `num` and `bool` to registers and flags; operator messages; comments.
 
 Frames and points the programs compute are worked out at conversion time when every value they read
 is fixed. Marked `!TODO` in the program and listed in the report, never guessed: other routine
 parameters, frames and targets computed from data that changes at run time (calibrations included),
-error handlers beyond wait timeouts, `TRAP`, analog I/O and a few ABB-specific instructions. The full table is in the [user guide](docs/guide.md#what-is-converted).
+error handlers beyond wait timeouts, timer interrupts and a `TRAP` that moves the robot, analog inputs
+and a few ABB-specific instructions. The full table is in the [user guide](docs/guide.md#what-is-converted).
 
 ## What to expect
 
@@ -133,8 +135,8 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 
 | What | Result |
 |---|---|
-| Every program converted from the test corpus, loaded on a FANUC controller | 123 of 123 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (196 forms) |
+| Every program converted from the test corpus, loaded on a FANUC controller | 127 of 127 |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (201 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -210,7 +212,7 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 
 Progress is measured as the share of RAPID instructions written as TP, on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)): 84 %, 88 % and 81 %. What is left
+controllers ([validation](docs/validation.md#1-the-test-corpus)): 84 %, 90 % and 81 %. What is left
 gives the order of the next steps:
 
 1. Routines with tooldata, record or INOUT parameters; arrays the programs change at run time.

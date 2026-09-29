@@ -135,8 +135,13 @@ def _setup_name(config: ConversionConfig, taken: set[str]) -> str:
 
 
 def _marked(program: Program, licence: LicenceStatus) -> Program:
-    """The program with the licence mark as its first lines: an evaluation copy says so where it is used."""
-    mark = [Instruction(text) for line in licence.remarks() for text in remark_lines(line)]
+    """The program with the licence mark as its first lines: an evaluation copy says so where it is used.
+
+    Not a condition program: it holds WHEN lines only, a remark in one is refused (ROBOGUIDE, ASBN-092).
+    The TRAP it calls carries the mark."""
+    if program.condition:
+        return program
+    mark =[Instruction(text) for line in licence.remarks() for text in remark_lines(line)]
     return replace(program, lines=[*mark, *program.lines])
 
 

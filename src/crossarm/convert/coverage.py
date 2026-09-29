@@ -8,8 +8,8 @@ stand for a single line or for a whole IF block. Coverage counts RAPID instructi
 An instruction is converted when it was written as TP (or needs nothing on FANUC, like TPErase),
 and not converted when it ended up in a TODO, alone or inside a block that did. Comments and
 data declarations are not instructions. An error handler counts one instruction per statement
-in it, as it is not read any further. Routines left out of the conversion (a TRAP, a PROC whose
-parameters cannot be passed) count as not converted. FUNC routines and routines wrapping a move
+in it, as it is not read any further. Routines left out of the conversion (a TRAP that cannot be
+converted, a PROC whose parameters cannot be passed) count as not converted. FUNC routines and routines wrapping a move
 are not counted: they run where they are called, and it is that call that is converted or not.
 """
 

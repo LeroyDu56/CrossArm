@@ -41,7 +41,7 @@ class LSFormatError(ValueError):
         self.line = line
 
 
-_PROG = re.compile(r"/PROG  (\S+)(\t  Macro)?")
+_PROG = re.compile(r"/PROG  (\S+)(?:\t  (Macro|Cond))?")
 _ATTR = re.compile(r"(?:TCD:)?\s*(\w+)\t+= (.*?)[;,]")
 _NUMBERED = re.compile(r"\s*(\d+):(.*)")
 _CONTINUATION = re.compile(r" {4}:(.*)")
@@ -129,7 +129,7 @@ class _Parser:
         m = _PROG.fullmatch(self.take())
         if not m:
             raise self.error("expected '/PROG  NAME'")
-        name, macro = m[1], bool(m[2])
+        name, kind = m[1], m[2]
         self.expect("/ATTR")
         attributes = self.attributes()
         if self.peek() == "/APPL":
@@ -146,7 +146,7 @@ class _Parser:
         if self.peek() is not None:
             self.take()
             raise self.error("text after /END")
-        return Program(name, lines, positions, attributes, macro, extra)
+        return Program(name, lines, positions, attributes, kind == "Macro", extra, kind == "Cond")
 
     def attributes(self) -> Attributes:
         attrs = Attributes()

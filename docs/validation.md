@@ -11,8 +11,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 
 | What | Result |
 |---|---|
-| Every program converted from the test corpus, loaded on a FANUC controller | 123 of 123 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (196 forms) |
+| Every program converted from the test corpus, loaded on a FANUC controller | 127 of 127 |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (201 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -22,6 +22,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Pulses, inverted outputs, clocks, payloads, converted and run on ROBOGUIDE | what RAPID does, the clock within 50 ms |
 | Points passed to routines or read from arrays indexed at run time, run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
 | Arrays of numbers indexed at run time, run on both controllers | the values RAPID reads |
+| Interrupts converted to condition monitors, run on ROBOGUIDE | the TRAP calls RAPID makes |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -42,6 +43,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 17. [Pulses, inverted outputs, clocks and analog outputs, run](#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)
 18. [Routines given their points, and arrays of points, run](#18-routines-given-their-points-and-arrays-of-points-run)
 19. [Arrays of numbers, run](#19-arrays-of-numbers-run)
+20. [Interrupts, run](#20-interrupts-run)
 
 ## 1. The test corpus
 
@@ -192,8 +194,8 @@ not `<0.5`, in conditions.
 
 ## 10. Every program of the test corpus, loaded
 
-The 123 programs converted from the three RobotWare backups of the test corpus were loaded on
-ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 123 load. Earlier
+The 127 programs converted from the three RobotWare backups of the test corpus were loaded on
+ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 127 load. Earlier
 conversions of larger backups found two causes of refusal, both fixed: a group output set from a
 group input (`GO[4]=GI[3]`), and selecting more tool or user frames than the controller holds. The
 frames past the limit are loaded from position registers before use;
@@ -202,7 +204,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 196 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 201 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
@@ -459,3 +461,43 @@ Writing the probe found a fault before it ran: a call given two elements, the fi
 already worked out by the statement before, had both read through the same index register. A
 statement now keeps every index register it reads. The results are in
 [tests/fixtures/probes/arrays/results](../tests/fixtures/probes/arrays/results).
+
+## 20. Interrupts, run
+
+TP has no interrupt, but FANUC's Condition Monitor function comes close: a condition program holds
+`WHEN DI[1]=ON+,CALL TRAP`, and `MONITOR NAME` arms it. Short probes on ROBOGUIDE (R-1000iA/80F)
+measured how it behaves before CrossArm wrote any:
+
+- it fires once and is then disarmed: a TRAP arms it again as it ends, and one armed again while a
+  level condition holds fires again at once, where an edge (`ON+`, `OFF-`) fires once per edge, and
+  not for a signal already set when armed, as `ISignalDI` does;
+- the program stops while the TRAP runs, but the move under way goes on: a joint move took 3.762 s
+  with a TRAP of 1 s during it, 3.761 s without, as a RAPID interrupt leaves the path alone;
+- it stays active in the programs called, and after they return;
+- the TRAP runs as a task of its own: calling a program with a motion group fails while the
+  interrupted program holds the robot (INTP-222, PROG-040 Already locked by other task), so the TRAP
+  and every routine it calls are written without one;
+- the condition is checked periodically: an edge made at once after `MONITOR` is missed, one 0.05 s
+  later is seen; a pulse of no width is missed, one of 0.02 s is seen. The report says so;
+- a digital input simulated on the controller fires like the output the probes drive;
+- a condition program refuses a remark, a flag, a timer and a condition with `AND`.
+
+[tools/make_interrupt_probe.py](../tools/make_interrupt_probe.py) then converts a module that arms
+`ISignalDO` on a rising edge, on a falling edge and with `\Single`, and `IPers` on a PERS; drives
+the outputs and the PERS, puts one interrupt to sleep (`ISleep`) and wakes it (`IWatch`), pulses the
+output from a called routine, and deletes them all (`IDelete`) before pulsing once more. Each TRAP
+counts its calls, one of them through a routine it calls. ROBOGUIDE runs the converted programs;
+the counts RAPID gives are worked out by hand, the virtual ABB controller having no signal for
+`ISignalDO` to watch:
+
+| Count | RAPID | ROBOGUIDE |
+|---|---|---|
+| `nHits`: rising edges, one while asleep and one after `IDelete` not counted | 4 | 4 |
+| `nOnce`: `\Single`, two rising edges | 1 | 1 |
+| `nFall`: falling edges, the output already down when armed | 2 | 2 |
+| `nWatch`: changes of the PERS, the last after `IDelete` not counted | 2 | 2 |
+| `nLast`: the value the last one saw | 7 | 7 |
+
+On the test corpus, the palletizing cell's two interrupts on inputs convert; the one on a timer
+(`ITimer`) and the assembly cell's, whose TRAP stops the motion (`StopMove`), stay TODO. The results
+are in [tests/fixtures/probes/interrupts/results](../tests/fixtures/probes/interrupts/results).

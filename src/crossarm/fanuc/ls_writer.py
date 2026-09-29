@@ -27,7 +27,8 @@ CRLF = "\r\n"
 
 def write_ls(program: Program) -> str:
     line_count = program.attributes.line_count
-    lines = _header(program.name, program.macro, program.attributes,
+    kind = "Macro" if program.macro else "Cond" if program.condition else ""
+    lines = _header(program.name, kind, program.attributes,
                     len(program.lines) if line_count is None else line_count)  # fmt: skip
     lines.append("/MN")
     for number, line in enumerate(program.lines, start=1):
@@ -80,10 +81,11 @@ def _date(value: datetime) -> str:
     return value.strftime("DATE %y-%m-%d  TIME %H:%M:%S")
 
 
-def _header(name: str, macro: bool, attrs: Attributes, line_count: int) -> list[str]:
+def _header(name: str, kind: str, attrs: Attributes, line_count: int) -> list[str]:
     modified = attrs.modified or attrs.created
     lines = [
-        f"/PROG  {name}" + ("\t  Macro" if macro else ""),  # tab + 2 spaces on all 8 real macros
+        # tab + 2 spaces on all 8 real macros; a condition program is stored so too (ROBOGUIDE)
+        f"/PROG  {name}" + (f"\t  {kind}" if kind else ""),
         "/ATTR",
         f"OWNER\t\t= {attrs.owner};",
         f'COMMENT\t\t= "{attrs.comment}";',

@@ -31,6 +31,7 @@ Every construct CrossArm emits has now been validated on a controller.
 | Motion line | `   5:J P[1] 50% CNT20    ;` (motion letter right after `:`) | Controller export + ROBOGUIDE |
 | Empty line | `   6:   ;` | Controller export |
 | Empty program | `/MN` immediately followed by `/POS` | Controller export |
+| Condition program | `/PROG  ISTOP<tab><2 spaces>Cond`, `DEFAULT_GROUP = *,*,*,*,*`, `WHEN` lines only: a remark in one is **refused** (ASBN-092), so it carries no licence mark | ROBOGUIDE (interrupt probe, run) |
 
 ## What controller exports contain beyond what CrossArm emits
 
@@ -89,6 +90,8 @@ byte). CrossArm does not emit these; the parser keeps them so files survive a ro
 | Payload schedule | `PAYLOAD[10] ;`: selects the schedule (`$PLST_PARNUM[1]` follows it); `PAYLOAD[11]` loads but stops the program when run, with 10 schedules | ROBOGUIDE (I/O probe, run) |
 | Analog output | `AO[1]=250 ;`, `AO[1]=4.5`, `AO[1]=(-5)`, `AO[1]=R[1]` load; `AO[1]=R[1]/10` is **refused**: through a register | ROBOGUIDE |
 | Group output from a group input | `GO[4]=GI[3]` is **refused** at load (ASBN-092): `R[5]=GI[3]` then `GO[4]=R[5]` | ROBOGUIDE |
+| Condition monitor | `MONITOR ISTOP ;`, `MONITOR END ISTOP ;` (ending one not armed, or twice: no error). In the condition program, `WHEN DI[1]=ON+,CALL TSTOP ;`: `DI` / `DO` `=ON` / `=OFF`, the edges `=ON+` / `=OFF-`, `R[1]>=2`, `R[1]<>R[2]`, `GI[1]=3`, `AI[1]>2.5`, `CALL T(3)` load; `F[1]=ON`, `TIMER[1]>2`, `(DI[1]=ON AND R[1]=2)` and an action `DO[2]=ON` are **refused** (ASBN-092). It fires once, then is disarmed with all its `WHEN` lines; armed on a level (`=ON`) and armed again while it holds, it fires again at once; on an edge, once per edge, and not for a signal already set when armed. The program stops while the called program runs; the move under way goes on (a joint move of 3.762 s, 3.761 s without). It stays active in the programs called. Checked periodically: an edge within 0.05 s of `MONITOR`, or a pulse of no width, is missed; one of 0.02 s is seen | ROBOGUIDE (monitor probes, interrupt probe, run) |
+| Program a condition monitor calls | runs as a task of its own: one with a motion group fails while the interrupted program holds it (**INTP-222** Call program failed, PROG-040 Already locked by other task); without one (`DEFAULT_GROUP = *,*,*,*,*`) it runs, and so does a program it calls without one | ROBOGUIDE |
 | End | `END` | ROBOGUIDE |
 
 ## `/POS` section

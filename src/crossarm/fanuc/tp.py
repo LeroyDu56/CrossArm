@@ -109,3 +109,5 @@ class Program:
     macro: bool = False
     # Raw lines after the last numbered /MN line (e.g. two lines of two spaces).
     mn_extra: tuple[str, ...] = ()
+    # A condition program: WHEN lines a MONITOR instruction arms (the Condition Monitor function).
+    condition: bool = False

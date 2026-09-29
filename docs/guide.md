@@ -103,6 +103,7 @@ crossarm stats   backup/RAPID                                          # parser 
 | condition calling the backup's own bool function (`IF HasVision()=TRUE`) | the test the function makes: `IF (DI[5]=OFF)` | For a function that only returns a test, with a remark keeping the RAPID text. `RobOS()` is TRUE (the programs run on a real robot) |
 | `FOR` (step ±1), `WHILE` | `FOR R[n]=a TO/DOWNTO b`, `LBL`/`JMP` loop | |
 | `TEST` / `CASE` / `DEFAULT` | `SELECT R[n]=1,JMP LBL[2]` / `=2,CALL PICK` / `ELSE,JMP LBL[3]` | One line per `CASE` value; a `CASE` that only calls a routine calls it on its line, the other branches are behind labels. A `TEST` on an argument or a group input selects a copy (`R[n:TestValue]`). On a string, or with a `CASE` value only known at run time: TODO |
+| `CONNECT` + `ISignalDI` / `ISignalDO`, `IPers`; `ISleep`, `IDelete`, `IWatch` | a condition program `WHEN DI[3]=ON+,CALL TSTOP` armed with `MONITOR ISTOP`; `MONITOR END ISTOP`, `MONITOR ISTOP` | The FANUC Condition Monitor function: one condition program per interrupt, named after it, `ON+` for 1, `OFF-` for 0, both for `edge`; `IPers` compares the data's register with a copy of the value last seen. The `TRAP` is a program without a motion group (and so is every routine it calls: it runs as a task of its own while the program it interrupted holds the robot); it arms its condition program again as it ends, as the controller disarms one when it fires, unless `\Single`. The program stops while the `TRAP` runs, the move under way goes on, as in RAPID. The controller checks the condition periodically: a change within 0.05 s of `MONITOR`, or held less than 0.02 s, can be missed (a warning says so). Data a `TRAP` changes is never taken as known |
 | routine call, `Stop`, `RETURN`, `EXIT` | `CALL`, `PAUSE`, `END`, `ABORT` | A routine of a system module the programs call is written too: the robot needs it |
 | routine with `num`, `bool`, `string`, switch parameters | `CALL NAME(3,(-2.5),1,0)`, `CALL FAULT('Gripper not open')`, read as `AR[n]` | Every argument on every call (a switch as 1 / 0). A parameter the routine changes is copied to a register. A string is text written in the call, 38 characters at most; the routine cannot show it (`MESSAGE` takes fixed text), so a `TPWrite` of it stays TODO. A point (robtarget) goes in a position register of its own: the caller sets it (`PR[99]=P[1]`), the routine moves to it (`L PR[99]`) in the frames it selects; `Offs()` of it is a copy offset component by component, and it can be passed on. Other parameters (tooldata, INOUT...) stay TODO, with the reason |
 | array of points indexed at run time: `MoveL pSlot{nTool}`, `pGrid{r,c}` in FOR loops | `PR[R[n]]` | `SETUP_FRAMES` keeps the array in consecutive position registers, row after row; the program works the index out in `R[n:PointIndex]` and reads `PR[R[n]]`, moved to, offset with `Offs()` or passed to a routine. An element at a fixed index is an ordinary point |
@@ -113,12 +114,14 @@ crossarm stats   backup/RAPID                                          # parser 
 
 **Reported as TODO**:
 - routines with other parameters (tooldata, INOUT...), a string argument only known at run time, a VAR
-  array indexed at run time or one the programs change, a point parameter turned with `RelTool()`, `FUNC` doing more than return a test, `TRAP`;
+  array indexed at run time or one the programs change, a point parameter turned with `RelTool()`, `FUNC` doing more than return a test;
 - frames and points computed from data that changes at run time, with that data and where it changes;
   frames **measured on the robot** (`CRobT`, a calibration), with what reads the robot;
 - payload changes (`tool.tload`), to redo with the FANUC `PAYLOAD[n]` schedules;
 - `AccSet` and `VelSet` that slow the robot down (dropping them would run it faster than the ABB), a
-  `SetAO` without its scale, interrupts (`CONNECT`, `ISignalDI`, `TRAP`), which TP has not;
+  `SetAO` without its scale; interrupts a condition monitor cannot watch (`ITimer`, `IError`, group and
+  analog signals), `IDisable` / `IEnable`, a `TRAP` that moves the robot or controls its motion
+  (`StopMove`, `ClearPath`...: it runs without a motion group) or serves several interrupts;
 - analog inputs, error handlers beyond wait timeouts (FANUC has no exceptions), `UNDO`, `RECORD` data set at
   run time, `GOTO`, late binding;
 - ABB-specific instructions (`Load`/`UnLoad`, `GetSysData`, world zones, calibration functions).

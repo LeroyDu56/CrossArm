@@ -22,6 +22,7 @@ change to CrossArm is checked on a controller and not only on text:
     select       TEST/CASE converted to SELECT: the totals RobotStudio computes
     points       routines given their points, arrays of points: the poses of the moves written out
     arrays       arrays of numbers indexed at run time: the totals RobotStudio computes
+    interrupts   ISignalDO, IPers, ISleep/IWatch/IDelete as condition monitors: the TRAP calls RAPID makes
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
 
@@ -47,6 +48,7 @@ import make_array_probe
 import make_bank_probe
 import make_compute_probe
 import make_condition_probe
+import make_interrupt_probe
 import make_io_probe
 import make_point_probe
 import make_select_probe
@@ -249,6 +251,12 @@ def probe_arrays() -> str:
                 lambda: registers_check(make_array_probe.EXPECTED, numbers))  # fmt: skip
 
 
+def probe_interrupts() -> str:
+    numbers = make_interrupt_probe.registers(make_interrupt_probe.conversion())
+    return _run("interrupts", make_interrupt_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_interrupt_probe.EXPECTED, numbers))  # fmt: skip
+
+
 LOADED: list[str] = []
 
 
@@ -277,6 +285,7 @@ def main() -> int:
     probes = {"negative": probe_negative, "args": probe_args, "conditions": probe_conditions, "waits": probe_waits,
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
+              "interrupts": probe_interrupts,
               "abb": probe_abb}  # fmt: skip
     chosen = sys.argv[1:] or list(probes)
     failed = 0

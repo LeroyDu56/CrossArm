@@ -61,6 +61,8 @@ from crossarm.convert.coverage import Coverage, measure
 from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes_on
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
+from crossarm.convert.interrupts import GAPS, SINGLE_OPTIONS, Interrupt, arming, called_by, changed_by, connected
+from crossarm.convert.interrupts import scan as scan_interrupts
 from crossarm.convert.motion import corner
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.values import Evaluator, Frame, JointTarget, Load, RobTarget, Symbols, Unresolvable
@@ -131,6 +133,7 @@ class Blocker:
     OPTIONS_IGNORED = "instruction options dropped"
     MOTION_SETTING = "motion setting (ConfL, SingArea, AccSet, VelSet...)"
     INTERRUPT = "interrupt (CONNECT, ISignalDI...) and its TRAP"
+    MONITOR = "interrupt watched by a condition monitor (checked periodically)"
     IO_ROUNDED = "I/O written approximately (pulse length)"
     INTERNAL = "CrossArm internal error"
     OTHER = "other"
@@ -292,6 +295,13 @@ _BLENDED_PAST = frozenset({"SET", "RESET", "SETDO", "SETGO", "SETAO", "PULSEDO",
 _MOTION_SETTINGS = frozenset({"CONFL", "CONFJ", "SINGAREA", "CIRPATHMODE", "ACCSET", "VELSET"})
 _INTERRUPTS = frozenset({"IDELETE", "ISIGNALDI", "ISIGNALDO", "ISIGNALGI", "ISIGNALGO", "ISIGNALAI", "ISIGNALAO",
                          "ITIMER", "IPERS", "IWATCH", "ISLEEP", "IENABLE", "IDISABLE", "IERROR"})
+# Interrupt instructions left TODO, and why (ISignalDI, ISignalDO and IPers convert: arm()).
+_INTERRUPT_GAPS = {
+    **GAPS,
+    "IENABLE": "RAPID holds the interrupts back while disabled; a condition monitor would lose them",
+    "IDISABLE": "RAPID holds the interrupts back while disabled; a condition monitor would lose them",
+}
+NO_GROUP = "*,*,*,*,*"  # DEFAULT_GROUP of a program that moves no robot: a TRAP, a condition program
 STRING_ARGUMENT_MAX = 38  # characters of a string CALL argument (ROBOGUIDE: 38 loads, 39 is refused)
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
 PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
@@ -678,6 +688,12 @@ class Converter:
         }
         self.procs = {r.name.upper(): r for m in modules for r in m.routines if r.kind == "PROC"}
         self.move_routine_calls: Counter[str] = Counter()
+        # Interrupts (crossarm.convert.interrupts): upper-case intnum -> what the programs do with it, set by
+        # convert(); the WHEN conditions each is armed on; the data a TRAP changes, never taken as known.
+        self.interrupts: dict[str, Interrupt] = {}
+        self.conditions: dict[str, list[str]] = {}
+        self.volatile: set[str] = set()
+        self.no_group: set[str] = set()  # routines a TRAP calls: written without a motion group
         self.not_converted: set[int] = set()  # id() of the statements that ended up in a TODO, for coverage
         self.parameters: set[str] = set()  # of the routine being translated (upper case)
         self.inliner = Inliner(modules, self._const_bool, self._inlined,
@@ -689,6 +705,8 @@ class Converter:
         """`program_modules` (upper-case names): only their routines become programs, the other
         modules are data. Default: every module without the SYSMODULE attribute."""
         wanted = {r.upper() for r in routines} if routines else None
+        everything = [r for m in self.modules for r in m.routines]
+        self.interrupts = scan_interrupts(everything, self.procs, set(self.move_routines))
         selected: list[tuple[n.Module, n.Routine]] = []
         skipped: list[n.Routine] = []
         for module in self.modules:
@@ -713,6 +731,7 @@ class Converter:
         self._plan_slots([routine for _, routine in selected])
         # Names once the programs are known: only those actually written claim a name on the controller.
         self.program_names = self._program_names([routine for _, routine in selected])
+        self._name_conditions(selected)
         for module, routine in selected:
             translator = _RoutineTranslator(self, module, routine, self.program_names[routine.name.upper()])
             self.result.programs.append(translator.run())
@@ -722,6 +741,7 @@ class Converter:
             for missing in sorted(wanted - found):
                 self.note("", None, "TODO", f"routine '{missing}' not found in the given modules")
 
+        self._write_conditions()
         self._controller_comments()
         self._place_computed()
         self._place_points()
@@ -1242,8 +1262,10 @@ class Converter:
                     Blocker.TAKEN,
                 )  # fmt: skip
 
-    @staticmethod
-    def _skip_reason(routine: n.Routine, layout: "Signature | str | None") -> str:
+    def _skip_reason(self, routine: n.Routine, layout: "Signature | str | None") -> str:
+        if routine.kind == "TRAP":
+            used = [i for i in self.interrupts.values() if routine.name.upper() in i.traps]
+            return used[0].problem if used else "TRAP not connected to any interrupt (no CONNECT)"
         if routine.kind != "PROC":
             return f"{routine.kind} routines have no TP program equivalent"
         if isinstance(layout, str):
@@ -1296,6 +1318,58 @@ class Converter:
                     mine.add(names[key])
         return names
 
+    def _name_conditions(self, selected: list[tuple[n.Module, n.Routine]]) -> None:
+        """A condition program for each interrupt whose TRAP is written, named after the interrupt."""
+        written = {r.name.upper(): r for _, r in selected if r.kind == "TRAP"}
+        max_len = self.config.program_name_max_length
+        taken = set(self.program_names.values()) | self.shared.program_names
+        for interrupt in self.interrupts.values():
+            if interrupt.problem or interrupt.trap not in written:
+                continue
+            base = name = tp_program_name(interrupt.name, max_len)
+            suffix = 1
+            while name in taken:
+                suffix += 1
+                name = f"{base[: max_len - len(str(suffix)) - 1]}_{suffix}"
+            taken.add(name)
+            self.shared.program_names.add(name)
+            interrupt.program = name
+            self.volatile |= changed_by(written[interrupt.trap], self.procs)
+            self.no_group |= called_by(written[interrupt.trap], self.procs)
+
+    def _write_conditions(self) -> None:
+        """The condition programs, once the programs have armed them: `WHEN DI[3]=ON+,CALL TRAP`.
+
+        An interrupt armed nowhere the conversion wrote gets none: its TRAP and the lines ending it
+        then say so instead of arming a program that is not there."""
+        modules = {r.name.upper(): m.name for m in self.modules for r in m.routines}
+        for key, interrupt in self.interrupts.items():
+            if not interrupt.program:
+                continue
+            conditions = self.conditions.get(key)
+            if not conditions:
+                for info in self.result.programs:
+                    lines = info.program.lines
+                    for i, line in enumerate(lines):
+                        if isinstance(line, Instruction) and line.text in (f"MONITOR {interrupt.program}",
+                                                                          f"MONITOR END {interrupt.program}"):  # fmt: skip
+                            lines[i] = Instruction(("!" + f"{interrupt.name} not armed"[: REMARK_MAX - 1]).rstrip())
+                continue
+            trap = self.program_names[interrupt.trap]
+            attrs = Attributes(comment=ascii_text(interrupt.name)[:16], created=self.config.timestamp,
+                               default_group=NO_GROUP)  # fmt: skip
+            lines = [Instruction(f"WHEN {condition},CALL {trap}") for condition in conditions]
+            program = Program(interrupt.program, list(lines), [], attrs, condition=True)
+            self.result.programs.append(ProgramInfo(program, modules.get(interrupt.trap, ""), interrupt.name, ()))
+            self.note(interrupt.program, None, "WARNING",
+                      f"interrupt {interrupt.name} watched by the condition monitor {interrupt.program} (MONITOR), which"
+                      " checks its condition periodically: a signal change within 0.05 s of MONITOR, or held less"
+                      " than 0.02 s, can be missed (ROBOGUIDE); RAPID catches both", Blocker.MONITOR)  # fmt: skip
+
+    def pers_copy(self, interrupt: Interrupt) -> str:
+        """The register an IPers condition compares the watched data with: its value when last seen."""
+        return self.written_register(f"{interrupt.name}Seen", key=f"CROSSARM.IPERS.{interrupt.name.upper()}")
+
     def _signals_by_usage(self) -> tuple[set[str], set[str]]:
         """Signal names whose direction is known from the instructions using them."""
         outputs: set[str] = set()
@@ -1305,6 +1379,10 @@ class Converter:
                 for stmt in walk_statements(routine.body):
                     if isinstance(stmt, n.SetSignal) and isinstance(stmt.signal, n.Name):
                         outputs.add(stmt.signal.name.upper())
+                    elif isinstance(stmt, n.ProcCall) and stmt.name.upper() in ("ISIGNALDI", "ISIGNALDO"):
+                        first = next((a.value for a in stmt.args if a.name is None), None)
+                        if isinstance(first, n.Name):
+                            (inputs if stmt.name.upper() == "ISIGNALDI" else outputs).add(first.name.upper())
                     elif isinstance(stmt, n.ProcCall) and stmt.args and isinstance(stmt.args[0].value, n.Name):
                         name = stmt.args[0].value.name.upper()
                         if stmt.name.upper() in ("SETDO", "PULSEDO", "WAITDO"):
@@ -1484,6 +1562,10 @@ class _RoutineTranslator:
         # module data once the routine sets it. Anything else is read as declared, if nothing changes it.
         self.known: dict[str, Typed | Unknown] = {}
         self.local_names: set[str] = set()
+        # A TRAP: the interrupt it serves, and what it ends with (arming its condition program again).
+        self.interrupt = next((i for i in conv.interrupts.values() if i.program and i.trap == routine.name.upper()),
+                              None) if routine.kind == "TRAP" else None  # fmt: skip
+        self.epilogue: list[str] = []
 
     def run(self) -> ProgramInfo:
         self.c.symbols.enter_routine(self.routine)
@@ -1503,12 +1585,30 @@ class _RoutineTranslator:
                 register = self.c.written_register(slot.name, key=f"{self.name}.{slot.name}")
                 self.copies[slot.key] = register
                 self.emit(f"{register}={self.args.register(slot.key)}")  # type: ignore[union-attr]
+        if self.interrupt is not None:
+            self._trap_prologue(self.interrupt)
         self.block(self.routine.body)
+        for text in self.epilogue:
+            self.emit(text)
         for handler in self.routine.handlers:
             self.handler(handler)
         attrs = Attributes(comment=ascii_text(self.routine.name)[:16], created=self.c.config.timestamp)
+        # A TRAP runs as a task of its own while the program it interrupted holds the robot (interrupts.called_by)
+        if self.routine.kind == "TRAP" or self.routine.name.upper() in self.c.no_group:
+            attrs.default_group = NO_GROUP
         program = Program(self.name, self.lines, self.positions, attrs)
         return ProgramInfo(program, self.module.name, self.routine.name, tuple(self.points))
+
+    def _trap_prologue(self, interrupt: Interrupt) -> None:
+        """An IPers TRAP first notes the value that fired it; every TRAP but a \\Single one arms its
+        condition program again as it ends: the controller disarms it when it fires (ROBOGUIDE)."""
+        if interrupt.kinds == {"PERS"} and interrupt.watched is not None:
+            try:
+                self.emit(f"{self.c.pers_copy(interrupt)}={operand(self.numeric(interrupt.watched))}")
+            except (Untranslatable, Unresolvable):
+                pass  # IPers itself stays TODO, with why
+        if not interrupt.single:
+            self.epilogue = [f"MONITOR {interrupt.program}"]
 
     # -- output helpers --------------------------------------------------------
 
@@ -1517,6 +1617,8 @@ class _RoutineTranslator:
     def scope(self, name: str) -> Typed | Unknown | None:
         """For crossarm.convert.compute: the routine's own value of a data, Unknown, or None (read it as declared)."""
         key = name.upper()
+        if key in self.c.volatile:
+            return None  # a TRAP may change it at any time: read it where it is kept
         if key in self.known:
             return self.known[key]
         if key in self.loop_vars:
@@ -1527,7 +1629,7 @@ class _RoutineTranslator:
 
     def known_value(self, name: str):
         """For the Evaluator: the value of a data this routine set, None if it did not."""
-        found = self.known.get(name.upper())
+        found = None if name.upper() in self.c.volatile else self.known.get(name.upper())
         if isinstance(found, Unknown):
             raise found.error(name)
         return found.value if isinstance(found, Typed) else None
@@ -1675,6 +1777,8 @@ class _RoutineTranslator:
             case n.Test():
                 self.test_stmt(s)
             case n.Return(value=None):
+                for text in self.epilogue:
+                    self.emit(text)
                 self.emit("END")
             case n.Exit():
                 self.emit("ABORT")
@@ -1682,6 +1786,8 @@ class _RoutineTranslator:
                 self.emit(f"JMP LBL[{self.error_jumps[0]}]")
             case n.Unsupported(kind="TRYNEXT") if self.error_jumps:
                 self.emit(f"JMP LBL[{self.error_jumps[1]}]")
+            case n.Unsupported(kind="CONNECT"):
+                self.connect(s)
             case n.Unsupported() if self.strict:
                 raise Untranslatable(s.reason, Blocker.rapid(s.kind))
             case n.Unsupported():
@@ -2130,9 +2236,13 @@ class _RoutineTranslator:
             self.emit(f"{self.clock(positional[0])}={name[3:]}")
         elif name in _MOTION_SETTINGS:
             self.motion_setting(call, name, positional, options)
+        elif name in ("ISIGNALDI", "ISIGNALDO", "IPERS"):
+            self.arm(call, name, positional, options)
+        elif name in ("ISLEEP", "IDELETE", "IWATCH") and len(positional) == 1 and not options:
+            self.monitor(call, name, positional[0])
         elif name in _INTERRUPTS:
-            raise Untranslatable(f"{call.name}: interrupts have no TP equivalent (a background logic or a KAREL"
-                                 " condition handler would do what the TRAP does)", Blocker.INTERRUPT)  # fmt: skip
+            why = _INTERRUPT_GAPS.get(name, "a condition monitor watches digital signals and registers only")
+            raise Untranslatable(f"{call.name}: {why}", Blocker.INTERRUPT)
         elif name in self.c.move_routines:
             self.routine_move(call, self.c.move_routines[name])
         elif isinstance(self.c.signatures.get(name), Signature) and name in self.c.program_names:
@@ -2145,6 +2255,71 @@ class _RoutineTranslator:
             self.emit(f"CALL {self.c.program_names[name]}")
         else:
             raise Untranslatable(f"'{call.name}' is not a routine of the converted modules (system instruction?)", Blocker.CALL_ARGS)
+
+    # -- interrupts: condition monitors ----------------------------------------------
+
+    def _interrupt(self, name: str, what: str) -> Interrupt:
+        """The interrupt an instruction names, if its TRAP is written; else why it stays TODO."""
+        interrupt = self.c.interrupts.get(name.upper())
+        if interrupt is None or not interrupt.program:
+            why = interrupt.problem if interrupt is not None and interrupt.problem else "its TRAP is not converted"
+            raise Untranslatable(f"{what}: {why}", Blocker.INTERRUPT)
+        return interrupt
+
+    def connect(self, stmt: n.Unsupported) -> None:
+        """CONNECT: nothing on FANUC, where the condition program names the TRAP it calls."""
+        pair = connected(stmt)
+        if pair is None:
+            raise Untranslatable(stmt.reason, Blocker.INTERRUPT)
+        self._interrupt(pair[0], "CONNECT")
+
+    def arm(self, call: n.ProcCall, name: str, positional: list[n.Expr], options: list[n.Arg]) -> None:
+        """ISignalDI / ISignalDO / IPers: the condition its program watches, then `MONITOR` to arm it."""
+        armed = arming(call)
+        if armed is None or len(positional) != (2 if name == "IPERS" else 3):
+            raise Untranslatable(f"{call.name} with these arguments is not converted", Blocker.INTERRUPT)
+        interrupt = self._interrupt(armed[0], call.name)
+        other = next((a.name for a in options if (a.name or "").upper() not in SINGLE_OPTIONS), None)
+        if other:
+            raise Untranslatable(f"{call.name}\\{other} is not converted", Blocker.INTERRUPT)
+        before: list[str] = []
+        if name == "IPERS":
+            watched = operand(self.numeric(positional[0]))
+            if not watched.startswith("R["):
+                raise Untranslatable(f"IPers on {format_expr(positional[0])}: a condition monitor compares registers", Blocker.INTERRUPT)
+            seen = self.c.pers_copy(interrupt)
+            conditions, before = [f"{watched}<>{seen}"], [f"{seen}={watched}"]
+        else:
+            kind = name[-2:]
+            ref = self.c.signal(positional[0], self.name, call.span.line)
+            if ref is None or not ref.startswith(kind):
+                raise Untranslatable(f"'{format_expr(positional[0])}' is not a known digital "
+                                     f"{'input' if kind == 'DI' else 'output'}", Blocker.SIGNAL)  # fmt: skip
+            trigger = positional[1]
+            value = "2" if isinstance(trigger, n.Name) and trigger.name.upper() == "EDGE" else self.numeric(trigger)
+            edges = {"1": ["ON+"], "0": ["OFF-"], "2": ["ON+", "OFF-"]}.get(value)
+            if edges is None:
+                raise Untranslatable(f"{call.name} on a value only known at run time", Blocker.INTERRUPT)
+            conditions = [f"{ref}={edge}" for edge in edges]
+        armed_on = self.c.conditions.setdefault(armed[0].upper(), conditions)
+        if armed_on != conditions:
+            raise Untranslatable(f"{call.name}: interrupt {interrupt.name} is armed elsewhere on"
+                                 f" {', '.join(armed_on)}, and its condition program holds one", Blocker.INTERRUPT)  # fmt: skip
+        for text in before:
+            self.emit(text)
+        self.emit(f"MONITOR {interrupt.program}")
+
+    def monitor(self, call: n.ProcCall, name: str, target: n.Expr) -> None:
+        """ISleep / IDelete: `MONITOR END`; IWatch: `MONITOR` again."""
+        if not isinstance(target, n.Name):
+            raise Untranslatable(f"{call.name} on {format_expr(target)}", Blocker.INTERRUPT)
+        interrupt = self._interrupt(target.name, call.name)
+        if name != "IWATCH":
+            self.emit(f"MONITOR END {interrupt.program}")
+            return
+        if interrupt.kinds == {"PERS"} and interrupt.watched is not None:
+            self.emit(f"{self.c.pers_copy(interrupt)}={operand(self.numeric(interrupt.watched))}")
+        self.emit(f"MONITOR {interrupt.program}")
 
     # -- waits with a time limit, error handlers ------------------------------------
 

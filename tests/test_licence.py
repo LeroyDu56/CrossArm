@@ -107,3 +107,15 @@ def test_where_a_licence_is_looked_for(tmp_path, monkeypatch):
     monkeypatch.setenv("CROSSARM_LICENCE", str(tmp_path / "pinned.licence"))
     assert lic.candidates() == [tmp_path / "pinned.licence"]
     assert lic.current() == lic.LicenceStatus(None)  # nothing there: evaluation, no complaint
+
+
+def test_a_condition_program_carries_no_mark(tmp_path, fixtures_dir, monkeypatch):
+    """It holds WHEN lines only: the controller refuses a remark in one (ROBOGUIDE, ASBN-092). Its TRAP is marked."""
+    monkeypatch.setenv("CROSSARM_LICENCE", str(tmp_path / "none.licence"))
+    probe = fixtures_dir / "probes" / "interrupts" / "IntProbe.mod"
+    pipeline.run([probe], output=tmp_path / "out", log=lambda _: None)
+    condition = (tmp_path / "out" / "IEDGE.LS").read_bytes().decode("ascii")
+    assert condition.startswith("/PROG  IEDGE\t  Cond\r\n")
+    assert condition.split("/MN\r\n", 1)[1].startswith("   1:  WHEN DO[")
+    trap = (tmp_path / "out" / "TEDGE.LS").read_bytes().decode("ascii").split("/MN\r\n", 1)[1]
+    assert trap.startswith("   1:  !CrossArm EVALUATION copy ;")
