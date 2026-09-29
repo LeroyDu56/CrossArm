@@ -27,6 +27,13 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - `num` parameters passed by reference (`INOUT`, `VAR`, `PERS`): the routine works on a register of
   its own, which the caller reads back into its data after the CALL when the routine changes it,
   directly, with `Incr` or the like, or through a routine it passes it on to.
+- Routines given their tool or work object (`PERS tooldata t`, `\PERS wobjdata WObj`): each is passed as
+  its frame number (`CALL PICK(2,1)`, 0 for a work object not given: wobj0) and the routine selects it
+  (`UTOOL_NUM=AR[1]`, `UFRAME_NUM=AR[2]`), passing it on as it is. The points it moves to with them are
+  in position registers `SETUP_FRAMES` sets: ROBOGUIDE refuses a P recorded in another tool than the
+  one selected (INTP-253), where a move to a register takes the frames selected. A point passed to such
+  a routine is recorded in the frames the call gives it. A frame the routine uses otherwise (a
+  component read, a MoveAbsJ with it) stays TODO.
 - `Incr`, `Decr`, `Add` and `Clear`, as the assignments they make (`R[2]=R[2]+1`).
 - `RelTool()` of a point given at run time, a routine's point parameter or an array element indexed at
   run time: the move goes to the point with `Tool_Offset,PR[m]`, PR[m] a copy of the point with the

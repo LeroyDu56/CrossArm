@@ -7,7 +7,7 @@ CREATE		= DATE 26-01-01  TIME 00:00:00;
 MODIFIED	= DATE 26-01-01  TIME 00:00:00;
 FILE_NAME	= ;
 VERSION		= 0;
-LINE_COUNT	= 43;
+LINE_COUNT	= 55;
 MEMORY_SIZE	= 0;
 PROTECT		= READ_WRITE;
 TCD:  STACK_SIZE	= 0,
@@ -30,38 +30,50 @@ CONTROL_CODE	= 00000000 00000000;
    9:  CALL TURN    ;
   10:  PR[96]=P[3]    ;
   11:  CALL LIFT(25) ;
-  12:  FOR R[1:r]=1 TO 2 ;
-  13:  FOR R[2:c]=1 TO 2 ;
-  14:  R[3:PointIndex]=R[1:r]    ;
-  15:  R[3:PointIndex]=R[3:PointIndex]*2    ;
-  16:  R[3:PointIndex]=R[3:PointIndex]+R[2:c]    ;
-  17:  R[3:PointIndex]=R[3:PointIndex]+87    ;
-  18:  UFRAME_NUM=1 ;
-  19:  UTOOL_NUM=1 ;
-  20:L PR[R[3]] 500mm/sec FINE    ;
-  21:  PR[R[90]]=LPOS    ;
-  22:  R[90]=R[90]+1    ;
-  23:  PR[99]=PR[R[3]]    ;
-  24:  PR[99,3]=PR[99,3]+20    ;
-  25:  CALL PICKAT    ;
-  26:  R[3:PointIndex]=R[1:r]    ;
-  27:  R[3:PointIndex]=R[3:PointIndex]*2    ;
-  28:  R[3:PointIndex]=R[3:PointIndex]+R[2:c]    ;
-  29:  R[3:PointIndex]=R[3:PointIndex]+87    ;
-  30:  PR[95]=PR[R[3]]    ;
-  31:  PR[95,1]=5    ;
-  32:  PR[95,2]=0    ;
-  33:  PR[95,3]=(-15)    ;
-  34:  PR[95,4]=0    ;
-  35:  PR[95,5]=0    ;
-  36:  PR[95,6]=20    ;
-  37:  UFRAME_NUM=1 ;
-  38:  UTOOL_NUM=1 ;
-  39:L PR[R[3]] 500mm/sec FINE Tool_Offset,PR[95]    ;
-  40:  PR[R[90]]=LPOS    ;
-  41:  R[90]=R[90]+1    ;
-  42:  ENDFOR ;
-  43:  ENDFOR ;
+  12:  PR[95]=P[4]    ;
+  13:  CALL WITHTOOL(2,2) ;
+  14:  PR[95]=P[5]    ;
+  15:  CALL WITHTOOL(1,1) ;
+  16:  FOR R[1:r]=1 TO 2 ;
+  17:  FOR R[2:c]=1 TO 2 ;
+  18:  R[3:PointIndex]=R[1:r]    ;
+  19:  R[3:PointIndex]=R[3:PointIndex]*2    ;
+  20:  R[3:PointIndex]=R[3:PointIndex]+R[2:c]    ;
+  21:  R[3:PointIndex]=R[3:PointIndex]+86    ;
+  22:  UFRAME_NUM=1 ;
+  23:  UTOOL_NUM=1 ;
+  24:L PR[R[3]] 500mm/sec FINE    ;
+  25:  UFRAME_NUM=0 ;
+  26:  UTOOL_NUM=9 ;
+  27:  PR[R[90]]=LPOS    ;
+  28:  R[90]=R[90]+1    ;
+  29:  UFRAME_NUM=1 ;
+  30:  UTOOL_NUM=1 ;
+  31:  PR[99]=PR[R[3]]    ;
+  32:  PR[99,3]=PR[99,3]+20    ;
+  33:  CALL PICKAT    ;
+  34:  R[3:PointIndex]=R[1:r]    ;
+  35:  R[3:PointIndex]=R[3:PointIndex]*2    ;
+  36:  R[3:PointIndex]=R[3:PointIndex]+R[2:c]    ;
+  37:  R[3:PointIndex]=R[3:PointIndex]+86    ;
+  38:  PR[94]=PR[R[3]]    ;
+  39:  PR[94,1]=5    ;
+  40:  PR[94,2]=0    ;
+  41:  PR[94,3]=(-15)    ;
+  42:  PR[94,4]=0    ;
+  43:  PR[94,5]=0    ;
+  44:  PR[94,6]=20    ;
+  45:  UFRAME_NUM=1 ;
+  46:  UTOOL_NUM=1 ;
+  47:L PR[R[3]] 500mm/sec FINE Tool_Offset,PR[94]    ;
+  48:  UFRAME_NUM=0 ;
+  49:  UTOOL_NUM=9 ;
+  50:  PR[R[90]]=LPOS    ;
+  51:  R[90]=R[90]+1    ;
+  52:  UFRAME_NUM=1 ;
+  53:  UTOOL_NUM=1 ;
+  54:  ENDFOR ;
+  55:  ENDFOR ;
 /POS
 P[1]{
    GP1:
@@ -79,6 +91,18 @@ P[3]{
    GP1:
 	UF : 1, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
 	X =   180.000  mm,	Y =   120.000  mm,	Z =   250.000  mm,
+	W =   180.000 deg,	P =     0.000 deg,	R =     0.000 deg
+};
+P[4]{
+   GP1:
+	UF : 2, UT : 2,		CONFIG : 'N U T, 0, 0, 0',
+	X =    60.000  mm,	Y =    20.000  mm,	Z =   250.000  mm,
+	W =   180.000 deg,	P =     0.000 deg,	R =     0.000 deg
+};
+P[5]{
+   GP1:
+	UF : 1, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
+	X =   180.000  mm,	Y =   120.000  mm,	Z =   260.000  mm,
 	W =   180.000 deg,	P =     0.000 deg,	R =     0.000 deg
 };
 /END

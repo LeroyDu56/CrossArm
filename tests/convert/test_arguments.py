@@ -59,7 +59,8 @@ def test_parameters_map_to_ar_in_order_switches_last():
 
 @pytest.mark.parametrize(("params", "reason"), [
     ("INOUT bool on", "bool parameter on is passed by reference (INOUT): only a num is copied back"),
-    ("tooldata t", "tooldata parameter t"),
+    ("speeddata v", "speeddata parameter v"),
+    ("INOUT tooldata t", "tooldata parameter t is passed by reference (INOUT)"),
     ("\\num speed", "optional num parameter speed"),
     ("num list{*}", "parameter list is an array"),
     (",".join(f"num a{i}" for i in range(11)), "11 parameters: a TP CALL takes at most 10 arguments"),
@@ -133,9 +134,9 @@ def test_calls_that_cannot_be_passed_stay_todo(call, reason):
 
 
 def test_a_routine_out_of_scope_says_why_at_every_call():
-    procs = "PROC Grip(tooldata t)\n  Stop;\nENDPROC"
+    procs = "PROC Grip(speeddata v)\n  Stop;\nENDPROC"
     assert todos(run("Grip pHome;", extra_procs=procs))[0].startswith(
-        "Grip is not converted: tooldata parameter t: TP arguments are numbers or text")
+        "Grip is not converted: speeddata parameter v: TP arguments are numbers or text")
 
 
 def test_a_string_parameter_is_passed_as_text_written_in_the_call():
@@ -292,3 +293,45 @@ def test_incr_decr_add_and_clear_are_the_assignments_they_make():
         "R[1:nSum]=R[1:nSum]+1", "R[2:nA]=R[2:nA]-1", "R[1:nSum]=R[1:nSum]+(-2)", "R[1:nSum]=R[1:nSum]+R[3]",
         "R[2:nA]=0",
     ]  # fmt: skip
+
+
+FRAMES = POINTS + """
+CONST robtarget pFixed:=[[650,50,320],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];
+PERS tooldata tOther:=[TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,50],[1,0,0,0],0,0,0]];
+PERS wobjdata wFix:=[FALSE,TRUE,"",[[1000,0,0],[1,0,0,0]],[[0,0,100],[1,0,0,0]]];"""
+WITH = r"""PROC PickWith(robtarget p,PERS tooldata t\PERS wobjdata WObj)
+  MoveL p,v100,fine,t\WObj?WObj;
+  MoveL pFixed,v200,fine,t\WObj?WObj;
+  Again t;
+ENDPROC
+PROC Again(PERS tooldata tt)
+  MoveL pFixed,v200,fine,tt;
+ENDPROC"""
+
+
+def test_a_tool_and_a_work_object_are_passed_as_their_frame_numbers():
+    """The routine selects them from its arguments; its own points are in position registers, as the controller
+    refuses a P recorded in another tool than the one selected (INTP-253). A work object not given is wobj0."""
+    source = f"MODULE M\n{FRAMES}\nPROC main()\n  PickWith pA,tGrip\\WObj:=wFix;\n  PickWith pA,tOther;\nENDPROC\n{WITH}\nENDMODULE\n"
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    assert not [n for n in result.notes if n.kind == "TODO"]
+    lines = {info.program.name: [getattr(x, "text", None) or f"{x.kind} {x.target}" for x in info.program.lines[1:]]
+             for info in result.programs}  # fmt: skip
+    assert [x for x in lines["MAIN"] if x.startswith("CALL")] == ["CALL PICKWITH(1,1)", "CALL PICKWITH(2,0)"]
+    assert lines["PICKWITH"][:3] == ["UFRAME_NUM=AR[2]", "UTOOL_NUM=AR[1]", "L PR[99]"]
+    assert lines["PICKWITH"][3].startswith("L PR[") and lines["PICKWITH"][-1] == "CALL AGAIN(AR[1])"
+    assert lines["AGAIN"][:2] == ["UFRAME_NUM=0", "UTOOL_NUM=AR[1]"]
+    assert [a.name for a in result.point_arrays] == ["PickWith.pFixed", "Again.pFixed"]
+
+
+def test_a_frame_used_other_than_to_move_with_is_not_passed():
+    routine = parse_module("MODULE M\nPROC p(PERS tooldata t)\n  TPWrite \"\"\\Num:=t.tload.mass;\nENDPROC\nENDMODULE")
+    assert signature(routine.routines[0]) == "its t is used other than to move with or to pass on: a frame is passed by its number"
+
+
+def test_moveabsj_with_a_tool_the_routine_is_given_stays_todo():
+    joint = "CONST jointtarget jHome:=[[0,0,0,0,30,0],[9E9,9E9,9E9,9E9,9E9,9E9]];"
+    procs = "PROC Home(PERS tooldata t)\n  MoveAbsJ jHome,v100,fine,t;\nENDPROC"
+    source = f"MODULE M\n{POINTS}\n{joint}\nPROC main()\n  Home tGrip;\nENDPROC\n{procs}\nENDMODULE\n"
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    assert any("INTP-253" in n.message for n in result.notes if n.kind == "TODO")

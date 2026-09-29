@@ -608,7 +608,7 @@ def test_accents_are_folded_to_ascii():
 
 
 def test_routine_selection_and_skipped_routines():
-    source = "MODULE M\nPROC a()\nENDPROC\nPROC b(tooldata x)\nENDPROC\nFUNC num f()\nRETURN 1;\nENDFUNC\nENDMODULE"
+    source = "MODULE M\nPROC a()\nENDPROC\nPROC b(speeddata x)\nENDPROC\nFUNC num f()\nRETURN 1;\nENDFUNC\nENDMODULE"
     result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)))
     assert [p.program.name for p in result.programs] == ["A"]
     assert [(r, why.split(" ")[0]) for _, r, why in result.skipped_routines] == [("b", "parameters"), ("f", "FUNC")]

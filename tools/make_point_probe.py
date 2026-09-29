@@ -3,18 +3,23 @@
 
 """Generate and run the point probe: points passed to routines or read from arrays go where the moves written out go.
 
-PointProbe.mod makes the same thirty-seven moves twice. PROC PointProbe calls routines that take a robtarget:
+PointProbe.mod makes the same forty-three moves twice. PROC PointProbe calls routines that take a robtarget:
 PickAt approaches its point with Offs(), moves to it, leaves with another Offs(); Twice passes its own
 point on, as it is and with Offs(); Turn moves to it with RelTool(), displaced and turned about one
-axis and about all three; Lift moves to RelTool() and Offs() of it by a distance it is given, negated. PROC PointDirect makes the same moves with the points written in
+axis and about all three; Lift moves to RelTool() and Offs() of it by a distance it is given, negated;
+WithTool is given its tool and work object too, and moves to its point and to a point of its own with
+them: called with a second tool and work object, then with the first ones. PROC PointDirect makes the same moves with the points written in
 them. Then it walks a 2 x 2 array of points in two FOR loops, moving to each element, handing
 Offs() of it to PickAt and moving to RelTool() of it; PointDirect makes those moves with the elements at fixed indices. CrossArm
 converts both: the first passes each point in a position register (PR[k]=P[j] before the CALL, L PR[k]
-in the routine, Offs as component arithmetic on a copy, RelTool as a Tool_Offset register) and reads the array from the registers
+in the routine, Offs as component arithmetic on a copy, RelTool as a Tool_Offset register; a routine given
+its frames selects them from its arguments, UTOOL_NUM=AR[2], and moves to its own points in registers too) and reads the array from the registers
 SETUP_FRAMES fills (PR[R[n]], the index worked out from the loop registers); the second is plain moves.
 
-On ROBOGUIDE, PTPROBE sets the frames as SETUP_FRAMES does, runs both, and records the TCP after every
-move (PR[R[90]]=LPOS, in the frames the move ran in): the first run in PR[1..], the direct one in
+On ROBOGUIDE, PTPROBE sets the frames as SETUP_FRAMES does, runs both, and records the faceplate after
+every move in the world frame (UFRAME_NUM=0, a tool of zeros, PR[R[90]]=LPOS, then the frames the program
+had selected again: a routine selecting the wrong tool would put the faceplate elsewhere, where the TCP
+read in that tool would not tell): the first run in PR[1..], the direct one in
 PR[31..]. Move by move they must be the same pose.
 
 Usage:  python tools/make_point_probe.py write     PointProbe.mod and the .LS in tests/fixtures/probes/points
@@ -43,8 +48,8 @@ PROBE = ROOT / "tests" / "fixtures" / "probes" / "points"
 RESULT = PROBE / "results" / "pointprobe_roboguide.txt"
 PROGRAM = "PTPROBE"
 COUNTER = 90  # R[90]: the PR the next measurement goes in
-PASSED_PR, DIRECT_PR = 1, 46
-MOVES = 37
+PASSED_PR, DIRECT_PR = 1, 45
+MOVES = 43
 ZERO_PR = 49
 
 DOWN = "[0,1,0,0]"
@@ -53,6 +58,9 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
     "    ! CrossArm - point probe: see tools/make_point_probe.py.",
     "    PERS tooldata tProbe:=[TRUE,[[10,-5,120],[1,0,0,0]],[1,[0,0,50],[1,0,0,0],0,0,0]];",
     "    PERS wobjdata wProbe:=[FALSE,TRUE,\"\",[[1100,-150,650],[0.996195,0,0,0.087156]],[[0,0,0],[1,0,0,0]]];",
+    "    PERS tooldata tProbe2:=[TRUE,[[25,10,140],[0.9914449,0,0,0.1305262]],[1,[0,0,50],[1,0,0,0],0,0,0]];",
+    "    PERS wobjdata wProbe2:=[FALSE,TRUE,\"\",[[1150,-100,600],[0.9961947,0,0,-0.0871557]],[[0,0,0],[1,0,0,0]]];",
+    f"    CONST robtarget pOwn:=[[120,40,240],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];",
     f"    CONST robtarget pA:=[[60,20,250],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];",
     f"    CONST robtarget pB:=[[180,120,250],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];",
     "    CONST robtarget pGrid{2,2}:=[[" + ",".join(f"[[{x},{y},230],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]]"
@@ -66,6 +74,8 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
     "        Twice pB;",
     "        Turn pA;",
     "        Lift pB,25;",
+    "        WithTool pA,tProbe2\\WObj:=wProbe2;",
+    "        WithTool Offs(pB,0,0,10),tProbe\\WObj:=wProbe;",
     "        FOR r FROM 1 TO 2 DO",
     "            FOR c FROM 1 TO 2 DO",
     "                MoveL pGrid{r,c},v500,fine,tProbe\\WObj:=wProbe;",
@@ -97,6 +107,12 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
     "        MoveL Offs(pLift,5,0,-nUp),v200,fine,tProbe\\WObj:=wProbe;",
     "    ENDPROC",
     "",
+    "    PROC WithTool(robtarget pWith,PERS tooldata tWith\\PERS wobjdata WObj)",
+    "        MoveJ Offs(pWith,0,0,40),v1000,fine,tWith\\WObj?WObj;",
+    "        MoveL pWith,v200,fine,tWith\\WObj?WObj;",
+    "        MoveL pOwn,v200,fine,tWith\\WObj?WObj;",
+    "    ENDPROC",
+    "",
     "    PROC PointDirect()",
     *[f"        {line}" for point in ("pA", "Offs(pB,0,50,0)", "pB", "Offs(pB,30,0,0)") for line in (
         f"MoveJ Offs({point},0,0,40),v1000,fine,tProbe\\WObj:=wProbe;",
@@ -108,6 +124,12 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
     "        MoveJ RelTool(pA,0,0,-20\\Rx:=8\\Ry:=-6\\Rz:=15),v1000,fine,tProbe\\WObj:=wProbe;",
     "        MoveL RelTool(pB,0,0,-25),v200,fine,tProbe\\WObj:=wProbe;",
     "        MoveL Offs(pB,5,0,-25),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveJ Offs(pA,0,0,40),v1000,fine,tProbe2\\WObj:=wProbe2;",
+    "        MoveL pA,v200,fine,tProbe2\\WObj:=wProbe2;",
+    "        MoveL pOwn,v200,fine,tProbe2\\WObj:=wProbe2;",
+    "        MoveJ Offs(Offs(pB,0,0,10),0,0,40),v1000,fine,tProbe\\WObj:=wProbe;",
+    "        MoveL Offs(pB,0,0,10),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveL pOwn,v200,fine,tProbe\\WObj:=wProbe;",
     *[f"        {line}" for r, c in ((1, 1), (1, 2), (2, 1), (2, 2)) for line in (
         f"MoveL pGrid{{{r},{c}}},v500,fine,tProbe\\WObj:=wProbe;",
         f"MoveJ Offs(Offs(pGrid{{{r},{c}}},0,0,20),0,0,40),v1000,fine,tProbe\\WObj:=wProbe;",
@@ -125,19 +147,25 @@ def conversion() -> tuple[ConversionResult, ConversionConfig]:
     parsed = parse_text(MODULE, path="PointProbe.mod")
     assert parsed.module is not None, parsed.diagnostics
     config = ConversionConfig(timestamp=datetime(2026, 1, 1))
-    result = convert([parsed.module], config, routines=["PointProbe", "PickAt", "Twice", "Turn", "Lift", "PointDirect"],
+    result = convert([parsed.module], config, routines=["PointProbe", "PickAt", "Twice", "Turn", "Lift", "WithTool", "PointDirect"],
                      sources={"PointProbe": MODULE})  # fmt: skip
     assert not [n for n in result.notes if n.kind == "TODO"], [n.message for n in result.notes]
     return result, config
 
 
 def measured(program: Program) -> Program:
-    """The program with the TCP recorded after every move, in the frames the move ran in."""
+    """The program with the faceplate recorded after every move, in the world frame; then the frames the
+    program had selected are selected again, as the moves after it expect them."""
     lines: list[Instruction | Motion] = []
+    selected: dict[str, Instruction] = {}
     for line in program.lines:
         lines.append(line)
+        if isinstance(line, Instruction) and line.text.startswith(("UFRAME_NUM=", "UTOOL_NUM=")):
+            selected[line.text.split("=")[0]] = line
         if isinstance(line, Motion):
-            lines += [Instruction(f"PR[R[{COUNTER}]]=LPOS"), Instruction(f"R[{COUNTER}]=R[{COUNTER}]+1")]
+            lines += [Instruction("UFRAME_NUM=0"), Instruction(f"UTOOL_NUM={ZERO_TOOL}"),
+                      Instruction(f"PR[R[{COUNTER}]]=LPOS"), Instruction(f"R[{COUNTER}]=R[{COUNTER}]+1"),
+                      *selected.values()]  # fmt: skip
     return Program(program.name, lines, program.positions, program.attributes)
 
 

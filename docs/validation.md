@@ -22,6 +22,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Pulses, inverted outputs, clocks, payloads, converted and run on ROBOGUIDE | what RAPID does, the clock within 50 ms |
 | Points passed to routines or read from arrays indexed at run time, `Offs()` and `RelTool()` of them, run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
 | Records and nums passed by reference, run on both controllers | the values RAPID computes |
+| Routines given their tool and work object, run on ROBOGUIDE | the faceplate where the moves written out put it |
 | Arrays of numbers indexed at run time, run on both controllers | the values RAPID reads |
 | Interrupts converted to condition monitors, run on ROBOGUIDE | the TRAP calls RAPID makes |
 
@@ -427,7 +428,7 @@ moves the point 40 mm along the frame's z, as `Offs()` does. A register can also
 `L PR[R[5]]`, `J PR[R[5]]` and `PR[63]=PR[R[5]]` go to, and copy, the register whose number `R[5]` holds, and
 the index can be worked out beforehand (`R[5]=R[1]*2`, `R[5]=R[5]+R[2]`, `R[5]=R[5]+76`).
 
-**End to end.** [tools/make_point_probe.py](../tools/make_point_probe.py) converts thirty-seven moves
+**End to end.** [tools/make_point_probe.py](../tools/make_point_probe.py) converts forty-three moves
 twice: through routines that take a robtarget (one approaches its point with `Offs()`, moves to it,
 leaves with another `Offs()`; another passes its own point on, as it is and with `Offs()`) and through a
 CONST 2 x 2 array walked in two FOR loops (each element moved to, and handed with `Offs()` to the first
@@ -436,7 +437,7 @@ every move:
 
 | Comparison | Worst gap |
 |---|---|
-| Moves through routines and arrays vs the moves written out, over 37 moves | **0.000 mm, 0.000°** |
+| Moves through routines and arrays vs the moves written out, over 43 moves | **0.000 mm, 0.000°** |
 
 The poses are the RAPID values themselves (the point 40 mm above, the retract offset by 10, -20 and
 40 mm), the array's elements row after row, as the loops walk them. The results are in [tests/fixtures/probes/points/results](../tests/fixtures/probes/points/results).
@@ -523,7 +524,10 @@ routine that adds to it and to one that passes it on and increments it, and chan
 Writing it found a routine passing on a parameter it had copied: it passed the value it was given,
 not its copy. It now passes the copy. The point probe ([section 18](#18-routines-given-their-points-and-arrays-of-points-run))
 gained `RelTool()` of a point given to a routine and of an array element, displaced and turned about
-one axis and about all three, and a displacement given negated: thirty-seven moves, the same poses as
-the moves written out, to the thousandth of a millimetre. Reading the programs back showed the
+one axis and about all three, a displacement given negated, and a routine given its tool and work
+object, called with two of each: forty-three moves. It now records the faceplate in the world frame
+after each move, not the TCP in the frames the move ran in, which a routine selecting the wrong tool
+would not show; the two tools put it 57 mm apart, and every move where the move written out puts it,
+to the thousandth of a millimetre. Reading the programs back showed the
 controller stores a register's component, `PR[95,3]=(-30)`, with four spaces before `;`, as it does
 a whole register; CrossArm now writes it so.

@@ -792,7 +792,10 @@ class Converter:
                 if move is None:
                     continue
                 wobj = move.wobj if move.wobj is not None else n.Name(move.span, "wobj0")
+                layout = self.signatures.get(routine.name.upper())
                 for kind, expr in (("UF", wobj), ("UT", move.tool)):
+                    if isinstance(layout, Signature) and isinstance(expr, n.Name) and layout.frame(expr.name):
+                        continue  # a frame the routine is given: numbered where it is called
                     if isinstance(expr, n.Name):
                         used[kind].add(expr.name.upper())
         self.frames_in_moves = used
@@ -901,7 +904,7 @@ class Converter:
             if not isinstance(callee, Signature):
                 continue
             given = [a.value for a in stmt.args if a.name is None]  # type: ignore[union-attr]
-            for value, slot in zip(given, [s for s in callee.slots if s.kind != "switch"], strict=False):
+            for value, slot in zip(given, callee.required, strict=False):
                 if slot.kind == "robtarget" and isinstance(value, n.Name) and value.name.upper() == parameter.upper():
                     found = self.point_frames(callee.routine, slot.name, seen | {key})
                     if found != (None, None):
@@ -1829,6 +1832,10 @@ class _RoutineTranslator:
             held = m.wobj is not None and self._stationary("UF", m.wobj)
             # Numbered as before this move was converted: the work object, then the tool unless the work object stopped it.
             uf, ut = self.joint_frame("UF", m.wobj, line), self.joint_frame("UT", m.tool, line, number=not held)
+        elif (given := self.given_frames(m)) != (None, None):  # the routine was given its tool or work object
+            uf = (given[0], None) if given[0] else self.c.selection("UF", self.c.frame_number("UF", m.wobj, self.name, line))
+            ut = (given[1], None) if given[1] else self.c.selection("UT", self.c.frame_number("UT", m.tool, self.name, line))
+            self.last_tool = m.tool
         else:
             uf = self.c.selection("UF", self.c.frame_number("UF", m.wobj, self.name, line))
             ut = self.c.selection("UT", self.c.frame_number("UT", m.tool, self.name, line))
@@ -1852,12 +1859,18 @@ class _RoutineTranslator:
             raise Untranslatable(f"jointtarget with {len(to_value.joints)} axes", Blocker.MOTION)
         speed, rapid_speed, fanuc_speed = self.speed(m.speed, motion)
         termination = self.termination(m.zone, m.speed, motion, rapid_speed, fanuc_speed, self.next_speed)
-        ignored = [a.name for a in m.options if a.name and a.name.upper() != "NOEOFFS"]
+        given = self.given_frames(m)
+        ignored = [a.name for a in m.options if a.name and a.name.upper() != "NOEOFFS"
+                   and not (given[0] and a.name.upper() == "WOBJ")]  # fmt: skip
         if ignored:
             self.warn(m, f"motion options ignored: {', '.join(ignored)}", Blocker.OPTIONS_IGNORED)
 
-        via = passed_via or (self.point(m.via_point, via_value, uf, ut, line) if via_value is not None else None)
-        target = passed or self.point(m.to_point, to_value, uf, ut, line)  # type: ignore[arg-type]
+        if given != (None, None):  # a P is recorded in one tool: its points in registers, moved to in the frames given
+            via = passed_via or (self.frame_free(m.via_point, via_value, line) if via_value is not None else None)
+            target = passed or self.frame_free(to_point, to_value, line)  # type: ignore[arg-type]
+        else:
+            via = passed_via or (self.point(m.via_point, via_value, uf, ut, line) if via_value is not None else None)
+            target = passed or self.point(m.to_point, to_value, uf, ut, line)  # type: ignore[arg-type]
         for selected, active, kind in ((uf, self.active_uf, "UFRAME"), (ut, self.active_ut, "UTOOL")):
             if selected != active:
                 number, bank = selected
@@ -1866,6 +1879,36 @@ class _RoutineTranslator:
                 self.emit(f"{kind}_NUM={number}")
         self.active_uf, self.active_ut = uf, ut
         self.lines.append(Motion(motion, target, speed, termination, via, options))
+
+    def given_frames(self, m: n.Move) -> tuple[str | None, str | None]:
+        """(work object, tool) the move takes from the routine's parameters, as their AR[n]; None for a named
+        frame. `\\WObj?wObj` is the work object the routine was given, 0 (wobj0) when it was not."""
+        if self.args is None:
+            return None, None
+        wobj = m.wobj if m.wobj is not None else next(
+            (a.value for a in m.options if (a.name or "").upper() == "WOBJ" and a.conditional), None)  # fmt: skip
+        uf = self.args.frame(wobj.name) if isinstance(wobj, n.Name) else None
+        ut = self.args.frame(m.tool.name) if isinstance(m.tool, n.Name) else None
+        if (uf or ut) and m.kind is n.MoveKind.ABSJ:
+            raise Untranslatable("MoveAbsJ with a tool or work object the routine is given: the controller refuses a"
+                                 " joint point recorded in another tool than the one selected (INTP-253)",
+                                 Blocker.RUNTIME_FRAME)  # fmt: skip
+        return uf, ut
+
+    def frame_free(self, expr: n.Expr, value: RobTarget, line: int) -> str:
+        """A point moved to with a frame the routine is given: kept in a position register SETUP_FRAMES sets, as
+        the controller refuses a P recorded in another tool than the one selected (INTP-253); a move to a
+        register takes the frames selected when it runs (point probe)."""
+        (x, y, z), (w, p, r) = value.pose.pos, value.pose.wpr()
+        position = CartesianPosition(x, y, z, w, p, r, self.config_string(value, line))
+        name = f"{self.routine.name}.{format_expr(expr)}"
+        base = key = re.sub(r"[^A-Z0-9_.]+", "_", name.upper())
+        suffix = 1
+        while key in self.c.arrays and self.c.arrays[key][2] != (position,):  # the same text, another value
+            suffix += 1
+            key = f"{base}_{suffix}"
+        self.c.arrays.setdefault(key, (name, (1,), (position,)))
+        return f"PR[{{PB:{key}:0}}]"
 
     def tool_offset(self, expr: n.Expr) -> tuple[n.Expr, str] | None:
         """RelTool() of a point given at run time (a routine's point parameter, an array element): the point
@@ -2475,19 +2518,27 @@ class _RoutineTranslator:
     def call_with_args(self, call: n.ProcCall, layout: Signature) -> None:
         """CALL NAME(a,b,...): required arguments in order, then 1 / 0 for every optional switch."""
         positional = [a for a in call.args if a.name is None]
-        required = [s for s in layout.slots if s.kind != "switch"]
+        required = list(layout.required)
         if len(positional) != len(required):
             raise Untranslatable(f"{len(positional)} arguments given, {call.name} takes {len(required)}", Blocker.CALL_ARGS)
         given = {a.name.upper(): a for a in call.args if a.name is not None}
-        unknown = set(given) - {s.key for s in layout.slots if s.kind == "switch"}
+        unknown = set(given) - {s.key for s in layout.slots if s.optional}
         if unknown:
             raise Untranslatable(f"{call.name} has no switch \\{min(unknown)}", Blocker.CALL_ARGS)
         values, points, back = [], [], []
         name = self.c.program_names[call.name.upper()]
         returned = {s.key for s in layout.returned()}
+        # The tool and work object this call gives the routine: a point passed with them is recorded in them.
+        framed = [(s, a.value) for a, s in zip(positional, required, strict=True)]
+        framed += [(s, given[s.key].value) for s in layout.slots if s.kind == "wobjdata" and s.key in given]
+        frames = {("UT" if s.kind == "tooldata" else "UF"): value for s, value in framed
+                  if s.kind in ("tooldata", "wobjdata") and isinstance(value, n.Name)
+                  and not (self.args and self.args.frame(value.name))}  # fmt: skip
         for a, slot in zip(positional, required, strict=True):
             if slot.kind == "robtarget":
-                points.append(self.point_argument(a.value, slot, layout, call.span.line))
+                points.append(self.point_argument(a.value, slot, layout, call.span.line, frames))
+            elif slot.kind in ("tooldata", "wobjdata"):
+                values.append(self.frame_argument(a.value, slot, points))
             elif slot.kind == "record":
                 if a.value is None:
                     raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
@@ -2502,7 +2553,9 @@ class _RoutineTranslator:
         for slot in layout.slots[len(required):]:
             arg = given.get(slot.key)
             if arg is None:
-                values.append("0")
+                values.append("0")  # a switch not given; a work object not given: wobj0, UFRAME 0
+            elif slot.kind == "wobjdata":
+                values.append(self.frame_argument(arg.value, slot, points))
             elif arg.conditional:  # \Check?Check: passed on only when this routine was given it
                 forwarded = self.args.register(arg.value.name) if self.args and isinstance(arg.value, n.Name) else None
                 if forwarded is None:
@@ -2515,6 +2568,17 @@ class _RoutineTranslator:
         self.emit(f"CALL {name}({','.join(values)})" if values else f"CALL {name}")
         for text in back:
             self.emit(text)
+
+    def frame_argument(self, expr: n.Expr | None, slot, before: list[str]) -> str:
+        """The frame number a tooldata or wobjdata argument is passed as; this routine's own frame parameter as
+        its AR[n]. A frame above what the controller holds is loaded into its slot first (`before`)."""
+        kind = "UT" if slot.kind == "tooldata" else "UF"
+        if isinstance(expr, n.Name) and self.args and (own := self.args.frame(expr.name)):
+            return own
+        number, bank = self.c.selection(kind, self.c.frame_number(kind, expr, self.name, expr.span.line if expr else 0))
+        if bank is not None:
+            before.append(f"{'UTOOL' if kind == 'UT' else 'UFRAME'}[{number}]=PR[{bank}]")
+        return str(number)
 
     def returned_to(self, expr: n.Expr | None, slot) -> str:
         """The register a num passed by reference is read back into: the caller's data, or its own copy."""
@@ -2562,7 +2626,8 @@ class _RoutineTranslator:
             raise Untranslatable(f"argument {slot.name}: {exc}", Blocker.CALL_ARGS) from exc
         return decimal(text)  # CALL P(.5), not CALL P(0.5)
 
-    def point_argument(self, expr: n.Expr | None, slot, layout: Signature, line: int) -> str:
+    def point_argument(self, expr: n.Expr | None, slot, layout: Signature, line: int,
+                       frames: dict[str, n.Expr] | None = None) -> str:  # fmt: skip
         """`PR[k]=P[j]` for a robtarget argument: the point worked out here, recorded with the frames the routine
         moves to it with; `PR[k]=PR[m]` for a point this routine was given itself."""
         if expr is None:
@@ -2576,6 +2641,8 @@ class _RoutineTranslator:
             raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' is only known at run time ({exc})",
                                  Blocker.RUNTIME_POSITION) from exc  # fmt: skip
         tool, wobj = self.c.point_frames(layout.routine, slot.name)
+        if tool is None and frames:  # moved to with the frames the routine is given: those of this call
+            tool, wobj = frames.get("UT"), wobj or frames.get("UF")
         if tool is None and self.active_uf is not None and self.active_ut is not None:
             uf, ut = self.active_uf, self.active_ut  # no routine moves to it: recorded in the frames selected here
         else:

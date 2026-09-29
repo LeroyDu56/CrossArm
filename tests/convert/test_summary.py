@@ -28,7 +28,7 @@ def config(**kwargs) -> ConversionConfig:
 
 
 def test_todos_of_the_same_cause_are_grouped_under_one_blocker():
-    result = run("Access_A 1;\nAccess_B 2;\nAccess_C 3;\nGOTO done;", extra_procs="PROC Access_A(tooldata x)\nENDPROC")
+    result = run("Access_A 1;\nAccess_B 2;\nAccess_C 3;\nGOTO done;", extra_procs="PROC Access_A(speeddata x)\nENDPROC")
     assert result.todo_count == 4
     categories = {category: count for category, count, _ in result.grouped("TODO")}
     assert categories[Blocker.CALL_ARGS] == 3

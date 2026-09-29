@@ -29,13 +29,18 @@ def test_the_probe_files_are_those_the_generator_writes():
 def test_the_points_go_in_position_registers():
     result, _ = conversion()
     assert result.coverage.percent == 100.0
-    assert [a.rapid_name for a in result.point_registers] == ["CROSSARM.POINT", "CROSSARM.TOOLOFFSET", "Lift.pLift",
-                                                           "Turn.pTurn", "Twice.pTwice", "PickAt.pPick"]
+    assert [a.rapid_name for a in result.point_registers] == ["CROSSARM.POINT", "CROSSARM.TOOLOFFSET", "WithTool.pWith",
+                                                           "Lift.pLift", "Turn.pTurn", "Twice.pTwice", "PickAt.pPick"]
     text = (PROBE / "TWICE.LS").read_text(encoding="ascii")
     assert "PR[99]=PR[98]" in text and "PR[99,1]=PR[99,1]+30" in text  # passed on, and with Offs()
-    ((name, dims, base),) = [(a.name, a.dims, a.base) for a in result.point_arrays]
-    assert (name, dims, base) == ("pGrid", (2, 2), 90)  # {r,c} is PR[90 + 2(r-1) + (c-1)]
-    assert "R[3:PointIndex]=R[3:PointIndex]+87" in (PROBE / "POINTPROBE.LS").read_text(encoding="ascii")
+    assert [(a.name, a.dims, a.base) for a in result.point_arrays] == [
+        ("pGrid", (2, 2), 89),  # {r,c} is PR[89 + 2(r-1) + (c-1)]
+        ("WithTool.pOwn", (1,), 88),  # a point of a routine given its tool: in a register, not a P
+    ]  # fmt: skip
+    with_tool = (PROBE / "WITHTOOL.LS").read_text(encoding="ascii")
+    assert "UFRAME_NUM=AR[2]" in with_tool and "UTOOL_NUM=AR[1]" in with_tool and "L PR[88]" in with_tool
+    assert "CALL WITHTOOL(2,2)" in (PROBE / "POINTPROBE.LS").read_text(encoding="ascii")
+    assert "R[3:PointIndex]=R[3:PointIndex]+86" in (PROBE / "POINTPROBE.LS").read_text(encoding="ascii")
 
 
 @pytest.mark.skipif(not RESULT.exists(), reason="point probe not run on ROBOGUIDE yet")

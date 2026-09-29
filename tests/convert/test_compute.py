@@ -153,7 +153,7 @@ def test_an_input_the_programs_change_elsewhere_keeps_the_todo():
 def test_an_input_changed_through_a_parameter_keeps_the_todo_but_not_one_only_read():
     reads = MAKE + "\nPROC Show(PERS tooldata t)\nTPWrite \"tool\";\nENDPROC"
     result = run(f"Show tBase;\ntBuilt:=Shifted(tBase,30);\n{MOVE}", extra=reads)
-    assert [c for c, _ in todos(result)] == [Blocker.CALL_ARGS]  # the call itself: TP passes values only
+    assert todos(result) == []  # Show is given the tool's number, and only reads it
     assert result.computed_frames
     writes = MAKE + "\nPROC Calib(INOUT tooldata t)\nt.tframe.trans.z:=1;\nENDPROC\nPROC other()\nCalib tBase;\nENDPROC"
     assert "is changed by the programs (M.other l." in todos(run(f"tBuilt:=Shifted(tBase,30);\n{MOVE}", extra=writes))[0][1]
