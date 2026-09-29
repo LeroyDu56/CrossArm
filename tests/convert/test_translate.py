@@ -432,6 +432,31 @@ def test_the_mapping_file_pins_the_first_register_of_an_array(tmp_path):
     assert [(a.base, a.fixed) for a in result.point_arrays] == [(40, True)]
 
 
+TABLE = "CONST num TORQUE{3}:=[1.5,2,-0.5];PERS num LIMIT{2}:=[5,6];VAR num nSum;VAR num k:=1;VAR num nCount{2};"
+
+
+def test_an_array_of_numbers_indexed_at_run_time_is_read_from_registers():
+    result = run("nSum:=nSum+TORQUE{k};\nnSum:=TORQUE{2}*2;", TABLE)
+    assert tp_lines(result) == ["R[3:NumberIndex]=R[2]", "R[3:NumberIndex]=R[3:NumberIndex]+197",
+                                "R[1:nSum]=R[1:nSum]+R[R[3]]", "R[1:nSum]=4"]  # fmt: skip
+    assert [(a.name, a.base, a.values) for a in result.number_arrays] == [("TORQUE", 198, (1.5, 2.0, -0.5))]
+    setup = build_setup(result, ConversionConfig(), "SETUP_FRAMES")
+    assert [line.text for line in setup.program.lines if line.text.startswith("R[")] == [
+        "R[198]=1.5", "R[199]=2", "R[200]=(-.5)"]
+
+
+def test_two_elements_in_one_statement_take_two_index_registers():
+    lines = tp_lines(run("nSum:=TORQUE{k};\nnSum:=TORQUE{k}+LIMIT{k};", TABLE))
+    assert lines[-1] == "R[1:nSum]=R[R[3]]+R[R[4]]"
+
+
+def test_a_pers_table_no_program_changes_is_kept_and_one_changed_or_a_var_is_not():
+    result = run("nSum:=LIMIT{k};", TABLE)
+    assert any("PERS array kept in registers" in n.message for n in result.notes if n.kind == "WARNING")
+    assert "nCount is a VAR" in todos(run("nSum:=nCount{k};", TABLE))[0]
+    assert "LIMIT is changed by the programs" in todos(run("LIMIT{1}:=3;\nnSum:=LIMIT{k};", TABLE))[-1]
+
+
 def test_a_group_input_read_by_its_name():
     source = "MODULE M\nPROC main()\nIF giCode>0 AND diReady=1 THEN\nWaitTime 1;\nENDIF\nENDPROC\nENDMODULE\n"
     signals = {"GICODE": Signal("giCode", "GI"), "DIREADY": Signal("diReady", "DI")}

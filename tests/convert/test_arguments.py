@@ -192,8 +192,8 @@ def test_a_point_only_known_at_run_time_or_turned_stays_todo():
     result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
     found = [(n.category, n.message) for n in result.notes if n.kind == "TODO"]
     assert {category for category, _ in found} == {Blocker.RUNTIME_POSITION}
-    assert any("pSeen{nRow}: an array of points indexed at run time is converted when it is CONST" in message
-               for _, message in found)  # fmt: skip
+    assert any("pSeen{nRow}: an array of points indexed at run time is kept in registers when no program changes"
+               " it; pSeen is a VAR" in message for _, message in found)  # fmt: skip
     assert any("moved to as it is or with Offs()" in message for _, message in found)
 
 

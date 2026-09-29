@@ -40,6 +40,10 @@ ANALOG_SCALES_README = (
     "AO[n]=1843 (4.5 of 10 V on a 0-4095 module). null: not known, and SetAO on that signal stays TODO. "
     "The counts depend on the FANUC analog module: see its manual."
 )
+NUMBER_ARRAYS_README = (
+    "Arrays of numbers the programs index at run time (nTorque{i}): SETUP_FRAMES keeps each in consecutive "
+    "registers from the one given here, read as R[R[n]]. Change it to the first of a free run."
+)
 POINT_ARRAYS_README = (
     "Arrays of points the programs index at run time (pSlot{i}): SETUP_FRAMES keeps each in consecutive "
     "position registers from the one given here, read as PR[R[n]]. Change it to the first of a free run."
@@ -91,6 +95,10 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     if wrappers:
         data["_move_routines"] = MOVE_ROUTINES_README
         data["move_routines"] = {use.name: use.converted for use in wrappers}
+    numbers = [a for a in result.number_arrays if a.base is not None]
+    if numbers:
+        data["_number_arrays"] = NUMBER_ARRAYS_README
+        data["number_arrays"] = {a.name: a.base for a in numbers}
     arrays = [a for a in result.point_arrays if a.base is not None]
     if arrays:
         data["_point_arrays"] = POINT_ARRAYS_README

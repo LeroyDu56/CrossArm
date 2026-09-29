@@ -31,10 +31,14 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   selects, as a RAPID move takes its own tool and work object. `Offs()` of the point is a copy offset
   component by component (`PR[98,3]=PR[98,3]+40`); a routine passes its point on, as it is or with
   `Offs()`. A point turned with `RelTool()` stays TODO.
-- Arrays of points indexed at run time (`pSlot{nTool}`, `pGrid{r,c}` in FOR loops): `SETUP_FRAMES`
-  keeps a CONST array in consecutive position registers, row after row, and the programs work the
-  index out in a register (`R[3]=R[1]*3`, `+R[2]`, `+88`) and read `PR[R[3]]`: moved to, offset
-  with `Offs()`, or passed to a routine. The index is worked out once while nothing changes it.
+- Arrays indexed at run time, of points (`pSlot{nTool}`, `pGrid{r,c}` in FOR loops) and of numbers
+  (`nTorque{nScrew}`): `SETUP_FRAMES` keeps each in consecutive registers, row after row, position
+  registers for points and numeric registers for numbers, and the programs work the index out in a
+  register (`R[3]=R[1]*3`, `+R[2]`, `+88`) and read `PR[R[3]]` or `R[R[3]]`: a point moved to,
+  offset with `Offs()` or passed to a routine, a number in a calculation, a condition or an argument.
+  The index is worked out once while nothing it reads changes; two elements in one statement take
+  two index registers. A CONST array, or a PERS one no program changes (kept at the values saved in
+  the backup, with a warning); a VAR array or one the programs change stays TODO.
 - An element of an array at a fixed index (`pSlot{2}`, `nTorque{3}`) is read like any other value.
 - Motion settings: `ConfL`, `ConfJ`, `SingArea` and `CirPathMode` are left out, with a warning where
   FANUC does it its own way. `AccSet` and `VelSet` that slow the robot down stay TODO, as dropping
@@ -45,7 +49,8 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   no longer mixed with calls with arguments.
 
 ### Mapping file
-- `analog_outputs`, `timers`, `analog_scales`, `payloads`, `point_registers` and `point_arrays`, optional: a mapping
+- `analog_outputs`, `timers`, `analog_scales`, `payloads`, `point_registers`, `point_arrays` and
+  `number_arrays`, optional: a mapping
   file written for 1.0 gives the same numbers; the new position registers are taken after the frame
   banks and the computed frames.
 
@@ -62,6 +67,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   through a 2 x 2 array walked in two FOR loops, and the same moves written out: the same poses, to
   the thousandth of a millimetre
   ([docs/validation.md](docs/validation.md#18-routines-given-their-points-and-arrays-of-points-run)).
+- The array probe reads tables of numbers indexed at run time in loops, sums, conditions, a WHILE
+  and a call given two elements, on RobotStudio and, converted, on ROBOGUIDE: the same totals
+  ([docs/validation.md](docs/validation.md#19-arrays-of-numbers-run)).
 
 ## 1.0.0 — 2026-09-26
 

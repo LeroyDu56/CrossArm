@@ -37,6 +37,7 @@ be pinned in a JSON file passed with --map:
   "payloads":        {"tGrip+lBox": 9}         the payload schedule of a tool holding a part (GripLoad)
   "point_registers": {"PickAt.pPick": 90}      the position register a robtarget parameter is passed in
   "point_arrays":    {"pSlot": 80}             the first of the position registers an array of points is kept in
+  "number_arrays":   {"nTorque": 190}          the first of the registers an array of numbers is kept in
 }
 
 Names are matched case-insensitively, like RAPID.
@@ -145,6 +146,8 @@ class ConversionConfig:
     point_registers: dict[str, int] = field(default_factory=dict)
     # The first position register of an array of points indexed at run time, upper-cased name -> PR number.
     point_arrays: dict[str, int] = field(default_factory=dict)
+    # The first numeric register of an array of numbers indexed at run time, upper-cased name -> R number.
+    number_arrays: dict[str, int] = field(default_factory=dict)
 
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
@@ -167,7 +170,7 @@ class ConversionConfig:
             "joint_speed_ref_mm_s", "cnt_per_mm", "config_mapping", "joint_mapping", "default_config",
             "program_name_max_length", "tpwrite_values", "tool_pin", "limits", "reserved", "move_routines",
             "zone_mapping", "motion_profile", "frame_registers", "analog_scales", "payloads", "point_registers",
-            "point_arrays",
+            "point_arrays", "number_arrays",
         }  # fmt: skip
         if unknown:
             raise ValueError(f"unknown keys in mapping file: {', '.join(sorted(unknown))}")
@@ -196,6 +199,10 @@ class ConversionConfig:
             if not isinstance(scale, int | float) or isinstance(scale, bool):
                 raise TypeError(f"analog_scales.{name}: expected a number or null, got {scale!r}")
             config.analog_scales[name.upper()] = float(scale)
+        for key, number in data.get("number_arrays", {}).items():
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise TypeError(f"number_arrays.{key}: expected an integer, got {number!r}")
+            config.number_arrays[key.upper()] = number
         for key, number in data.get("point_arrays", {}).items():
             if not isinstance(number, int) or isinstance(number, bool):
                 raise TypeError(f"point_arrays.{key}: expected an integer, got {number!r}")

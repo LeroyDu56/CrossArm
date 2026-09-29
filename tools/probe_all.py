@@ -20,7 +20,8 @@ change to CrossArm is checked on a controller and not only on text:
     banks        the same moves with frames past the limit loaded from registers: the same flanges
     compute      frames and points the programs compute, worked out by CrossArm: the flanges RobotStudio computes
     select       TEST/CASE converted to SELECT: the totals RobotStudio computes
-    points       routines given their points (robtarget parameters): the poses of the moves written out
+    points       routines given their points, arrays of points: the poses of the moves written out
+    arrays       arrays of numbers indexed at run time: the totals RobotStudio computes
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
 
@@ -42,6 +43,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import make_arg_probe
+import make_array_probe
 import make_bank_probe
 import make_compute_probe
 import make_condition_probe
@@ -67,6 +69,7 @@ ABB_PROBES = [
     (PROBES / "pin" / "PinProbe.mod", "Probe", "pinprobe.txt", PIN_ROBOTSTUDIO),
     (PROBES / "compute" / "ComputeProbe.mod", "Probe", "computeprobe.txt", make_compute_probe.ABB_RESULT),
     (PROBES / "select" / "SelectProbe.mod", "Probe", "selectprobe.txt", make_select_probe.ABB_RESULT),
+    (PROBES / "arrays" / "ArrayProbe.mod", "Probe", "arrayprobe.txt", make_array_probe.ABB_RESULT),
 ]
 REFUSED = {"NEG_FOR_B"}  # the negative-constant probe: the one form the controller does not load
 
@@ -240,6 +243,12 @@ def probe_points() -> str:
     return _run("points", make_point_probe.PROGRAM, [make_point_probe.COUNTER], check, timeout=300)
 
 
+def probe_arrays() -> str:
+    numbers = make_array_probe.registers(make_array_probe.conversion()[0])
+    return _run("arrays", make_array_probe.RUNNER, list(numbers.values()),
+                lambda: registers_check(make_array_probe.EXPECTED, numbers))  # fmt: skip
+
+
 LOADED: list[str] = []
 
 
@@ -267,7 +276,7 @@ def _run(folder: str, program: str, zero: list[int], check: Callable[[], str] | 
 def main() -> int:
     probes = {"negative": probe_negative, "args": probe_args, "conditions": probe_conditions, "waits": probe_waits,
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
-              "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points,
+              "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
               "abb": probe_abb}  # fmt: skip
     chosen = sys.argv[1:] or list(probes)
     failed = 0

@@ -244,6 +244,10 @@ def _setup_section(result: ConversionResult) -> list[str]:
         )
         computed = (f", and stores the {len(setup.registers)} computed frame(s) below in their position registers"
                     if setup.registers else "")  # fmt: skip
+        kept = [f"`{a.name}` (PR[{a.base}] to PR[{a.base + len(a.values) - 1}])" for a in setup.arrays]
+        kept += [f"`{a.name}` (R[{a.base}] to R[{a.base + len(a.values) - 1}])" for a in setup.numbers]
+        if kept:
+            computed += f"; it keeps the arrays the programs index at run time: {', '.join(kept)}"
         lines += [
             (
                 f"`{setup.program.name}.LS` sets {tools} tool frame(s) and {frames} user frame(s) with the values"

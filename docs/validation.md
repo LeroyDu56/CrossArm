@@ -12,7 +12,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | What | Result |
 |---|---|
 | Every program converted from the test corpus, loaded on a FANUC controller | 123 of 123 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (194 forms) |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (196 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -21,6 +21,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | `TEST` / `CASE` converted to `SELECT`, run on both controllers | the branches RAPID takes |
 | Pulses, inverted outputs, clocks, payloads, converted and run on ROBOGUIDE | what RAPID does, the clock within 50 ms |
 | Points passed to routines or read from arrays indexed at run time, run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
+| Arrays of numbers indexed at run time, run on both controllers | the values RAPID reads |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -40,6 +41,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 16. [TEST and CASE, run](#16-test-and-case-run)
 17. [Pulses, inverted outputs, clocks and analog outputs, run](#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)
 18. [Routines given their points, and arrays of points, run](#18-routines-given-their-points-and-arrays-of-points-run)
+19. [Arrays of numbers, run](#19-arrays-of-numbers-run)
 
 ## 1. The test corpus
 
@@ -200,7 +202,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 194 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 196 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
@@ -434,3 +436,26 @@ every move:
 
 The poses are the RAPID values themselves (the point 40 mm above, the retract offset by 10, -20 and
 40 mm), the array's elements row after row, as the loops walk them. The results are in [tests/fixtures/probes/points/results](../tests/fixtures/probes/points/results).
+
+## 19. Arrays of numbers, run
+
+A numeric register named by another, `R[R[5]]`, reads in an assignment, a calculation, an `IF`
+condition, a `FOR` bound and a `CALL` argument on ROBOGUIDE, and the values `SETUP_FRAMES` writes are
+stored as the controller writes them (`R[81]=0.5` becomes `.5`, `(-2.5)` keeps its parentheses).
+
+[tools/make_array_probe.py](../tools/make_array_probe.py) converts a module that reads a CONST table
+of decimals and negatives, a CONST 2 x 3 table and a PERS table no program changes, in FOR loops,
+sums, `IF` conditions, a `WHILE` whose index the loop moves, and a call given two elements at once.
+Each read adds its own weight to three totals. RobotStudio runs the RAPID; ROBOGUIDE sets the tables
+in their registers as `SETUP_FRAMES` does, then runs the converted programs:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| `nSum` | 160.75 | 160.75 |
+| `nCalls` | 156 | 156 |
+| `nHits` | 211 | 211 |
+
+Writing the probe found a fault before it ran: a call given two elements, the first one's index
+already worked out by the statement before, had both read through the same index register. A
+statement now keeps every index register it reads. The results are in
+[tests/fixtures/probes/arrays/results](../tests/fixtures/probes/arrays/results).

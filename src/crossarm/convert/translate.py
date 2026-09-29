@@ -259,6 +259,18 @@ class PointArray:
 
 
 @dataclass(frozen=True, slots=True)
+class NumberArray:
+    """An array of numbers the programs index at run time: SETUP_FRAMES keeps it in consecutive registers from
+    `base`, row after row, and the programs read it as R[R[n]]."""
+
+    name: str
+    dims: tuple[int, ...]
+    values: tuple[float, ...]
+    base: int | None  # None: no run of free registers long enough
+    fixed: bool  # pinned by the mapping file
+
+
+@dataclass(frozen=True, slots=True)
 class Capacity:
     """How much of one controller resource the conversion needs, against what it holds."""
 
@@ -283,8 +295,17 @@ _INTERRUPTS = frozenset({"IDELETE", "ISIGNALDI", "ISIGNALDO", "ISIGNALGI", "ISIG
 STRING_ARGUMENT_MAX = 38  # characters of a string CALL argument (ROBOGUIDE: 38 loads, 39 is refused)
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
 PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
-# Lines after which R[PointIndex] is worked out again: they may change a register, or be jumped to.
-_CHANGES_INDEX = ("R[", "LBL[", "CALL ", "FOR ", "ENDFOR", "IF ", "ELSE", "ENDIF", "SELECT ", "JMP ", "END")
+# Lines after which an array index held in a register is worked out again: the program may arrive there from
+# elsewhere, or a called program change any register. A line writing a register only drops the indices it reads.
+_CHANGES_INDEX = ("LBL[", "CALL ", "FOR ", "ENDFOR", "ELSE", "ENDIF", "SELECT ", "JMP ", "END")
+_WRITES_REGISTER = re.compile(r"R\[(\d+)")
+
+
+def _reads(operands: Iterable[str]) -> set[int] | None:
+    """The registers an index is worked out from; None if it reads an input, which changes by itself."""
+    if any(not re.fullmatch(r"\(?-?[\d.]+\)?|R\[\d+(:[^\]]*)?\]|AR\[\d+\]", o) for o in operands):
+        return None
+    return {int(m[1]) for o in operands for m in [_WRITES_REGISTER.match(o)] if m}
 PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAYLOAD[11] loads, stops when run)
 # Where the tool is among the unnamed arguments of the instructions that move with one besides MoveX.
 _TOOL_ARGUMENT = {"MOVELDO": 3, "MOVEJDO": 3, "MOVECDO": 4, "MOVELAO": 3, "MOVEJAO": 3, "MOVECAO": 4,
@@ -321,6 +342,7 @@ class ConversionResult:
     grip_payloads: list[GripPayload] = field(default_factory=list)  # schedules GripLoad selects
     point_registers: list[Allocation] = field(default_factory=list)  # PR a robtarget argument is passed in
     point_arrays: list[PointArray] = field(default_factory=list)  # arrays of points indexed at run time
+    number_arrays: list[NumberArray] = field(default_factory=list)  # arrays of numbers indexed at run time
     uframes: list[FrameInfo] = field(default_factory=list)
     utools: list[FrameInfo] = field(default_factory=list)
     computed_frames: list[ComputedFrame] = field(default_factory=list)  # in the order the programs first load them
@@ -625,6 +647,8 @@ class Converter:
         # Arrays of points indexed at run time: upper-cased name -> (name, dims, values). Lines read
         # `{PB:NAME:k}` for their first register plus k until _place_points() numbers them.
         self.arrays: dict[str, tuple[str, tuple[int, ...], tuple[CartesianPosition, ...]]] = {}
+        # Arrays of numbers indexed at run time, likewise: `{RB:NAME:k}` until _place_number_arrays().
+        self.number_arrays: dict[str, tuple[str, tuple[int, ...], tuple[float, ...]]] = {}
         self.frames_in_moves: dict[str, set[str]] = {"UF": set(), "UT": set()}  # upper-case names, _plan_slots
         self.registers = TableView(shared.registers)
         self.flags = TableView(shared.flags)
@@ -701,6 +725,7 @@ class Converter:
         self._controller_comments()
         self._place_computed()
         self._place_points()
+        self._place_number_arrays()
         self._place_payloads()
         res = self.result
         res.registers = self.registers.allocations()
@@ -910,6 +935,47 @@ class Converter:
             key=lambda a: a.number)  # fmt: skip
         self.result.point_arrays = [PointArray(name, dims, values, bases[key], key in self.config.point_arrays)
                                     for key, (name, dims, values) in self.arrays.items()]  # fmt: skip
+
+    def _place_number_arrays(self) -> None:
+        """Number the register blocks of the arrays of numbers: the highest free run of registers, from the top
+        down, or pinned by the mapping file; kept out of the registers numbered automatically afterwards."""
+        if not self.number_arrays:
+            return
+        table = self.registers.table
+        limit = self.config.limits.get("R", 200)
+        used = set(table.fixed.values()) | {a.number for a in table.assigned.values()} | table.reserved | table.skip
+        free = [k for k in range(limit, 0, -1) if k not in used]
+        bases: dict[str, int | None] = {}
+        for key, (_name, _dims, values) in self.number_arrays.items():
+            if key in self.config.number_arrays:
+                bases[key] = self.config.number_arrays[key]
+            else:
+                run = _consecutive(free, len(values))
+                bases[key] = run[0] if run else None
+                free = [k for k in free if k not in run]
+            if bases[key] is not None:
+                table.skip.update(range(bases[key], bases[key] + len(values)))  # type: ignore[operator]
+        placeholder = re.compile(r"\{RB:([^}:]*):(-?\d+)\}")
+
+        def number(match: re.Match[str]) -> str:
+            found = bases[match[1]]
+            if found is None:
+                raise LookupError(match[1])
+            return str(found + int(match[2]))
+
+        for info in self.result.programs:
+            lines = info.program.lines
+            for i, line in enumerate(lines):
+                if isinstance(line, Instruction) and "{RB:" in line.text:
+                    try:
+                        lines[i] = Instruction(placeholder.sub(number, line.text), line.pad)
+                    except LookupError as missing:
+                        name = self.number_arrays[str(missing.args[0])][0]
+                        lines[i] = Instruction(("!" + ascii_text(f"TODO no R left for {name}")[:REMARK_MAX]).rstrip())
+                        self.note(info.program.name, None, "TODO", f"no run of free registers left for the array {name}",
+                                  Blocker.CAPACITY)  # fmt: skip
+        self.result.number_arrays = [NumberArray(name, dims, values, bases[key], key in self.config.number_arrays)
+                                     for key, (name, dims, values) in self.number_arrays.items()]  # fmt: skip
 
     def _place_payloads(self) -> None:
         """Number the payload schedules GripLoad selects and write them into the programs.
@@ -1407,6 +1473,10 @@ class _RoutineTranslator:
         self.last_tool: n.Expr | None = None  # the tool of the last move written, while it is still selected
         # The array element R[PointIndex] points to, while nothing has changed it: (array, index operands).
         self.point_index: tuple[str, tuple[str, ...]] | None = None
+        # Elements of arrays of numbers whose index a register holds: (array, index operands) -> 'R[R[n]]'.
+        self.number_index: dict[tuple[str, tuple[str, ...]], str] = {}
+        self.number_slots: set[str] = set()  # the index registers the statement being written reads
+        self.index_reads: dict[tuple[str, tuple[str, ...]], set[int]] = {}  # cached index -> registers it reads
         self.next_speed: n.Expr | None = None  # the speed of the move after the one being written, if a move
         self.next_label = 1
         # What the routine's data holds at the statement being written (crossarm.convert.compute): upper-case
@@ -1487,8 +1557,16 @@ class _RoutineTranslator:
 
     def emit(self, text: str) -> None:
         self.lines.append(Instruction(text))
-        if text.startswith(_CHANGES_INDEX):  # a register may have changed, or the program jumped here
+        if text.startswith(_CHANGES_INDEX):  # the program may arrive here from elsewhere, or a register have changed
             self.point_index = None
+            self.number_index = {}
+            self.index_reads = {}
+        elif written := _WRITES_REGISTER.match(text):  # R[n]=...: the indices read from R[n], or held in it, are stale
+            number = int(written[1])
+            self.index_reads = {k: v for k, v in self.index_reads.items() if number not in v}
+            if self.point_index is not None and self.point_index not in self.index_reads:
+                self.point_index = None
+            self.number_index = {k: v for k, v in self.number_index.items() if k in self.index_reads}
         if text.startswith(("LBL[", "CALL ")):
             # A jump can land on a label from anywhere, and a called program can select other frames
             # (UTOOL_NUM is the controller's, not the program's): the active frames are no longer known.
@@ -1534,6 +1612,7 @@ class _RoutineTranslator:
             following = next((s for s in stmts[i + 1 :] if not _passed_through(s)), None)
             self.next_speed = following.speed if isinstance(stmt, n.Move) and isinstance(following, n.Move) else None
             self.after = stmts[i + 1 :]
+            self.number_slots = set()
             if self.strict:
                 self.stmt(stmt)
                 continue
@@ -1558,6 +1637,8 @@ class _RoutineTranslator:
         """Drop what a statement emitted before failing: its lines, the P[n] it created, the frames it selected."""
         lines, positions, points, self.active_uf, self.active_ut = checkpoint
         self.point_index = None
+        self.number_index = {}
+        self.index_reads = {}
         del self.lines[lines:]
         del self.positions[positions:]
         del self.points[points:]
@@ -1646,6 +1727,9 @@ class _RoutineTranslator:
         evaluator = self.c.evaluator
         passed = self.passed_point(m.to_point, "CROSSARM.POINT") if m.kind is not n.MoveKind.ABSJ else None
         passed_via = self.passed_point(m.via_point, "CROSSARM.VIA") if m.via_point is not None else None
+        if passed and passed_via and passed.startswith("PR[R[") and passed_via.startswith("PR[R["):
+            raise Untranslatable("MoveC through two elements of arrays indexed at run time: one index register"
+                                 " holds one of them at a time", Blocker.RUNTIME_POSITION)  # fmt: skip
         if passed is not None:
             to_value = None
         else:
@@ -1711,9 +1795,7 @@ class _RoutineTranslator:
             return None  # a fixed element: a point like any other
         except Unresolvable:
             pass
-        if decl.storage != "CONST":
-            raise Untranslatable(f"{format_expr(expr)}: an array of points indexed at run time is converted when it is"
-                                 " CONST (kept in position registers by SETUP_FRAMES)", Blocker.RUNTIME_POSITION)  # fmt: skip
+        self._fixed_array(decl, expr, "points", Blocker.RUNTIME_POSITION)
         key = self._point_array(decl, expr.span.line)
         dims = self.c.arrays[key][1]
         indices = [self.numeric(i) for i in expr.indices]
@@ -1728,8 +1810,76 @@ class _RoutineTranslator:
             self.emit(f"{register}={register}+{operand(index)}")
         stride = sum(math.prod(dims[k + 1:]) for k in range(len(dims)))  # what the 1-based indices add up to
         self.emit(f"{register}={register}+{{PB:{key}:{-stride}}}")
-        self.point_index = (key, tuple(indices))
+        reads = _reads(indices)
+        if reads is not None:  # kept while none of the registers it reads, nor its own, is written
+            self.point_index = (key, tuple(indices))
+            self.index_reads[self.point_index] = reads | {int(_WRITES_REGISTER.match(register)[1])}  # type: ignore[index]
         return bare
+
+    def number_element(self, expr: n.Index) -> str | None:
+        """R[R[n]] for an element of a CONST array of numbers at an index only known at run time, the index worked
+        out in a register first; None for anything else (a fixed index is read as a constant)."""
+        if not isinstance(expr.base, n.Name):
+            return None
+        decl = self.c.symbols.get(expr.base.name)
+        if decl is None or decl.type_name.lower() != "num" or len(decl.dims) != len(expr.indices):
+            return None
+        try:
+            [self.c.evaluator.constant_number(i) for i in expr.indices]
+            return None
+        except Unresolvable:
+            pass
+        self._fixed_array(decl, expr, "numbers", Blocker.VALUE)
+        key = decl.name.upper()
+        if key not in self.c.number_arrays:
+            try:
+                dims = tuple(int(self.c.evaluator.constant_number(d)) for d in decl.dims)
+                flat = self.c.evaluator.value(n.Name(expr.span, decl.name))
+                for _ in dims[1:]:
+                    flat = [v for row in flat for v in row]
+                values = tuple(float(v) for v in flat)
+            except (Unresolvable, TypeError, ValueError) as exc:
+                raise Untranslatable(f"{decl.name}: not an array of fixed numbers ({exc})", Blocker.VALUE) from exc
+            self.c.number_arrays[key] = (decl.name, dims, values)
+        dims = self.c.number_arrays[key][1]
+        indices = tuple(self.numeric(i) for i in expr.indices)
+        if (key, indices) in self.number_index:  # worked out already: its register is this statement's too
+            self.number_slots.add(self.number_index[(key, indices)])
+            return self.number_index[(key, indices)]
+        slot = 1  # the first index register this statement does not read yet: two elements, two registers
+        while True:
+            name = "NumberIndex" if slot == 1 else f"NumberIndex{slot}"
+            register = self.c.written_register(name, key=f"CROSSARM.{name.upper()}")
+            bare = register.split(":")[0] + "]" if ":" in register else register
+            if f"R[{bare}]" not in self.number_slots:
+                break
+            slot += 1
+        self.number_slots.add(f"R[{bare}]")
+        self.number_index = {k: v for k, v in self.number_index.items() if v != f"R[{bare}]"}
+        self.emit(f"{register}={operand(indices[0])}")
+        for size, index in zip(dims[1:], indices[1:], strict=True):
+            self.emit(f"{register}={register}*{size}")
+            self.emit(f"{register}={register}+{operand(index)}")
+        stride = sum(math.prod(dims[k + 1:]) for k in range(len(dims)))
+        self.emit(f"{register}={register}+{{RB:{key}:{-stride}}}")
+        reads = _reads(indices)
+        if reads is not None:
+            self.number_index[(key, indices)] = f"R[{bare}]"
+            self.index_reads[(key, indices)] = reads | {int(_WRITES_REGISTER.match(register)[1])}  # type: ignore[index]
+        return f"R[{bare}]"
+
+    def _fixed_array(self, decl: n.DataDecl, expr: n.Expr, what: str, category: str) -> None:
+        """An array SETUP_FRAMES can keep in registers: a CONST, or a PERS no program changes (a table the operator
+        sets, as the registers are on FANUC: kept at the values saved in the backup, and said so)."""
+        where = self.c.computer.written.where((decl.name.upper(),), decl.type_name.lower())
+        if decl.storage == "VAR" or where is not None:
+            why = f"changed by the programs ({where})" if where else "a VAR, reset when the program starts"
+            raise Untranslatable(f"{format_expr(expr)}: an array of {what} indexed at run time is kept in registers when"
+                                 f" no program changes it; {decl.name} is {why}", category)  # fmt: skip
+        if decl.storage == "PERS":
+            self.c.warn_once(f"pers-array:{decl.name.upper()}", self.name, expr.span.line,
+                             f"{decl.name}: PERS array kept in registers with the values saved in the backup, which"
+                             " SETUP_FRAMES sets; on the robot they are changed there, as the PERS was", Blocker.SAVED_FRAME)  # fmt: skip
 
     def _point_array(self, decl: n.DataDecl, line: int) -> str:
         """The array's values, each element converted like a point (CONFIG included), once per conversion."""
@@ -2518,6 +2668,8 @@ class _RoutineTranslator:
             if any(a.name is not None and a.name.upper() != "HIGHRES" for a in expr.args[1:]):
                 raise Untranslatable(f"{format_expr(expr)}: only \\HighRes is converted", Blocker.OPTIONS_IGNORED)
             return self.clock(expr.args[0].value)  # seconds, as ClkRead (wait probe: 1.000000 after 1 s)
+        if isinstance(expr, n.Index) and (element := self.number_element(expr)) is not None:
+            return element
         if isinstance(expr, n.Name):
             key = expr.name.upper()
             if key in self.loop_vars:

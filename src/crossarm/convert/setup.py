@@ -31,8 +31,12 @@ from crossarm.convert.translate import (
     ComputedFrame,
     ConversionResult,
     FrameInfo,
+    NumberArray,
     PointArray,
     ascii_text,
+    decimal,
+    fmt_number,
+    operand,
     remark_lines,
 )
 from crossarm.fanuc.tp import Attributes, CartesianPosition, Instruction, Position, Program
@@ -54,6 +58,7 @@ class FrameSetup:
     scratch_checked: bool = False  # the target robot's programs were read: the register is free there
     registers: list[ComputedFrame] = field(default_factory=list)  # computed frames it stores in their PR
     arrays: list[PointArray] = field(default_factory=list)  # arrays of points it stores in their PR blocks
+    numbers: list[NumberArray] = field(default_factory=list)  # arrays of numbers it stores in their R blocks
 
 
 def scratch_register(config: ConversionConfig) -> tuple[int, bool]:
@@ -122,7 +127,16 @@ def build_setup(result: ConversionResult, config: ConversionConfig, name: str) -
             positions.append(Position(point, 0, 1, value))
             lines.append(Instruction(f"PR[{array.base + k}]=P[{point}]"))
         setup.arrays.append(array)
-    if not setup.written and not setup.registers and not setup.arrays:
+    for numbers in result.number_arrays:  # read as R[R[n]] by the programs that index them
+        if numbers.base is None:
+            continue
+        last = numbers.base + len(numbers.values) - 1
+        for text in remark_lines(f"{numbers.name}: R[{numbers.base}] to R[{last}]"):
+            lines.append(Instruction(text))
+        for k, value in enumerate(numbers.values):
+            lines.append(Instruction(f"R[{numbers.base + k}]={decimal(operand(fmt_number(value)))}"))
+        setup.numbers.append(numbers)
+    if not setup.written and not setup.registers and not setup.arrays and not setup.numbers:
         return setup
     head = [Instruction(text) for text in remark_lines("CrossArm: tool and user frames of the ABB backup")]
     head += [Instruction(text) for text in remark_lines(f"PR[{scratch}] is overwritten")]
