@@ -1,26 +1,25 @@
-## CrossArm 1.1.0
+## CrossArm 1.2.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review. 1.1 converts more of what real programs are made of, and each new construct
-was measured on the controllers before CrossArm writes it: RobotStudio for the RAPID, ROBOGUIDE for the TP.
+everything left to review. 1.2 converts more of what real cells do, and each new construct was measured
+on ROBOGUIDE before CrossArm writes it.
 
-**`TEST` / `CASE` becomes `SELECT`.** One line per value, a case that only calls a routine calls it on
-its own line, the rest behind labels; run on both controllers, the same branches are taken.
+**Interrupts.** `ISignalDI`, `ISignalDO` and `IPers` become FANUC condition monitors: a condition
+program `WHEN DI[n]=ON+,CALL TRAP` armed with `MONITOR`, the TRAP arming it again as it ends. Measured:
+one call per edge, the program held while the TRAP runs and the move under way not slowed, as in
+RAPID. A TRAP several interrupts share reads `INTNO` through a relay per interrupt.
 
-**The everyday instructions.** `PulseDO` (in the tenths of a second FANUC takes), `InvertDO`, the
-RAPID clocks as `TIMER`, `SetAO` in the FANUC module's counts, and `GripLoad` as a `PAYLOAD` schedule
-of the tool and the part together, worked out by CrossArm. Motion settings FANUC does its own way are
-left out with a warning; those that slow the robot down stay TODO, rather than run it faster.
+**Routines given more.** A record is passed as the components the routine reads; a number passed by
+reference comes back to the caller; a tool or a work object is passed as its frame number and selected
+by the routine. `Incr`, `Decr`, `Add`, `Clear` and `RelTool()` of a point given at run time convert too.
 
-**Routines given text and points.** A string is passed in the call; a point (robtarget) in a position
-register the caller sets and the routine moves to, `Offs()` included. Twenty-eight moves through
-routines and arrays land at the poses of the moves written out, to the thousandth of a millimetre.
+**Palletizing.** Calculations of any length, one operation per line, and points the programs work out
+as they run (`Offs()` of the loop counters, a turn with `RelTool()`, `CRobT()`) kept in position
+registers. A place worked out in two loops lands where the moves written out land, to the thousandth
+of a millimetre. On the test corpus, the palletizing cell goes from 88 % to 93 % of its RAPID converted.
 
-**Arrays indexed at run time.** A table of points (`pSlot{nTool}`, `pGrid{r,c}`) or of numbers
-(`nTorque{i}`) is kept in registers `SETUP_FRAMES` fills, and read as `PR[R[n]]` or `R[R[n]]`.
-
-**Still what 1.x keeps:** a mapping file written for 1.0 gives the same numbers, and the command line
-keeps its options. The whole list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
+**Still what 1.x keeps:** a mapping file written for 1.0 or 1.1 gives the same numbers, and the command
+line keeps its options. The whole list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 See the [README](https://github.com/LeroyDu56/CrossArm#readme), the
 [user guide](https://github.com/LeroyDu56/CrossArm/blob/main/docs/guide.md) and

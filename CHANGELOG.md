@@ -3,7 +3,14 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.2.0 — 2026-09-29
+
+More of what real cells do, converted: interrupts and their TRAP routines as FANUC condition
+monitors, routines given records, tools, work objects and numbers to change, and the points and
+calculations palletizing programs work out as they run. Each construct was measured on ROBOGUIDE
+before CrossArm writes it. On the three RobotWare backups of the test corpus, the share of RAPID
+instructions converted goes from 84 %, 88 % and 81 % to 84 %, 93 % and 85 %. A mapping file written
+for 1.0 or 1.1 gives the same numbers.
 
 ### Converts
 - RAPID interrupts to FANUC condition monitors. `CONNECT` and `ISignalDI` / `ISignalDO` become a
@@ -65,6 +72,21 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - The TRAP routines converted take output, input and flag numbers too: without a mapping file, the
   numbers CrossArm gives a backup with interrupts can move. A mapping file written earlier gives
   the same numbers.
+- The point probe records the faceplate in the world frame after each move, which a routine selecting
+  the wrong tool would change, rather than the TCP in the frames the move ran in.
+
+### Validated
+- The interrupt probe arms edges, `\Single`, `IPers`, `ISleep` / `IWatch`, a call and `IDelete`, and a
+  TRAP two interrupts share through `INTNO`, on ROBOGUIDE: the calls RAPID makes
+  ([docs/validation.md](docs/validation.md#20-interrupts-run)).
+- The parameter probe passes records, nums by reference and uses `Incr` / `Add` / `Clear`, on
+  RobotStudio and, converted, on ROBOGUIDE: the same totals
+  ([docs/validation.md](docs/validation.md#21-records-and-nums-passed-by-reference-run)).
+- The point probe gains `RelTool()` of passed points and array elements and a routine given its tool
+  and work object: forty-three moves, the faceplate where the moves written out put it.
+- The pallet probe works places out in FOR loops, turns them and reads `CRobT()`: thirteen moves, the
+  faceplate where the moves written out put it
+  ([docs/validation.md](docs/validation.md#22-points-worked-out-at-run-time-run)).
 
 ## 1.1.0 — 2026-09-29
 

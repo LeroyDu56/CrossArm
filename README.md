@@ -216,7 +216,7 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 
 Progress is measured as the share of RAPID instructions written as TP, on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)): 84 %, 92 % and 85 %. What is left
+controllers ([validation](docs/validation.md#1-the-test-corpus)): 84 %, 93 % and 85 %. What is left
 gives the order of the next steps:
 
 1. Arrays the programs change at run time; moves that set outputs on the way (`MoveLDO`, `TriggL`).
@@ -253,8 +253,8 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.1.0 on 2030-09-29,
-v1.0.0 on 2030-09-26.
+Each released version becomes Apache 2.0 four years after it is published: v1.2.0 and v1.1.0 on
+2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
