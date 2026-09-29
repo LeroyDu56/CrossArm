@@ -172,6 +172,15 @@ class Evaluator:
                     return self.value(init)
                 finally:
                     self._resolving.discard(key)
+            case n.Index(base=n.Name() as base, indices=indices):
+                # An element at a fixed index (pSlot{2}): the index a CONST, the array as its name reads it.
+                data = self.value(base)
+                for index in indices:
+                    i = self.constant_number(index)
+                    if not (isinstance(data, list) and float(i).is_integer() and 1 <= i <= len(data)):
+                        raise Unresolvable(f"index out of the array: {_short(expr)}")
+                    data = data[int(i) - 1]
+                return data
         raise Unresolvable(f"expression is not a constant: {_short(expr)}")
 
     def number(self, expr: n.Expr) -> float:

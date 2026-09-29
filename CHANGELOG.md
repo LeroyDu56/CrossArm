@@ -30,8 +30,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   caller sets before the CALL (`PR[99]=P[1]`) and the routine moves to (`L PR[99]`), in the frames it
   selects, as a RAPID move takes its own tool and work object. `Offs()` of the point is a copy offset
   component by component (`PR[98,3]=PR[98,3]+40`); a routine passes its point on, as it is or with
-  `Offs()`. A point only known at run time (an array element indexed by a loop) or turned with
-  `RelTool()` stays TODO.
+  `Offs()`. A point turned with `RelTool()` stays TODO.
+- Arrays of points indexed at run time (`pSlot{nTool}`, `pGrid{r,c}` in FOR loops): `SETUP_FRAMES`
+  keeps a CONST array in consecutive position registers, row after row, and the programs work the
+  index out in a register (`R[3]=R[1]*3`, `+R[2]`, `+88`) and read `PR[R[3]]`: moved to, offset
+  with `Offs()`, or passed to a routine. The index is worked out once while nothing changes it.
+- An element of an array at a fixed index (`pSlot{2}`, `nTorque{3}`) is read like any other value.
 - Motion settings: `ConfL`, `ConfJ`, `SingArea` and `CirPathMode` are left out, with a warning where
   FANUC does it its own way. `AccSet` and `VelSet` that slow the robot down stay TODO, as dropping
   them would run it faster than the ABB.
@@ -41,7 +45,7 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   no longer mixed with calls with arguments.
 
 ### Mapping file
-- `analog_outputs`, `timers`, `analog_scales`, `payloads` and `point_registers`, optional: a mapping
+- `analog_outputs`, `timers`, `analog_scales`, `payloads`, `point_registers` and `point_arrays`, optional: a mapping
   file written for 1.0 gives the same numbers; the new position registers are taken after the frame
   banks and the computed frames.
 
@@ -54,9 +58,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   the output inverted and back, the clock reads the half second it timed, and the payload schedule of
   the tool with the part is the active one
   ([docs/validation.md](docs/validation.md#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)).
-- The point probe makes twelve moves on ROBOGUIDE through routines given their points, and the
-  same moves written out: the same poses, to the thousandth of a millimetre
-  ([docs/validation.md](docs/validation.md#18-routines-given-their-points-run)).
+- The point probe makes twenty-eight moves on ROBOGUIDE through routines given their points and
+  through a 2 x 2 array walked in two FOR loops, and the same moves written out: the same poses, to
+  the thousandth of a millimetre
+  ([docs/validation.md](docs/validation.md#18-routines-given-their-points-and-arrays-of-points-run)).
 
 ## 1.0.0 — 2026-09-26
 

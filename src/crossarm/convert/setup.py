@@ -31,6 +31,7 @@ from crossarm.convert.translate import (
     ComputedFrame,
     ConversionResult,
     FrameInfo,
+    PointArray,
     ascii_text,
     remark_lines,
 )
@@ -52,6 +53,7 @@ class FrameSetup:
     skipped: list[tuple[str, FrameInfo, str]] = field(default_factory=list)  # (kind, frame, why)
     scratch_checked: bool = False  # the target robot's programs were read: the register is free there
     registers: list[ComputedFrame] = field(default_factory=list)  # computed frames it stores in their PR
+    arrays: list[PointArray] = field(default_factory=list)  # arrays of points it stores in their PR blocks
 
 
 def scratch_register(config: ConversionConfig) -> tuple[int, bool]:
@@ -110,7 +112,17 @@ def build_setup(result: ConversionResult, config: ConversionConfig, name: str) -
             lines.append(Instruction(text))
         lines.append(Instruction(f"PR[{computed.number}]=P[{point}]"))
         setup.registers.append(computed)
-    if not setup.written and not setup.registers:
+    for array in result.point_arrays:  # read as PR[R[n]] by the programs that index them
+        if array.base is None:
+            continue
+        for text in remark_lines(f"{array.name}: PR[{array.base}] to PR[{array.base + len(array.values) - 1}]"):
+            lines.append(Instruction(text))
+        for k, value in enumerate(array.values):
+            point = len(positions) + 1
+            positions.append(Position(point, 0, 1, value))
+            lines.append(Instruction(f"PR[{array.base + k}]=P[{point}]"))
+        setup.arrays.append(array)
+    if not setup.written and not setup.registers and not setup.arrays:
         return setup
     head = [Instruction(text) for text in remark_lines("CrossArm: tool and user frames of the ABB backup")]
     head += [Instruction(text) for text in remark_lines(f"PR[{scratch}] is overwritten")]

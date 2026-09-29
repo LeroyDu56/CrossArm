@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Enzo LEROY
 # SPDX-License-Identifier: BUSL-1.1
 
-"""Routines given their points (robtarget parameters), run on ROBOGUIDE: the moves go where the moves written out go.
+"""Points passed to routines or read from arrays, run on ROBOGUIDE: the moves go where the moves written out go.
 
 tools/make_point_probe.py converts twelve moves twice: through routines that take a robtarget (the caller
 sets a position register, the routine moves to it, Offs as component arithmetic, a point passed on as it
@@ -32,6 +32,9 @@ def test_the_points_go_in_position_registers():
     assert [a.rapid_name for a in result.point_registers] == ["CROSSARM.POINT", "Twice.pTwice", "PickAt.pPick"]
     text = (PROBE / "TWICE.LS").read_text(encoding="ascii")
     assert "PR[99]=PR[98]" in text and "PR[99,1]=PR[99,1]+30" in text  # passed on, and with Offs()
+    ((name, dims, base),) = [(a.name, a.dims, a.base) for a in result.point_arrays]
+    assert (name, dims, base) == ("pGrid", (2, 2), 93)  # {r,c} is PR[93 + 2(r-1) + (c-1)]
+    assert "R[3:PointIndex]=R[3:PointIndex]+90" in (PROBE / "POINTPROBE.LS").read_text(encoding="ascii")
 
 
 @pytest.mark.skipif(not RESULT.exists(), reason="point probe not run on ROBOGUIDE yet")

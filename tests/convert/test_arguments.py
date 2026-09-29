@@ -165,6 +165,7 @@ def test_a_string_known_only_at_run_time_stays_todo_and_so_does_showing_it():
 POINTS = """CONST robtarget pA:=[[600,0,300],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];
 PERS tooldata tGrip:=[TRUE,[[0,0,185.5],[1,0,0,0]],[2.4,[0,0,90],[1,0,0,0],0,0,0]];
 VAR num nRow:=1;
+VAR robtarget pSeen{2};
 CONST robtarget pRow{2}:=[[[600,0,300],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]],
   [[700,0,300],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]]];"""
 PICK = "PROC PickAt(robtarget p,num n)\n  MoveL Offs(p,0,0,-40),v500,fine,tGrip;\n  MoveL p,v100,fine,tGrip;\nENDPROC"
@@ -186,12 +187,13 @@ def test_a_point_parameter_is_passed_in_a_position_register():
 
 def test_a_point_only_known_at_run_time_or_turned_stays_todo():
     procs = PICK + "\nPROC Turned(robtarget p)\n  MoveL RelTool(p,0,0,10),v100,fine,tGrip;\nENDPROC"
-    body = "PickAt pRow{nRow},1;\nTurned pA;"
+    body = "PickAt pSeen{nRow},1;\nTurned pA;"
     source = f"MODULE M\n{POINTS}\nPROC main()\n{body}\nENDPROC\n{procs}\nENDMODULE\n"
     result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
     found = [(n.category, n.message) for n in result.notes if n.kind == "TODO"]
     assert {category for category, _ in found} == {Blocker.RUNTIME_POSITION}
-    assert any("argument p: 'pRow{nRow}' is only known at run time" in message for _, message in found)
+    assert any("pSeen{nRow}: an array of points indexed at run time is converted when it is CONST" in message
+               for _, message in found)  # fmt: skip
     assert any("moved to as it is or with Offs()" in message for _, message in found)
 
 

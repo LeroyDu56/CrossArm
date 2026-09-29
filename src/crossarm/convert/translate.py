@@ -247,6 +247,18 @@ class GripPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class PointArray:
+    """An array of points the programs index at run time: SETUP_FRAMES keeps it in consecutive position
+    registers from `base`, row after row as RAPID lays it out, and the programs read it as PR[R[n]]."""
+
+    name: str
+    dims: tuple[int, ...]
+    values: tuple[CartesianPosition, ...]
+    base: int | None  # None: no run of free position registers long enough
+    fixed: bool  # pinned by the mapping file
+
+
+@dataclass(frozen=True, slots=True)
 class Capacity:
     """How much of one controller resource the conversion needs, against what it holds."""
 
@@ -271,6 +283,8 @@ _INTERRUPTS = frozenset({"IDELETE", "ISIGNALDI", "ISIGNALDO", "ISIGNALGI", "ISIG
 STRING_ARGUMENT_MAX = 38  # characters of a string CALL argument (ROBOGUIDE: 38 loads, 39 is refused)
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
 PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
+# Lines after which R[PointIndex] is worked out again: they may change a register, or be jumped to.
+_CHANGES_INDEX = ("R[", "LBL[", "CALL ", "FOR ", "ENDFOR", "IF ", "ELSE", "ENDIF", "SELECT ", "JMP ", "END")
 PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAYLOAD[11] loads, stops when run)
 # Where the tool is among the unnamed arguments of the instructions that move with one besides MoveX.
 _TOOL_ARGUMENT = {"MOVELDO": 3, "MOVEJDO": 3, "MOVECDO": 4, "MOVELAO": 3, "MOVEJAO": 3, "MOVECAO": 4,
@@ -306,6 +320,7 @@ class ConversionResult:
     timers: list[Allocation] = field(default_factory=list)  # RAPID clocks
     grip_payloads: list[GripPayload] = field(default_factory=list)  # schedules GripLoad selects
     point_registers: list[Allocation] = field(default_factory=list)  # PR a robtarget argument is passed in
+    point_arrays: list[PointArray] = field(default_factory=list)  # arrays of points indexed at run time
     uframes: list[FrameInfo] = field(default_factory=list)
     utools: list[FrameInfo] = field(default_factory=list)
     computed_frames: list[ComputedFrame] = field(default_factory=list)  # in the order the programs first load them
@@ -607,6 +622,9 @@ class Converter:
         # Position registers robtarget arguments are passed in: upper-cased "ROUTINE.PARAMETER" -> as written.
         # Program lines read `PR[{PA:KEY}]` until _place_points() numbers them.
         self.point_keys: dict[str, str] = {}
+        # Arrays of points indexed at run time: upper-cased name -> (name, dims, values). Lines read
+        # `{PB:NAME:k}` for their first register plus k until _place_points() numbers them.
+        self.arrays: dict[str, tuple[str, tuple[int, ...], tuple[CartesianPosition, ...]]] = {}
         self.frames_in_moves: dict[str, set[str]] = {"UF": set(), "UT": set()}  # upper-case names, _plan_slots
         self.registers = TableView(shared.registers)
         self.flags = TableView(shared.flags)
@@ -850,37 +868,48 @@ class Converter:
     def _place_points(self) -> None:
         """Number the position registers of the robtarget arguments, after the frame banks and the computed
         frames (numbered first, so that theirs do not move), unless the mapping file pins them."""
-        if not self.point_keys:
+        if not self.point_keys and not self.arrays:
             return
         pinned = self.config.point_registers
         taken = {f.number for f in self.result.computed_frames if f.number is not None}
         taken |= set(self.config.frame_registers.values()) | set(pinned.values())
         free = [k for k in self._banks if k not in taken]
         numbers = {key: pinned.get(key) or (free.pop(0) if free else None) for key in self.point_keys}
-        placeholder = re.compile(r"\{PA:([^}]*)\}")
+        bases: dict[str, int | None] = {}
+        for key, (_name, _dims, values) in self.arrays.items():
+            if key in self.config.point_arrays:
+                bases[key] = self.config.point_arrays[key]
+                continue
+            run = _consecutive(free, len(values))  # free is from the top down: the run's lowest register first
+            bases[key] = run[0] if run else None
+            free = [k for k in free if k not in run]
+        placeholder = re.compile(r"\{(PA|PB):([^}:]*)(?::(-?\d+))?\}")
 
         def number(match: re.Match[str]) -> str:
-            found = numbers[match[1]]
+            found = numbers[match[2]] if match[1] == "PA" else bases[match[2]]
             if found is None:
-                raise LookupError(match[1])
-            return str(found)
+                raise LookupError(match[2])
+            return str(found + int(match[3] or 0))
 
         for info in self.result.programs:
             lines = info.program.lines
             for i, line in enumerate(lines):
                 try:
-                    if isinstance(line, Instruction) and "{PA:" in line.text:
+                    if isinstance(line, Instruction) and ("{PA:" in line.text or "{PB:" in line.text):
                         lines[i] = Instruction(placeholder.sub(number, line.text), line.pad)
-                    elif isinstance(line, Motion) and "{PA:" in line.target + (line.via or ""):
+                    elif isinstance(line, Motion) and "{P" in line.target + (line.via or ""):
                         via = placeholder.sub(number, line.via) if line.via else line.via
                         lines[i] = dataclasses.replace(line, target=placeholder.sub(number, line.target), via=via)
                 except LookupError as missing:
                     lines[i] = Instruction(("!" + ascii_text(f"TODO no PR left for {missing}")[:REMARK_MAX]).rstrip())
-                    self.note(info.program.name, None, "TODO", f"no position register left to pass the point"
-                              f" {self.point_keys[str(missing.args[0])]} in", Blocker.CAPACITY)  # fmt: skip
+                    what = self.point_keys.get(str(missing.args[0])) or self.arrays[str(missing.args[0])][0]
+                    self.note(info.program.name, None, "TODO", f"no position register left for the point(s) {what}",
+                              Blocker.CAPACITY)  # fmt: skip
         self.result.point_registers = sorted(
             (Allocation(number, self.point_keys[key], key in pinned) for key, number in numbers.items() if number),
             key=lambda a: a.number)  # fmt: skip
+        self.result.point_arrays = [PointArray(name, dims, values, bases[key], key in self.config.point_arrays)
+                                    for key, (name, dims, values) in self.arrays.items()]  # fmt: skip
 
     def _place_payloads(self) -> None:
         """Number the payload schedules GripLoad selects and write them into the programs.
@@ -1113,11 +1142,14 @@ class Converter:
         """The position registers CrossArm takes: SETUP_FRAMES' scratch one, the frame banks, the computed frames."""
         banks = [info.bank for info in self.frames.values() if info.bank is not None]
         computed = self.result.computed_frames
-        if not banks and not computed and not self.result.point_registers:
+        if not banks and not computed and not self.result.point_registers and not self.result.point_arrays:
             return
         numbers = set(self.config.free_position_registers()[0][:1]) | set(banks)
         numbers |= {f.number for f in computed if f.number is not None}
         numbers |= {a.number for a in self.result.point_registers}
+        for array in self.result.point_arrays:
+            if array.base is not None:
+                numbers |= set(range(array.base, array.base + len(array.values)))
         over = tuple(f"{f.uses[0][1]} ({f.key})" for f in computed if f.number is None)
         taken = len(self.config.reserved.get("PR", {}))
         self.result.capacity.append(
@@ -1373,6 +1405,8 @@ class _RoutineTranslator:
         self.strict = 0  # >0: a statement that cannot be converted fails the enclosing one instead of a TODO
         self.after: tuple[n.Stmt, ...] = ()  # what follows the statement being written, in its block
         self.last_tool: n.Expr | None = None  # the tool of the last move written, while it is still selected
+        # The array element R[PointIndex] points to, while nothing has changed it: (array, index operands).
+        self.point_index: tuple[str, tuple[str, ...]] | None = None
         self.next_speed: n.Expr | None = None  # the speed of the move after the one being written, if a move
         self.next_label = 1
         # What the routine's data holds at the statement being written (crossarm.convert.compute): upper-case
@@ -1453,6 +1487,8 @@ class _RoutineTranslator:
 
     def emit(self, text: str) -> None:
         self.lines.append(Instruction(text))
+        if text.startswith(_CHANGES_INDEX):  # a register may have changed, or the program jumped here
+            self.point_index = None
         if text.startswith(("LBL[", "CALL ")):
             # A jump can land on a label from anywhere, and a called program can select other frames
             # (UTOOL_NUM is the controller's, not the program's): the active frames are no longer known.
@@ -1521,6 +1557,7 @@ class _RoutineTranslator:
     def _rollback(self, checkpoint: tuple) -> None:
         """Drop what a statement emitted before failing: its lines, the P[n] it created, the frames it selected."""
         lines, positions, points, self.active_uf, self.active_ut = checkpoint
+        self.point_index = None
         del self.lines[lines:]
         del self.positions[positions:]
         del self.points[points:]
@@ -1634,30 +1671,98 @@ class _RoutineTranslator:
         self.lines.append(Motion(motion, target, speed, termination, via))
 
     def passed_point(self, expr: n.Expr, scratch: str, into: str | None = None) -> str | None:
-        """The position register a move goes to when its point is a robtarget parameter of the routine: the
-        register the caller set, or, for Offs() of it, a copy offset along the work object's axes (component by
-        component, as Offs adds), in `into` when given (a point passed on). None when the point is not a parameter."""
-        if self.args is None:
-            return None
-        points = {s.key for s in self.args.slots if s.kind == "robtarget"}
-        names = {word.upper() for word in re.findall(r"[A-Za-z_]\w*", format_expr(expr))}
-        if not names & points:
-            return None
-        if isinstance(expr, n.Name):
-            return self.c.point_register(f"{self.args.routine}.{expr.name}")
+        """The position register a move goes to when its point is not a P[] of the program: a robtarget parameter
+        of the routine (the register the caller set) or an element of an array of points indexed at run time
+        (PR[R[n]]). For Offs() of one, a copy offset along the work object's axes, component by component as Offs
+        adds; in `into` when given (a point passed on). None when the point is an ordinary one."""
+        base, offsets = expr, None
         if (isinstance(expr, n.FuncCall) and expr.name.upper() == "OFFS" and len(expr.args) == 4
-                and all(a.name is None and a.value is not None for a in expr.args)
-                and isinstance(expr.args[0].value, n.Name) and expr.args[0].value.name.upper() in points):  # fmt: skip
-            offsets = [operand(self.numeric(a.value)) for a in expr.args[1:]]  # type: ignore[arg-type]
-            register = self.c.point_register(f"{self.args.routine}.{expr.args[0].value.name}")
-            copy = into or self.c.point_register(scratch)
-            self.emit(f"{copy}={register}")
-            for axis, offset in enumerate(offsets, start=1):
-                if offset != "0":
-                    self.emit(f"{copy[:-1]},{axis}]={copy[:-1]},{axis}]+{offset}")
-            return copy
-        raise Untranslatable(f"'{format_expr(expr)}': a point passed to the routine is moved to as it is or with"
-                             " Offs() here", Blocker.RUNTIME_POSITION)  # fmt: skip
+                and all(a.name is None and a.value is not None for a in expr.args)):  # fmt: skip
+            base, offsets = expr.args[0].value, [a.value for a in expr.args[1:]]
+        source = self.point_source(base)  # type: ignore[arg-type]
+        if source is None:
+            points = {s.key for s in self.args.slots if s.kind == "robtarget"} if self.args else set()
+            if {word.upper() for word in re.findall(r"[A-Za-z_]\w*", format_expr(expr))} & points:
+                raise Untranslatable(f"'{format_expr(expr)}': a point passed to the routine is moved to as it is or"
+                                     " with Offs() here", Blocker.RUNTIME_POSITION)  # fmt: skip
+            return None
+        if offsets is None and into is None:
+            return source
+        steps = [operand(self.numeric(value)) for value in offsets or ()]  # type: ignore[arg-type]
+        copy = into or self.c.point_register(scratch)
+        self.emit(f"{copy}={source}")
+        for axis, offset in enumerate(steps, start=1):
+            if offset != "0":
+                self.emit(f"{copy[:-1]},{axis}]={copy[:-1]},{axis}]+{offset}")
+        return copy
+
+    def point_source(self, expr: n.Expr) -> str | None:
+        """PR[k] for a robtarget parameter, PR[R[n]] for an array of points indexed at run time (the index worked
+        out in a register first); None for anything else."""
+        if isinstance(expr, n.Name) and self.args and self.args.kind(expr.name) == "robtarget":
+            return self.c.point_register(f"{self.args.routine}.{expr.name}")
+        if not (isinstance(expr, n.Index) and isinstance(expr.base, n.Name)):
+            return None
+        decl = self.c.symbols.get(expr.base.name)
+        if decl is None or decl.type_name.lower() != "robtarget" or len(decl.dims) != len(expr.indices):
+            return None
+        try:
+            [self.c.evaluator.constant_number(i) for i in expr.indices]
+            return None  # a fixed element: a point like any other
+        except Unresolvable:
+            pass
+        if decl.storage != "CONST":
+            raise Untranslatable(f"{format_expr(expr)}: an array of points indexed at run time is converted when it is"
+                                 " CONST (kept in position registers by SETUP_FRAMES)", Blocker.RUNTIME_POSITION)  # fmt: skip
+        key = self._point_array(decl, expr.span.line)
+        dims = self.c.arrays[key][1]
+        indices = [self.numeric(i) for i in expr.indices]
+        register = self.c.written_register("PointIndex", key="CROSSARM.POINTINDEX")
+        bare = f"PR[{register.split(':')[0]}]]" if ":" in register else f"PR[{register}]"
+        if self.point_index == (key, tuple(indices)):  # worked out already, and nothing changed it since
+            return bare
+        # Row after row, as RAPID lays an array out: {i,j} of {a,b} is the (i-1)*b + j-th element.
+        self.emit(f"{register}={operand(indices[0])}")
+        for size, index in zip(dims[1:], indices[1:], strict=True):
+            self.emit(f"{register}={register}*{size}")
+            self.emit(f"{register}={register}+{operand(index)}")
+        stride = sum(math.prod(dims[k + 1:]) for k in range(len(dims)))  # what the 1-based indices add up to
+        self.emit(f"{register}={register}+{{PB:{key}:{-stride}}}")
+        self.point_index = (key, tuple(indices))
+        return bare
+
+    def _point_array(self, decl: n.DataDecl, line: int) -> str:
+        """The array's values, each element converted like a point (CONFIG included), once per conversion."""
+        key = decl.name.upper()
+        if key in self.c.arrays:
+            return key
+        try:
+            dims = tuple(int(self.c.evaluator.constant_number(d)) for d in decl.dims)
+        except Unresolvable as exc:
+            raise Untranslatable(f"{decl.name}: array size not fixed ({exc})", Blocker.RUNTIME_POSITION) from exc
+        try:
+            data = self.c.evaluator.value(n.Name(n.Span(line, 0), decl.name))
+        except Unresolvable as exc:
+            raise Untranslatable(f"{decl.name}: {exc}", Blocker.RUNTIME_POSITION) from exc
+        values = []
+        for flat in range(math.prod(dims)):
+            position, rest = [], flat
+            for size in reversed(dims):
+                position.insert(0, rest % size + 1)
+                rest //= size
+            try:
+                element = data
+                for i in position:
+                    element = element[i - 1]
+                (x, y, z), q, conf, _extax = element
+                value = RobTarget(Pose((x, y, z), tuple(q)), tuple(int(c) for c in conf))  # type: ignore[arg-type]
+            except (TypeError, ValueError, IndexError) as exc:
+                raise Untranslatable(f"{decl.name}{{{','.join(map(str, position))}}}: malformed robtarget",
+                                     Blocker.RUNTIME_POSITION) from exc  # fmt: skip
+            (x, y, z), (w, p, r) = value.pose.pos, value.pose.wpr()
+            values.append(CartesianPosition(x, y, z, w, p, r, self.config_string(value, line)))
+        self.c.arrays[key] = (decl.name, dims, tuple(values))
+        return key
 
     def joint_frame(self, kind: str, expr: n.Expr | None, line: int, number: bool = True) -> tuple[int, int | None]:
         """The frame a MoveAbsJ selects. A joint target does not depend on the tool or the work object, so a
@@ -2048,9 +2153,7 @@ class _RoutineTranslator:
         if expr is None:
             raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
         register = self.c.point_register(f"{layout.routine}.{slot.name}")
-        if isinstance(expr, n.Name) and self.args and self.args.kind(expr.name) == "robtarget":
-            return f"{register}={self.c.point_register(f'{self.args.routine}.{expr.name}')}"
-        if self.args and self.passed_point(expr, "CROSSARM.POINT", into=register):  # Offs() of this routine's own point
+        if self.passed_point(expr, "CROSSARM.POINT", into=register):  # a parameter, an array element, Offs() of one
             return ""
         try:
             value = self.c.evaluator.robtarget(expr)
@@ -2681,6 +2784,16 @@ class _RoutineTranslator:
                 if signal is not None:
                     return f"{signal}={'OFF' if negate else 'ON'}"
         raise Untranslatable(f"condition not convertible: {format_expr(expr)}", Blocker.CONDITION)
+
+
+def _consecutive(free: list[int], count: int) -> list[int]:
+    """The highest run of `count` consecutive numbers in `free` (listed from the top down), lowest first; [] if none."""
+    numbers = set(free)
+    for top in free:
+        run = list(range(top - count + 1, top + 1))
+        if all(k in numbers for k in run):
+            return run
+    return []
 
 
 def _max_time_wait(stmt: n.Stmt) -> bool:

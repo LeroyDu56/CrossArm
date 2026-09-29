@@ -7,7 +7,7 @@ CREATE		= DATE 26-01-01  TIME 00:00:00;
 MODIFIED	= DATE 26-01-01  TIME 00:00:00;
 FILE_NAME	= ;
 VERSION		= 0;
-LINE_COUNT	= 14;
+LINE_COUNT	= 18;
 MEMORY_SIZE	= 0;
 PROTECT		= READ_WRITE;
 TCD:  STACK_SIZE	= 0,
@@ -24,15 +24,19 @@ CONTROL_CODE	= 00000000 00000000;
    3:  UTOOL[1]=PR[100] ;
    4:  PR[100]=P[2]    ;
    5:  UFRAME[1]=PR[100] ;
-   6:  PR[49]=P[3]    ;
-   7:  UTOOL[9]=PR[49] ;
-   8:  UFRAME_NUM=0 ;
-   9:  UTOOL_NUM=9 ;
-  10:J P[4] 10% FINE    ;
-  11:  R[90]=51    ;
-  12:  CALL POINTPROBE    ;
-  13:  R[90]=71    ;
-  14:  CALL POINTDIRECT    ;
+   6:  PR[93]=P[3]    ;
+   7:  PR[94]=P[4]    ;
+   8:  PR[95]=P[5]    ;
+   9:  PR[96]=P[6]    ;
+  10:  PR[49]=P[7]    ;
+  11:  UTOOL[9]=PR[49] ;
+  12:  UFRAME_NUM=0 ;
+  13:  UTOOL_NUM=9 ;
+  14:J P[8] 10% FINE    ;
+  15:  R[90]=1    ;
+  16:  CALL POINTPROBE    ;
+  17:  R[90]=31    ;
+  18:  CALL POINTDIRECT    ;
 /POS
 P[1]{
    GP1:
@@ -49,10 +53,34 @@ P[2]{
 P[3]{
    GP1:
 	UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
+	X =    40.000  mm,	Y =   -40.000  mm,	Z =   230.000  mm,
+	W =   180.000 deg,	P =     0.000 deg,	R =     0.000 deg
+};
+P[4]{
+   GP1:
+	UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
+	X =   100.000  mm,	Y =   -40.000  mm,	Z =   230.000  mm,
+	W =   180.000 deg,	P =     0.000 deg,	R =     0.000 deg
+};
+P[5]{
+   GP1:
+	UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
+	X =    40.000  mm,	Y =    60.000  mm,	Z =   230.000  mm,
+	W =   180.000 deg,	P =     0.000 deg,	R =     0.000 deg
+};
+P[6]{
+   GP1:
+	UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
+	X =   100.000  mm,	Y =    60.000  mm,	Z =   230.000  mm,
+	W =   180.000 deg,	P =     0.000 deg,	R =     0.000 deg
+};
+P[7]{
+   GP1:
+	UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
 	X =     0.000  mm,	Y =     0.000  mm,	Z =     0.000  mm,
 	W =     0.000 deg,	P =     0.000 deg,	R =     0.000 deg
 };
-P[4]{
+P[8]{
    GP1:
 	UF : 0, UT : 9,	
 	J1=     0.000 deg,	J2=     0.000 deg,	J3=     0.000 deg,

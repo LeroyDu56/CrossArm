@@ -134,7 +134,7 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 | What | Result |
 |---|---|
 | Every program converted from the test corpus, loaded on a FANUC controller | 123 of 123 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (184 forms) |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (194 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -210,10 +210,10 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 
 Progress is measured as the share of RAPID instructions written as TP, on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)): 84 %, 87 % and 80 %. What is left
+controllers ([validation](docs/validation.md#1-the-test-corpus)): 84 %, 88 % and 81 %. What is left
 gives the order of the next steps:
 
-1. Arrays of points indexed at run time (`pRow{i}`), routines with tooldata, record or INOUT parameters.
+1. Arrays of numbers indexed at run time, routines with tooldata, record or INOUT parameters.
 2. Operator dialogs and system functions (`UIMessageBox`, `OpMode()`), values only known at run time.
 3. Error handlers for errors the backup raises itself (part not found, measure out of range).
 4. Frames and positions measured on the robot (calibration, search): TP cannot compute a frame, so

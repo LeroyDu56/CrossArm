@@ -9,6 +9,7 @@ import pytest
 from helpers import parse_module
 
 from crossarm.convert import ConversionConfig, convert
+from crossarm.convert.setup import build_setup
 from crossarm.convert.translate import Blocker
 from crossarm.fanuc.tp import CartesianPosition, Instruction, JointPosition, Motion
 from crossarm.rapid.eio import Signal
@@ -393,6 +394,42 @@ def test_gripload_with_several_tools_or_a_load_changed_at_run_time_is_a_todo():
     assert "2 tools" in todos(result)[0]
     result = run("lBox.mass:=7;\nGripLoad lBox;\nMoveL pHome,v100,fine,tGrip;", HOME + TOOL + LOAD)
     assert any("GripLoad lBox: load only known at run time" in t for t in todos(result))
+
+
+SLOTS = ("CONST robtarget pSlot{3}:=[[[100,0,300],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]],"
+         "[[200,0,300],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]],"
+         "[[300,0,300],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]]];VAR num n:=1;")
+
+
+def test_an_array_of_points_indexed_at_run_time_is_read_from_position_registers():
+    """SETUP_FRAMES keeps the array in consecutive registers; the program works the index out once and reads PR[R[n]]."""
+    result = run("MoveL pSlot{n},v100,fine,tGrip;\nMoveL Offs(pSlot{n},0,0,50),v100,fine,tGrip;\nMoveL pSlot{2},v100,fine,tGrip;",
+                 SLOTS + TOOL)  # fmt: skip
+    assert tp_lines(result) == [
+        "R[2:PointIndex]=R[1]", "R[2:PointIndex]=R[2:PointIndex]+95",  # {n} of 3 from PR[96]: n + 95
+        "UFRAME_NUM=0", "UTOOL_NUM=1", "L PR[R[2]] 100mm/sec FINE",
+        "PR[99]=PR[R[2]]", "PR[99,3]=PR[99,3]+50", "L PR[99] 100mm/sec FINE",  # Offs() in CROSSARM.POINT
+        "L P[1] 100mm/sec FINE",  # a fixed element: a point like any other
+    ]  # fmt: skip
+    ((array),) = result.point_arrays
+    assert (array.name, array.dims, array.base, [v.x for v in array.values]) == ("pSlot", (3,), 96, [100, 200, 300])
+    setup = build_setup(result, ConversionConfig(), "SETUP_FRAMES")
+    assert [line.text for line in setup.program.lines if line.text.startswith("PR[9")] == [
+        "PR[96]=P[2]", "PR[97]=P[3]", "PR[98]=P[4]"]
+
+
+def test_the_index_is_worked_out_again_after_what_may_change_it():
+    result = run("MoveL pSlot{n},v100,fine,tGrip;\nn:=n+1;\nMoveL pSlot{n},v100,fine,tGrip;", SLOTS + TOOL)
+    assert sum(line.endswith("+96") for line in tp_lines(result)) == 2
+
+
+def test_the_mapping_file_pins_the_first_register_of_an_array(tmp_path):
+    path = tmp_path / "map.json"
+    path.write_text('{"point_arrays": {"pSlot": 40}}', encoding="utf-8")
+    config = ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1))
+    result = run("MoveL pSlot{n},v100,fine,tGrip;", SLOTS + TOOL, config=config)
+    assert "R[2:PointIndex]=R[2:PointIndex]+39" in tp_lines(result)
+    assert [(a.base, a.fixed) for a in result.point_arrays] == [(40, True)]
 
 
 def test_a_group_input_read_by_its_name():

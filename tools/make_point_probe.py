@@ -1,17 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Enzo LEROY
 # SPDX-License-Identifier: BUSL-1.1
 
-"""Generate and run the point probe: a routine given its points moves where the moves written out go.
+"""Generate and run the point probe: points passed to routines or read from arrays go where the moves written out go.
 
-PointProbe.mod makes the same twelve moves twice. PROC PointProbe calls routines that take a robtarget:
+PointProbe.mod makes the same twenty-eight moves twice. PROC PointProbe calls routines that take a robtarget:
 PickAt approaches its point with Offs(), moves to it, leaves with another Offs(); Twice passes its own
 point on, as it is and with Offs(). PROC PointDirect makes the same moves with the points written in
-them. CrossArm converts both: the first passes each point in a position register (PR[k]=P[j] before the
-CALL, L PR[k] in the routine, Offs as component arithmetic on a copy), the second is plain moves.
+them. Then it walks a 2 x 2 array of points in two FOR loops, moving to each element and handing
+Offs() of it to PickAt; PointDirect makes those moves with the elements at fixed indices. CrossArm
+converts both: the first passes each point in a position register (PR[k]=P[j] before the CALL, L PR[k]
+in the routine, Offs as component arithmetic on a copy) and reads the array from the registers
+SETUP_FRAMES fills (PR[R[n]], the index worked out from the loop registers); the second is plain moves.
 
 On ROBOGUIDE, PTPROBE sets the frames as SETUP_FRAMES does, runs both, and records the TCP after every
-move (PR[R[90]]=LPOS, in the frames the move ran in): the param moves in PR[51..], the direct ones in
-PR[71..]. Move by move they must be the same pose.
+move (PR[R[90]]=LPOS, in the frames the move ran in): the first run in PR[1..], the direct one in
+PR[31..]. Move by move they must be the same pose.
 
 Usage:  python tools/make_point_probe.py write     PointProbe.mod and the .LS in tests/fixtures/probes/points
         python tools/make_point_probe.py run       ROBOGUIDE; the measured poses stored
@@ -39,8 +42,8 @@ PROBE = ROOT / "tests" / "fixtures" / "probes" / "points"
 RESULT = PROBE / "results" / "pointprobe_roboguide.txt"
 PROGRAM = "PTPROBE"
 COUNTER = 90  # R[90]: the PR the next measurement goes in
-PASSED_PR, DIRECT_PR = 51, 71
-MOVES = 12
+PASSED_PR, DIRECT_PR = 1, 31
+MOVES = 28
 ZERO_PR = 49
 
 DOWN = "[0,1,0,0]"
@@ -51,11 +54,21 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
     "    PERS wobjdata wProbe:=[FALSE,TRUE,\"\",[[1100,-150,650],[0.996195,0,0,0.087156]],[[0,0,0],[1,0,0,0]]];",
     f"    CONST robtarget pA:=[[60,20,250],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];",
     f"    CONST robtarget pB:=[[180,120,250],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];",
+    "    CONST robtarget pGrid{2,2}:=[[" + ",".join(f"[[{x},{y},230],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]]"
+                                         for x, y in ((40, -40), (100, -40))) + "],["
+    + ",".join(f"[[{x},{y},230],{DOWN},[0,0,0,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]]"
+               for x, y in ((40, 60), (100, 60))) + "]];",
     "",
     "    PROC PointProbe()",
     "        PickAt pA;",
     "        PickAt Offs(pB,0,50,0);",
     "        Twice pB;",
+    "        FOR r FROM 1 TO 2 DO",
+    "            FOR c FROM 1 TO 2 DO",
+    "                MoveL pGrid{r,c},v500,fine,tProbe\\WObj:=wProbe;",
+    "                PickAt Offs(pGrid{r,c},0,0,20);",
+    "            ENDFOR",
+    "        ENDFOR",
     "    ENDPROC",
     "",
     "    PROC PickAt(robtarget pPick)",
@@ -74,6 +87,12 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
         f"MoveJ Offs({point},0,0,40),v1000,fine,tProbe\\WObj:=wProbe;",
         f"MoveL {point},v200,fine,tProbe\\WObj:=wProbe;",
         f"MoveL Offs({point},10,-20,40),v1000,fine,tProbe\\WObj:=wProbe;",
+    )],
+    *[f"        {line}" for r, c in ((1, 1), (1, 2), (2, 1), (2, 2)) for line in (
+        f"MoveL pGrid{{{r},{c}}},v500,fine,tProbe\\WObj:=wProbe;",
+        f"MoveJ Offs(Offs(pGrid{{{r},{c}}},0,0,20),0,0,40),v1000,fine,tProbe\\WObj:=wProbe;",
+        f"MoveL Offs(pGrid{{{r},{c}}},0,0,20),v200,fine,tProbe\\WObj:=wProbe;",
+        f"MoveL Offs(Offs(pGrid{{{r},{c}}},0,0,20),10,-20,40),v1000,fine,tProbe\\WObj:=wProbe;",
     )],
     "    ENDPROC",
     "ENDMODULE",

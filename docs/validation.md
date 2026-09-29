@@ -12,7 +12,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | What | Result |
 |---|---|
 | Every program converted from the test corpus, loaded on a FANUC controller | 123 of 123 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (184 forms) |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (194 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -20,7 +20,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Frames and points the programs compute, worked out by CrossArm, run on ROBOGUIDE | within 0.005 mm and 0.001° of RobotStudio |
 | `TEST` / `CASE` converted to `SELECT`, run on both controllers | the branches RAPID takes |
 | Pulses, inverted outputs, clocks, payloads, converted and run on ROBOGUIDE | what RAPID does, the clock within 50 ms |
-| Routines given their points (robtarget parameters), run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
+| Points passed to routines or read from arrays indexed at run time, run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -39,7 +39,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 15. [Frames and points the programs compute](#15-frames-and-points-the-programs-compute)
 16. [TEST and CASE, run](#16-test-and-case-run)
 17. [Pulses, inverted outputs, clocks and analog outputs, run](#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)
-18. [Routines given their points, run](#18-routines-given-their-points-run)
+18. [Routines given their points, and arrays of points, run](#18-routines-given-their-points-and-arrays-of-points-run)
 
 ## 1. The test corpus
 
@@ -200,7 +200,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 184 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 194 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
@@ -272,7 +272,7 @@ and 135 degrees; zigzags with 50 mm legs. 32 runs:
 - **Into a faster move it rounds more.** Off the top of a retract (300 mm/s, then 1000), the CNT
   for 300 mm/s cut the corner by 6.8 mm, where the ABB cut it by 4.9. CrossArm now matches a
   corner at the next move's speed when that is faster, past outputs and remarks in between: 1.3 mm.
-  On the test corpus the rule lowers 72 CNT of 641 moves and raises none.
+  On the test corpus the rule lowers 72 CNT of 654 moves and raises none.
 - **A reversal turns short of the bottom by up to 4 mm more.** Down and back up through a zone, the
   R-2000iC turns 5.6 mm short of the bottom with `z5` (the ABB 2.6), 12.1 with `z20` (9.5), still
   on the line: the tool goes less deep, not aside. The R-1000iA: 3.9 mm for 2.6 with `z5`, as
@@ -410,24 +410,27 @@ payload schedule is the one CrossArm gave the tool with the part. The virtual AB
 RAPID side is worked out by hand, as for the argument probe. An analog output is not read back: the
 probe checks that the line loads and runs.
 
-## 18. Routines given their points, run
+## 18. Routines given their points, and arrays of points, run
 
 **What a position register does** was asked of ROBOGUIDE first. A point recorded in user frame 1 and
 copied into a position register (`PR[60]=P[1]`) keeps its values and its configuration; moved to
 with user frame 2 selected, the robot goes to those values in frame 2 (`LPOS` read in frame 2 gives
 them back). A move to a position register takes the frames selected when it runs, as a RAPID move
 takes the tool and work object written in it with the robtarget it is given. `PR[62,3]=PR[62,3]+40`
-moves the point 40 mm along the frame's z, as `Offs()` does.
+moves the point 40 mm along the frame's z, as `Offs()` does. A register can also be named by another:
+`L PR[R[5]]`, `J PR[R[5]]` and `PR[63]=PR[R[5]]` go to, and copy, the register whose number `R[5]` holds, and
+the index can be worked out beforehand (`R[5]=R[1]*2`, `R[5]=R[5]+R[2]`, `R[5]=R[5]+76`).
 
-**End to end.** [tools/make_point_probe.py](../tools/make_point_probe.py) converts twelve moves twice:
-through routines that take a robtarget (one approaches its point with `Offs()`, moves to it, leaves
-with another `Offs()`; another passes its own point on, as it is and with `Offs()`), and written out
-with their points. ROBOGUIDE runs both, with the frames `SETUP_FRAMES` sets, and records the pose after
+**End to end.** [tools/make_point_probe.py](../tools/make_point_probe.py) converts twenty-eight moves
+twice: through routines that take a robtarget (one approaches its point with `Offs()`, moves to it,
+leaves with another `Offs()`; another passes its own point on, as it is and with `Offs()`) and through a
+CONST 2 x 2 array walked in two FOR loops (each element moved to, and handed with `Offs()` to the first
+routine), and written out with their points. ROBOGUIDE runs both, with the frames `SETUP_FRAMES` sets, and records the pose after
 every move:
 
-| Comparison | Worst gap over 12 moves |
+| Comparison | Worst gap |
 |---|---|
-| Moves of the routines given their points vs the moves written out | **0.000 mm, 0.000°** |
+| Moves through routines and arrays vs the moves written out, over 28 moves | **0.000 mm, 0.000°** |
 
 The poses are the RAPID values themselves (the point 40 mm above, the retract offset by 10, -20 and
-40 mm). The results are in [tests/fixtures/probes/points/results](../tests/fixtures/probes/points/results).
+40 mm), the array's elements row after row, as the loops walk them. The results are in [tests/fixtures/probes/points/results](../tests/fixtures/probes/points/results).
