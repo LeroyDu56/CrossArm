@@ -1,13 +1,13 @@
-/PROG  TWATCH
+/PROG  IDOWN_T
 /ATTR
 OWNER		= MNEDITOR;
-COMMENT		= "tWatch";
+COMMENT		= "iDown";
 PROG_SIZE	= 0;
 CREATE		= DATE 26-01-01  TIME 00:00:00;
 MODIFIED	= DATE 26-01-01  TIME 00:00:00;
 FILE_NAME	= ;
 VERSION		= 0;
-LINE_COUNT	= 5;
+LINE_COUNT	= 3;
 MEMORY_SIZE	= 0;
 PROTECT		= READ_WRITE;
 TCD:  STACK_SIZE	= 0,
@@ -19,10 +19,8 @@ TCD:  STACK_SIZE	= 0,
 DEFAULT_GROUP	= *,*,*,*,*;
 CONTROL_CODE	= 00000000 00000000;
 /MN
-   1:  !RAPID IntProbe.tWatch ;
-   2:  R[8:iWatchSeen]=R[7:nState]    ;
-   3:  R[4:nWatch]=R[4:nWatch]+1    ;
-   4:  R[5:nLast]=R[7:nState]    ;
-   5:  MONITOR IWATCH ;
+   1:  R[10:IntNo]=6    ;
+   2:  CALL TSHARED    ;
+   3:  MONITOR IDOWN ;
 /POS
 /END

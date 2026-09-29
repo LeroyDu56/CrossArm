@@ -489,7 +489,8 @@ measured how it behaves before CrossArm wrote any:
 `ISignalDO` on a rising edge, on a falling edge and with `\Single`, and `IPers` on a PERS; drives
 the outputs and the PERS, puts one interrupt to sleep (`ISleep`) and wakes it (`IWatch`), pulses the
 output from a called routine, and deletes them all (`IDelete`) before pulsing once more. Each TRAP
-counts its calls, one of them through a routine it calls. ROBOGUIDE runs the converted programs;
+counts its calls, one of them through a routine it calls; one TRAP serves two interrupts, through a
+relay each that notes which one called it. ROBOGUIDE runs the converted programs;
 the counts RAPID gives are worked out by hand, the virtual ABB controller having no signal for
 `ISignalDO` to watch:
 
@@ -500,6 +501,7 @@ the counts RAPID gives are worked out by hand, the virtual ABB controller having
 | `nFall`: falling edges, the output already down when armed | 2 | 2 |
 | `nWatch`: changes of the PERS, the last after `IDelete` not counted | 2 | 2 |
 | `nLast`: the value the last one saw | 7 | 7 |
+| `nShared`: a TRAP two interrupts share (rising and falling edges of one output), telling them apart by `INTNO`: up twice, down once | 12 | 12 |
 
 On the test corpus, the palletizing cell's two interrupts on inputs convert; the one on a timer
 (`ITimer`) and the assembly cell's, whose TRAP stops the motion (`StopMove`), stay TODO. The results

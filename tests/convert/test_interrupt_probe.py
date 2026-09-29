@@ -35,7 +35,8 @@ def test_every_interrupt_of_the_probe_is_converted():
     result = conversion()
     assert result.coverage.percent == 100.0
     conditions = sorted(info.program.name for info in result.programs if info.program.condition)
-    assert conditions == ["IEDGE", "IFALL", "IONCE", "IWATCH"]
+    assert conditions == ["IDOWN", "IEDGE", "IFALL", "IONCE", "IUP", "IWATCH"]
+    assert "CALL TSHARED" in (PROBE / "IUP_T.LS").read_text(encoding="ascii")  # the relay of a shared TRAP
     assert "MONITOR IONCE" not in (PROBE / "TONCE.LS").read_text(encoding="ascii")  # \\Single: not armed again
 
 

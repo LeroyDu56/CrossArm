@@ -19,6 +19,6 @@ TCD:  STACK_SIZE	= 0,
 DEFAULT_GROUP	= *,*,*,*,*;
 CONTROL_CODE	= 00000000 00000000;
 /MN
-   1:  WHEN R[6:nState]<>R[7:iWatchSeen],CALL TWATCH ;
+   1:  WHEN R[7:nState]<>R[8:iWatchSeen],CALL TWATCH ;
 /POS
 /END

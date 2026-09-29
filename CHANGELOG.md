@@ -17,7 +17,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   A warning says what a condition checked periodically can miss: a change within 0.05 s of
   `MONITOR`, or held less than 0.02 s. Still TODO, with why: `ITimer` (a condition monitor cannot
   watch a timer), `IError`, group and analog interrupts, `IDisable` / `IEnable`, a TRAP that moves
-  the robot or controls its motion (`StopMove`, `ClearPath`...), a TRAP serving several interrupts.
+  the robot or controls its motion (`StopMove`, `ClearPath`...).
+- A TRAP several interrupts share, or one reading `INTNO`: each condition program calls a relay of its
+  own, which notes its interrupt in `R[n:IntNo]`, calls the TRAP and arms its condition program again.
+  An `intnum` reads as its interrupt's number: `TEST INTNO CASE iUp:` is a `SELECT` on the register.
 - Data a TRAP changes is never taken as known where the programs read it: a point offset by a count
   the TRAP keeps is not worked out with its value at the start.
 - Routines with a parameter of a RECORD type the backup declares: the record is passed as the

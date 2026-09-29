@@ -129,12 +129,31 @@ def test_an_interrupt_armed_nowhere_converted_ends_nothing():
     assert "MONITOR ISTOP" not in program(result, "TSTOP")
 
 
-def test_a_trap_serving_two_interrupts_is_not_converted():
-    main = ("PROC main()\nCONNECT iStop WITH tStop;\nISignalDI diStop,1,iStop;\nCONNECT iOther WITH tStop;\n"
-            "ISignalDI diStop,0,iOther;\nENDPROC\n")  # fmt: skip
-    result = run(main + TRAP, data="VAR intnum iOther;")
-    assert len(todos(result)) == 4
-    assert "several interrupts" in todos(result)[0]
+SHARED = ("PROC main()\nCONNECT iStop WITH tStop;\nISignalDI diStop,1,iStop;\nCONNECT iOther WITH tStop;\n"
+          "ISignalDI\\Single,diStop,0,iOther;\nENDPROC\n")  # fmt: skip
+
+
+def test_a_trap_two_interrupts_share_is_called_through_a_relay_each():
+    """The relay notes its interrupt (what INTNO reads), calls the TRAP and arms its own condition again, unless
+    \\Single; the TRAP arms nothing itself."""
+    trap = "TRAP tStop\nTEST INTNO\nCASE iStop:\nnStops:=nStops+1;\nCASE iOther:\nnStops:=nStops+10;\nENDTEST\nENDTRAP\n"
+    result = run(SHARED + trap, data="VAR intnum iOther;")
+    assert todos(result) == []
+    programs = {info.program.name: [line.text for line in info.program.lines] for info in result.programs}
+    assert programs["ISTOP"] == ["WHEN DI[1]=ON+,CALL ISTOP_T"]
+    assert programs["IOTHER"] == ["WHEN DI[1]=OFF-,CALL IOTHER_T"]
+    assert programs["ISTOP_T"] == ["R[1:IntNo]=1", "CALL TSTOP", "MONITOR ISTOP"]
+    assert programs["IOTHER_T"] == ["R[1:IntNo]=2", "CALL TSTOP"]  # \\Single: not armed again
+    trap_lines = programs["TSTOP"]
+    assert "SELECT R[1:IntNo]=1,JMP LBL[2]" in trap_lines and not any("MONITOR" in t for t in trap_lines)
+
+
+def test_a_trap_serving_one_interrupt_and_reading_intno_is_called_through_a_relay_too():
+    """INTNO is the register the relay sets, whatever the TRAP serves: never a test on constants."""
+    trap = "TRAP tStop\nIF INTNO=iStop nStops:=nStops+1;\nENDTRAP\n"
+    result = run(MAIN + trap)
+    assert program(result, "TSTOP")[0] == "IF (R[1:IntNo]=1) THEN"
+    assert program(result, "ISTOP_T") == ["R[1:IntNo]=1", "CALL TSTOP", "MONITOR ISTOP"]
 
 
 def test_the_condition_program_round_trips_through_the_ls_parser():

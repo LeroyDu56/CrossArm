@@ -12,8 +12,11 @@ TRAP runs but the move under way goes on, as in RAPID; the monitor stays active 
 called. A condition program fires once and is then disarmed as a whole: the TRAP arms it again
 as it ends, unless the RAPID asked for one interrupt only (\\Single).
 
-What does not convert: an interrupt connected to several TRAP routines, or a TRAP connected to
-several interrupts (it would not know which to arm again), a TRAP that moves the robot or stops
+A TRAP several interrupts share is called through a relay per interrupt, which notes the interrupt
+in a register (what INTNO reads), calls the TRAP and arms its own condition program again. Each
+interrupt has a number of its own, what an intnum reads as (`TEST INTNO CASE iStop:`).
+
+What does not convert: an interrupt connected to several TRAP routines, a TRAP that moves the robot or stops
 its motion (StopMove, ClearPath...: it runs without a motion group), and the interrupts FANUC
 cannot watch (ITimer: a WHEN on a TIMER is refused; IError, the group and analog signals).
 """
@@ -56,6 +59,9 @@ class Interrupt:
     watched: n.Expr | None = None  # IPers: the data watched
     problem: str = ""  # why it is not converted ("" when it is)
     program: str = ""  # its TP condition program, named by the converter
+    number: int = 0  # what INTNO and the intnum read as: 1, 2... in the order the programs name them
+    shared: bool = False  # its TRAP serves other interrupts too: called through a relay
+    relay: str = ""  # the relay's TP name, when shared
 
     @property
     def trap(self) -> str:
@@ -106,13 +112,28 @@ def scan(routines: list[n.Routine], procs: dict[str, n.Routine], move_routines: 
     for interrupt in found.values():
         for trap in interrupt.traps:
             users[trap] = users.get(trap, 0) + 1
-    for interrupt in found.values():
-        interrupt.problem = _problem(interrupt, traps, users, procs, move_routines)
+    reading = {name for name, routine in traps.items() if _reads_intno(routine.body)}
+    for number, interrupt in enumerate(found.values(), start=1):
+        interrupt.number = number
+        # through a relay: a TRAP other interrupts share, or one that reads INTNO (the register the relay sets)
+        interrupt.shared = len(interrupt.traps) == 1 and (users[interrupt.trap] > 1 or interrupt.trap in reading)
+        interrupt.problem = _problem(interrupt, traps, procs, move_routines)
     return found
 
 
-def _problem(interrupt: Interrupt, traps: dict[str, n.Routine], users: dict[str, int],
-             procs: dict[str, n.Routine], move_routines: set[str]) -> str:  # fmt: skip
+def _reads_intno(node: object) -> bool:
+    """Whether statements read INTNO, the interrupt that called the TRAP."""
+    if isinstance(node, n.Name):
+        return node.name.upper() == "INTNO"
+    if isinstance(node, tuple | list):
+        return any(_reads_intno(item) for item in node)
+    if hasattr(node, "__dataclass_fields__") and not isinstance(node, n.Span):
+        return any(_reads_intno(getattr(node, name)) for name in node.__dataclass_fields__)
+    return False
+
+
+def _problem(interrupt: Interrupt, traps: dict[str, n.Routine], procs: dict[str, n.Routine],
+             move_routines: set[str]) -> str:  # fmt: skip
     if interrupt.gap:
         return f"interrupt {interrupt.name} is armed by {interrupt.gap}"
     if not interrupt.traps:
@@ -122,8 +143,6 @@ def _problem(interrupt: Interrupt, traps: dict[str, n.Routine], users: dict[str,
     trap = interrupt.trap
     if trap not in traps:
         return f"TRAP {trap} of interrupt {interrupt.name} is not in the converted modules"
-    if users[trap] > 1:
-        return f"TRAP {traps[trap].name} is connected to several interrupts: it could not tell which to arm again"
     if len(interrupt.kinds) > 1:
         return f"interrupt {interrupt.name} is armed on conditions of different kinds"
     moving = moves(traps[trap], procs, move_routines)

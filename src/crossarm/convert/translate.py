@@ -697,6 +697,7 @@ class Converter:
         self.conditions: dict[str, list[str]] = {}
         self.volatile: set[str] = set()
         self.no_group: set[str] = set()  # routines a TRAP calls: written without a motion group
+        self.watched: dict[str, str] = {}  # IPers interrupt (upper) -> the register it watches, as armed
         self.not_converted: set[int] = set()  # id() of the statements that ended up in a TODO, for coverage
         self.parameters: set[str] = set()  # of the routine being translated (upper case)
         self.inliner = Inliner(modules, self._const_bool, self._inlined,
@@ -1272,6 +1273,8 @@ class Converter:
     def _skip_reason(self, routine: n.Routine, layout: "Signature | str | None") -> str:
         if routine.kind == "TRAP":
             used = [i for i in self.interrupts.values() if routine.name.upper() in i.traps]
+            if any(not i.problem for i in used):
+                return ""
             return used[0].problem if used else "TRAP not connected to any interrupt (no CONNECT)"
         if routine.kind != "PROC":
             return f"{routine.kind} routines have no TP program equivalent"
@@ -1341,6 +1344,15 @@ class Converter:
             taken.add(name)
             self.shared.program_names.add(name)
             interrupt.program = name
+            if interrupt.shared:  # a relay: notes the interrupt, calls the TRAP, arms the condition again
+                base = relay = tp_program_name(f"{interrupt.name}_T", max_len)
+                suffix = 1
+                while relay in taken:
+                    suffix += 1
+                    relay = f"{base[: max_len - len(str(suffix)) - 1]}_{suffix}"
+                taken.add(relay)
+                self.shared.program_names.add(relay)
+                interrupt.relay = relay
             self.volatile |= changed_by(written[interrupt.trap], self.procs)
             self.no_group |= called_by(written[interrupt.trap], self.procs)
 
@@ -1365,6 +1377,15 @@ class Converter:
             trap = self.program_names[interrupt.trap]
             attrs = Attributes(comment=ascii_text(interrupt.name)[:16], created=self.config.timestamp,
                                default_group=NO_GROUP)  # fmt: skip
+            if interrupt.relay:
+                relay = [f"{self.pers_copy(interrupt)}={self.watched[key]}"] if key in self.watched else []
+                relay += [f"{self.intno()}={interrupt.number}", f"CALL {trap}"]
+                relay += [] if interrupt.single else [f"MONITOR {interrupt.program}"]
+                program = Program(interrupt.relay, [Instruction(text) for text in relay], [],
+                                  dataclasses.replace(attrs))  # fmt: skip
+                self.result.programs.append(ProgramInfo(program, modules.get(interrupt.trap, ""),
+                                                        f"{interrupt.name} (relay)", ()))  # fmt: skip
+                trap = interrupt.relay
             lines = [Instruction(f"WHEN {condition},CALL {trap}") for condition in conditions]
             program = Program(interrupt.program, list(lines), [], attrs, condition=True)
             self.result.programs.append(ProgramInfo(program, modules.get(interrupt.trap, ""), interrupt.name, ()))
@@ -1372,6 +1393,10 @@ class Converter:
                       f"interrupt {interrupt.name} watched by the condition monitor {interrupt.program} (MONITOR), which"
                       " checks its condition periodically: a signal change within 0.05 s of MONITOR, or held less"
                       " than 0.02 s, can be missed (ROBOGUIDE); RAPID catches both", Blocker.MONITOR)  # fmt: skip
+
+    def intno(self) -> str:
+        """The register a relay notes its interrupt in, what INTNO reads in a TRAP several interrupts share."""
+        return self.written_register("IntNo", key="CROSSARM.INTNO")
 
     def pers_copy(self, interrupt: Interrupt) -> str:
         """The register an IPers condition compares the watched data with: its value when last seen."""
@@ -1570,8 +1595,9 @@ class _RoutineTranslator:
         self.known: dict[str, Typed | Unknown] = {}
         self.local_names: set[str] = set()
         # A TRAP: the interrupt it serves, and what it ends with (arming its condition program again).
-        self.interrupt = next((i for i in conv.interrupts.values() if i.program and i.trap == routine.name.upper()),
-                              None) if routine.kind == "TRAP" else None  # fmt: skip
+        served = [i for i in conv.interrupts.values() if i.program and i.trap == routine.name.upper()]
+        self.served = served if routine.kind == "TRAP" else []  # the interrupts it serves, converted
+        self.interrupt = served[0] if len(self.served) == 1 and not served[0].shared else None  # served directly
         self.epilogue: list[str] = []
 
     def run(self) -> ProgramInfo:
@@ -2386,6 +2412,7 @@ class _RoutineTranslator:
                 raise Untranslatable(f"IPers on {format_expr(positional[0])}: a condition monitor compares registers", Blocker.INTERRUPT)
             seen = self.c.pers_copy(interrupt)
             conditions, before = [f"{watched}<>{seen}"], [f"{seen}={watched}"]
+            self.c.watched[armed[0].upper()] = watched
         else:
             kind = name[-2:]
             ref = self.c.signal(positional[0], self.name, call.span.line)
@@ -3009,6 +3036,8 @@ class _RoutineTranslator:
             return self.clock(expr.args[0].value)  # seconds, as ClkRead (wait probe: 1.000000 after 1 s)
         if isinstance(expr, n.Index) and (element := self.number_element(expr)) is not None:
             return element
+        if isinstance(expr, n.Name) and (number := self.interrupt_value(expr)) is not None:
+            return number
         if isinstance(expr, n.Name):
             key = expr.name.upper()
             if key in self.loop_vars:
@@ -3037,6 +3066,19 @@ class _RoutineTranslator:
                 if isinstance(found, int | float) and not isinstance(found, bool):
                     return fmt_number(float(found))
             raise Untranslatable(f"'{format_expr(expr)}' is not a simple numeric value ({exc})", Blocker.VALUE) from exc
+
+    def interrupt_value(self, expr: n.Name) -> str | None:
+        """An intnum as a number (its interrupt's, interrupts.Interrupt.number), and INTNO in a TRAP: the register
+        its relays note that number in. None for any other name."""
+        key = expr.name.upper()
+        decl = self.c.symbols.get(expr.name)
+        if decl is None and key == "INTNO":
+            if not self.served:
+                raise Untranslatable("INTNO outside a TRAP converted", Blocker.INTERRUPT)
+            return self.c.intno()  # a TRAP reading INTNO is called through relays, which set it (interrupts.scan)
+        if decl is not None and decl.type_name.lower() == "intnum" and key in self.c.interrupts:
+            return str(self.c.interrupts[key].number)
+        return None
 
     def component(self, expr: n.Expr) -> str | None:
         """'PART.PASSES' for `part.passes` when `part` is a record parameter of this routine, passed as its
@@ -3219,6 +3261,8 @@ class _RoutineTranslator:
         """A CASE value as a SELECT line writes it: a constant, `(-1)`, `.5` (as ROBOGUIDE stores them)."""
         if isinstance(expr, n.String):
             raise Untranslatable("TEST on a string: TP SELECT compares a register with numbers", Blocker.CONDITION)
+        if isinstance(expr, n.Name) and (number := self.interrupt_value(expr)) is not None:
+            return number  # CASE iStop: the interrupt's number
         try:
             return decimal(operand(fmt_number(self.c.evaluator.constant_number(expr))))
         except Unresolvable as exc:

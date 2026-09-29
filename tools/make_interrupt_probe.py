@@ -37,7 +37,7 @@ PROBE = ROOT / "tests" / "fixtures" / "probes" / "interrupts"
 RESULTS = PROBE / "results"
 FANUC_RESULT = RESULTS / "interruptprobe_roboguide.txt"
 PROGRAM = "INTPROBE"
-ROUTINES = ["IntProbe", "IntPulse", "IntAdd", "tEdge", "tOnce", "tFall", "tWatch"]
+ROUTINES = ["IntProbe", "IntPulse", "IntAdd", "tEdge", "tOnce", "tFall", "tWatch", "tShared"]
 
 MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a controller
     "MODULE IntProbe",
@@ -46,12 +46,15 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "    VAR intnum iOnce;",
     "    VAR intnum iFall;",
     "    VAR intnum iWatch;",
+    "    VAR intnum iUp;",
+    "    VAR intnum iDown;",
     "    PERS num nState:=0;",
     "    VAR num nHits:=0;",
     "    VAR num nOnce:=0;",
     "    VAR num nFall:=0;",
     "    VAR num nWatch:=0;",
     "    VAR num nLast:=0;",
+    "    VAR num nShared:=0;",
     "",
     "    PROC IntProbe()",
     "        nHits:=0;",
@@ -59,6 +62,7 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "        nFall:=0;",
     "        nWatch:=0;",
     "        nLast:=0;",
+    "        nShared:=0;",
     "        nState:=0;",
     "        Reset doProbeA;",
     "        Reset doProbeB;",
@@ -66,6 +70,8 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "        IDelete iOnce;",
     "        IDelete iFall;",
     "        IDelete iWatch;",
+    "        IDelete iUp;",
+    "        IDelete iDown;",
     "        CONNECT iEdge WITH tEdge;",
     "        ISignalDO doProbeA,1,iEdge;",
     "        CONNECT iOnce WITH tOnce;",
@@ -74,6 +80,11 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "        ISignalDO doProbeB,0,iFall;",
     "        CONNECT iWatch WITH tWatch;",
     "        IPers nState,iWatch;",
+    "        Reset doProbeC;",
+    "        CONNECT iUp WITH tShared;",
+    "        ISignalDO doProbeC,1,iUp;",
+    "        CONNECT iDown WITH tShared;",
+    "        ISignalDO doProbeC,0,iDown;",
     "        WaitTime 0.1;",
     "        FOR i FROM 1 TO 3 DO",
     "            SetDO doProbeA,1;",
@@ -93,6 +104,12 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "        WaitTime 0.1;",
     "        nState:=7;",
     "        WaitTime 0.1;",
+    "        SetDO doProbeC,1;",
+    "        WaitTime 0.1;",
+    "        SetDO doProbeC,0;",
+    "        WaitTime 0.1;",
+    "        SetDO doProbeC,1;",
+    "        WaitTime 0.1;",
     "        ISleep iEdge;",
     "        IntPulse;",
     "        IWatch iEdge;",
@@ -101,6 +118,9 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "        IDelete iEdge;",
     "        IDelete iFall;",
     "        IDelete iWatch;",
+    "        IDelete iUp;",
+    "        IDelete iDown;",
+    "        SetDO doProbeC,0;",
     "        IntPulse;",
     "        nState:=9;",
     "        WaitTime 0.1;",
@@ -129,6 +149,15 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
     "        nFall:=nFall+1;",
     "    ENDTRAP",
     "",
+    "    TRAP tShared",
+    "        TEST INTNO",
+    "        CASE iUp:",
+    "            nShared:=nShared+1;",
+    "        CASE iDown:",
+    "            nShared:=nShared+10;",
+    "        ENDTEST",
+    "    ENDTRAP",
+    "",
     "    TRAP tWatch",
     "        nWatch:=nWatch+1;",
     "        nLast:=nState;",
@@ -143,8 +172,11 @@ MODULE = "\r\n".join([  # noqa: FLY002 - one RAPID line per item, CRLF like a co
 # IWatch -> 4 (the one while asleep and the one after IDelete do not count); doProbeB up twice -> nOnce 1
 # (\Single), down twice -> nFall 2 (it starts down: arming it is no change); nState 5 then 7 -> 2, the
 # last seen 7 (9 comes after IDelete).
-EXPECTED = {"nHits": 4.0, "nOnce": 1.0, "nFall": 2.0, "nWatch": 2.0, "nLast": 7.0}
-SIGNALS = {"DOPROBEA": Signal("doProbeA", "DO"), "DOPROBEB": Signal("doProbeB", "DO")}
+# tShared, which iUp and iDown share, tells them apart by INTNO: doProbeC up twice (+1 each) and down once
+# (+10), the last fall after IDelete not counted -> 12.
+EXPECTED = {"nHits": 4.0, "nOnce": 1.0, "nFall": 2.0, "nWatch": 2.0, "nLast": 7.0, "nShared": 12.0}
+SIGNALS = {"DOPROBEA": Signal("doProbeA", "DO"), "DOPROBEB": Signal("doProbeB", "DO"),
+           "DOPROBEC": Signal("doProbeC", "DO")}
 
 
 def conversion() -> ConversionResult:
