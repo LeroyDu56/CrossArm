@@ -1,0 +1,3 @@
+nSum 10.5
+nCount 11
+nBack 4.5

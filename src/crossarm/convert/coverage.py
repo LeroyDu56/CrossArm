@@ -39,6 +39,7 @@ _MESSAGE_CALLS = frozenset({
     "UIALPHAENTRY", "UILISTVIEW", "UISHOW", "ERRWRITE", "ERRLOG",
 })  # fmt: skip
 _FLOW_CALLS = frozenset({"STOP", "EXIT", "EXITCYCLE", "BREAK"})
+_DATA_CALLS = frozenset({"INCR", "DECR", "ADD", "CLEAR"})
 _ERROR_KINDS = frozenset({"ERROR_HANDLER", "UNDO_HANDLER", "BACKWARD_HANDLER", "RAISE", "RETRY", "TRYNEXT"})
 
 
@@ -70,6 +71,8 @@ def area(stmt: n.Stmt, routines: set[str], move_routines: set[str]) -> str | Non
                 return MESSAGES
             if key in _FLOW_CALLS:
                 return FLOW
+            if key in _DATA_CALLS:
+                return DATA
             return CALLS if key in routines else OTHER
     return OTHER
 

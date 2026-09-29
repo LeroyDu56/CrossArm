@@ -20,9 +20,10 @@ change to CrossArm is checked on a controller and not only on text:
     banks        the same moves with frames past the limit loaded from registers: the same flanges
     compute      frames and points the programs compute, worked out by CrossArm: the flanges RobotStudio computes
     select       TEST/CASE converted to SELECT: the totals RobotStudio computes
-    points       routines given their points, arrays of points: the poses of the moves written out
+    points       routines given their points (Offs, RelTool), arrays of points: the poses of the moves written out
     arrays       arrays of numbers indexed at run time: the totals RobotStudio computes
     interrupts   ISignalDO, IPers, ISleep/IWatch/IDelete as condition monitors: the TRAP calls RAPID makes
+    params       records passed as their components, nums passed by reference, Incr/Add: the totals RobotStudio computes
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
 
@@ -50,6 +51,7 @@ import make_compute_probe
 import make_condition_probe
 import make_interrupt_probe
 import make_io_probe
+import make_param_probe
 import make_point_probe
 import make_select_probe
 import make_setup_probe
@@ -72,6 +74,7 @@ ABB_PROBES = [
     (PROBES / "compute" / "ComputeProbe.mod", "Probe", "computeprobe.txt", make_compute_probe.ABB_RESULT),
     (PROBES / "select" / "SelectProbe.mod", "Probe", "selectprobe.txt", make_select_probe.ABB_RESULT),
     (PROBES / "arrays" / "ArrayProbe.mod", "Probe", "arrayprobe.txt", make_array_probe.ABB_RESULT),
+    (PROBES / "params" / "ParamProbe.mod", "Probe", "paramprobe.txt", make_param_probe.ABB_RESULT),
 ]
 REFUSED = {"NEG_FOR_B"}  # the negative-constant probe: the one form the controller does not load
 
@@ -257,6 +260,12 @@ def probe_interrupts() -> str:
                 lambda: registers_check(make_interrupt_probe.EXPECTED, numbers))  # fmt: skip
 
 
+def probe_params() -> str:
+    numbers = make_param_probe.registers(make_param_probe.conversion())
+    return _run("params", make_param_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_param_probe.EXPECTED, numbers))  # fmt: skip
+
+
 LOADED: list[str] = []
 
 
@@ -285,7 +294,7 @@ def main() -> int:
     probes = {"negative": probe_negative, "args": probe_args, "conditions": probe_conditions, "waits": probe_waits,
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
-              "interrupts": probe_interrupts,
+              "interrupts": probe_interrupts, "params": probe_params,
               "abb": probe_abb}  # fmt: skip
     chosen = sys.argv[1:] or list(probes)
     failed = 0

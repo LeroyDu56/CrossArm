@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 
 from crossarm.convert.arguments import Signature, signature
 from crossarm.convert.compute import (
+    LAYOUTS,
     Computer,
     Effects,
     MeasuredAtRunTime,
@@ -76,7 +77,7 @@ from crossarm.fanuc.tp import (
     Position,
     Program,
 )
-from crossarm.geometry import Pose, matrix_to_quat, wpr_to_matrix
+from crossarm.geometry import Pose, mat_mul, matrix_to_quat, matrix_to_wpr, rot_x, rot_y, rot_z, wpr_to_matrix
 from crossarm.rapid import nodes as n
 from crossarm.rapid.eio import Signal
 from crossarm.rapid.to_pseudo import format_expr
@@ -301,6 +302,7 @@ _INTERRUPT_GAPS = {
     "IENABLE": "RAPID holds the interrupts back while disabled; a condition monitor would lose them",
     "IDISABLE": "RAPID holds the interrupts back while disabled; a condition monitor would lose them",
 }
+_CHANGING = frozenset({"INCR", "DECR", "ADD", "CLEAR"})  # written as the assignment they make: _as_assignment
 NO_GROUP = "*,*,*,*,*"  # DEFAULT_GROUP of a program that moves no robot: a TRAP, a condition program
 STRING_ARGUMENT_MAX = 38  # characters of a string CALL argument (ROBOGUIDE: 38 loads, 39 is refused)
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
@@ -683,8 +685,9 @@ class Converter:
         self.program_names: dict[str, str] = {}  # routine (upper) -> TP name, set by convert()
         self.move_routines = find_move_routines(modules)
         # PROCs with parameters: their AR[n] layout, or why they cannot be converted.
+        records = {name: fields for name, fields in self.computer.layouts.layouts.items() if name not in LAYOUTS}
         self.signatures: dict[str, Signature | str] = {
-            r.name.upper(): signature(r) for m in modules for r in m.routines if r.kind == "PROC" and r.params
+            r.name.upper(): signature(r, records) for m in modules for r in m.routines if r.kind == "PROC" and r.params
         }
         self.procs = {r.name.upper(): r for m in modules for r in m.routines if r.kind == "PROC"}
         self.move_routine_calls: Counter[str] = Counter()
@@ -942,9 +945,10 @@ class Converter:
                 try:
                     if isinstance(line, Instruction) and ("{PA:" in line.text or "{PB:" in line.text):
                         lines[i] = Instruction(placeholder.sub(number, line.text), line.pad)
-                    elif isinstance(line, Motion) and "{P" in line.target + (line.via or ""):
+                    elif isinstance(line, Motion) and "{P" in line.target + (line.via or "") + line.options:
                         via = placeholder.sub(number, line.via) if line.via else line.via
-                        lines[i] = dataclasses.replace(line, target=placeholder.sub(number, line.target), via=via)
+                        lines[i] = dataclasses.replace(line, target=placeholder.sub(number, line.target), via=via,
+                                                       options=placeholder.sub(number, line.options))  # fmt: skip
                 except LookupError as missing:
                     lines[i] = Instruction(("!" + ascii_text(f"TODO no PR left for {missing}")[:REMARK_MAX]).rstrip())
                     what = self.point_keys.get(str(missing.args[0])) or self.arrays[str(missing.args[0])][0]
@@ -1831,7 +1835,10 @@ class _RoutineTranslator:
             self.last_tool = m.tool
         motion = "J" if m.kind in (n.MoveKind.J, n.MoveKind.ABSJ) else m.kind.value
         evaluator = self.c.evaluator
-        passed = self.passed_point(m.to_point, "CROSSARM.POINT") if m.kind is not n.MoveKind.ABSJ else None
+        to_point, options = m.to_point, ""
+        if motion in ("J", "L") and m.kind is not n.MoveKind.ABSJ and (offset := self.tool_offset(m.to_point)):
+            to_point, options = offset
+        passed = self.passed_point(to_point, "CROSSARM.POINT") if m.kind is not n.MoveKind.ABSJ else None
         passed_via = self.passed_point(m.via_point, "CROSSARM.VIA") if m.via_point is not None else None
         if passed and passed_via and passed.startswith("PR[R[") and passed_via.startswith("PR[R["):
             raise Untranslatable("MoveC through two elements of arrays indexed at run time: one index register"
@@ -1858,7 +1865,51 @@ class _RoutineTranslator:
                     self.emit(f"{kind}[{number}]=PR[{bank}]")
                 self.emit(f"{kind}_NUM={number}")
         self.active_uf, self.active_ut = uf, ut
-        self.lines.append(Motion(motion, target, speed, termination, via))
+        self.lines.append(Motion(motion, target, speed, termination, via, options))
+
+    def tool_offset(self, expr: n.Expr) -> tuple[n.Expr, str] | None:
+        """RelTool() of a point given at run time (a routine's point parameter, an array element): the point
+        moved to as it is, with `Tool_Offset,PR[m]`, the displacement and rotations in the tool frame, as
+        RelTool makes them (TP frame probe: Tool_Offset composes in the tool frame, rotations included). PR[m]
+        is a copy of the point with its six components set: a component of a register never set is refused.
+        None for anything else: RelTool() of a point known at conversion time is worked out then."""
+        if not (isinstance(expr, n.FuncCall) and expr.name.upper() == "RELTOOL"):
+            return None
+        positional = [a.value for a in expr.args if a.name is None]
+        options = {(a.name or "").upper(): a.value for a in expr.args if a.name is not None}
+        if len(positional) != 4 or None in positional or not set(options) <= {"RX", "RY", "RZ"}:
+            return None
+        source = self.point_source(positional[0])  # type: ignore[arg-type]
+        if source is None:
+            return None
+        try:
+            turns = {axis: self.c.evaluator.constant_number(value) for axis, value in options.items() if value}
+        except Unresolvable as exc:
+            raise Untranslatable(f"RelTool rotation only known at run time ({exc}): TP cannot compute the W, P, R"
+                                 " it makes", Blocker.RUNTIME_POSITION) from exc  # fmt: skip
+        # RAPID turns about the tool's own axes, x then y then z: R.Rx.Ry.Rz (geometry.Pose.rel_tool)
+        turned = mat_mul(rot_x(turns.get("RX", 0.0)), mat_mul(rot_y(turns.get("RY", 0.0)), rot_z(turns.get("RZ", 0.0))))
+        wpr = [round(angle, 3) + 0.0 for angle in matrix_to_wpr(turned)]
+        steps = []
+        for value in positional[1:]:
+            step, negated = self.displacement(value)  # type: ignore[arg-type]
+            steps.append(f"{step}*(-1)" if negated else step)
+        steps += [operand(fmt_number(angle)) for angle in wpr]
+        register = self.c.point_register("CROSSARM.TOOLOFFSET")
+        self.emit(f"{register}={source}")
+        for axis, step in enumerate(steps, start=1):
+            self.emit(f"{register[:-1]},{axis}]={step}")
+        return positional[0], f"Tool_Offset,{register}"  # type: ignore[return-value]
+
+    def displacement(self, value: n.Expr) -> tuple[str, bool]:
+        """A component of an Offs() or RelTool() displacement, and whether it is to be negated: `-h` is
+        (AR[2], True), a register TP cannot negate in place; `-50` is ((-50), False)."""
+        if isinstance(value, n.UnaryOp) and value.op == "-":
+            try:
+                return operand(self.numeric(value)), False
+            except Untranslatable:
+                return operand(self.numeric(value.operand)), True
+        return operand(self.numeric(value)), False
 
     def passed_point(self, expr: n.Expr, scratch: str, into: str | None = None) -> str | None:
         """The position register a move goes to when its point is not a P[] of the program: a robtarget parameter
@@ -1873,17 +1924,18 @@ class _RoutineTranslator:
         if source is None:
             points = {s.key for s in self.args.slots if s.kind == "robtarget"} if self.args else set()
             if {word.upper() for word in re.findall(r"[A-Za-z_]\w*", format_expr(expr))} & points:
-                raise Untranslatable(f"'{format_expr(expr)}': a point passed to the routine is moved to as it is or"
-                                     " with Offs() here", Blocker.RUNTIME_POSITION)  # fmt: skip
+                raise Untranslatable(f"'{format_expr(expr)}': a point passed to the routine is moved to as it is,"
+                                     " with Offs() or RelTool(), and passed on as it is or with Offs()",
+                                     Blocker.RUNTIME_POSITION)  # fmt: skip
             return None
         if offsets is None and into is None:
             return source
-        steps = [operand(self.numeric(value)) for value in offsets or ()]  # type: ignore[arg-type]
+        steps = [self.displacement(value) for value in offsets or ()]  # type: ignore[arg-type]
         copy = into or self.c.point_register(scratch)
         self.emit(f"{copy}={source}")
-        for axis, offset in enumerate(steps, start=1):
-            if offset != "0":
-                self.emit(f"{copy[:-1]},{axis}]={copy[:-1]},{axis}]+{offset}")
+        for axis, (offset, negated) in enumerate(steps, start=1):
+            if offset != "0":  # one operator: `+` and `*` in one calculation are refused (ASBN-040)
+                self.emit(f"{copy[:-1]},{axis}]={copy[:-1]},{axis}]{'-' if negated else '+'}{offset}")
         return copy
 
     def point_source(self, expr: n.Expr) -> str | None:
@@ -2234,6 +2286,8 @@ class _RoutineTranslator:
             self.analog(call, positional[0], positional[1])
         elif name in ("CLKRESET", "CLKSTART", "CLKSTOP") and len(positional) == 1 and not options:
             self.emit(f"{self.clock(positional[0])}={name[3:]}")
+        elif name in _CHANGING and not options and len(positional) == (2 if name == "ADD" else 1):
+            self.assign(_as_assignment(call, name, positional))
         elif name in _MOTION_SETTINGS:
             self.motion_setting(call, name, positional, options)
         elif name in ("ISIGNALDI", "ISIGNALDO", "IPERS"):
@@ -2428,12 +2482,23 @@ class _RoutineTranslator:
         unknown = set(given) - {s.key for s in layout.slots if s.kind == "switch"}
         if unknown:
             raise Untranslatable(f"{call.name} has no switch \\{min(unknown)}", Blocker.CALL_ARGS)
-        values, points = [], []
+        values, points, back = [], [], []
+        name = self.c.program_names[call.name.upper()]
+        returned = {s.key for s in layout.returned()}
         for a, slot in zip(positional, required, strict=True):
             if slot.kind == "robtarget":
                 points.append(self.point_argument(a.value, slot, layout, call.span.line))
+            elif slot.kind == "record":
+                if a.value is None:
+                    raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
+                for field in slot.fields:
+                    component = n.Component(a.value.span, a.value, field.name.split(".", 1)[1])
+                    values.append(self.argument(component, field))
             else:
                 values.append(self.argument(a.value, slot))
+                if slot.key in returned:  # INOUT, VAR, PERS the routine changes: read back after the CALL
+                    copy = self.c.written_register(slot.name, key=f"{name}.{slot.name}")
+                    back.append(f"{self.returned_to(a.value, slot)}={copy}")
         for slot in layout.slots[len(required):]:
             arg = given.get(slot.key)
             if arg is None:
@@ -2447,15 +2512,33 @@ class _RoutineTranslator:
                 values.append("1")
         for text in filter(None, points):
             self.emit(text)
-        name = self.c.program_names[call.name.upper()]
         self.emit(f"CALL {name}({','.join(values)})" if values else f"CALL {name}")
+        for text in back:
+            self.emit(text)
+
+    def returned_to(self, expr: n.Expr | None, slot) -> str:
+        """The register a num passed by reference is read back into: the caller's data, or its own copy."""
+        if isinstance(expr, n.Name):
+            key = expr.name.upper()
+            if key in self.copies:
+                return self.copies[key]
+            decl = self.c.symbols.get(expr.name)
+            if key not in self.c.parameters and decl is not None and decl.type_name.lower() == "num" \
+                    and decl.storage != "CONST" and not decl.dims:
+                return self.c.written_register(expr.name)
+        raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' is passed by reference"
+                             " and changed: it must be num data of the caller", Blocker.CALL_ARGS)  # fmt: skip
 
     def argument(self, expr: n.Expr | None, slot) -> str:
         """One TP CALL argument: a constant, a register, or this routine's own AR[n]."""
         if expr is None:
             raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
+        if isinstance(expr, n.Name) and expr.name.upper() in self.copies:  # a parameter it changes: its copy
+            return self.copies[expr.name.upper()]
         if isinstance(expr, n.Name) and self.args and self.args.register(expr.name):
             return self.args.register(expr.name)  # type: ignore[return-value]
+        if (field := self.component(expr)) is not None:  # a component of this routine's own record parameter
+            return self.args.register(field)  # type: ignore[union-attr, return-value]
         if slot.kind == "string":
             return self.text_argument(expr, slot)
         if slot.kind == "bool":
@@ -2464,6 +2547,13 @@ class _RoutineTranslator:
             decl = self.c.symbols.get(expr.name) if isinstance(expr, n.Name) else None
             if decl is not None and decl.storage == "CONST" and isinstance(decl.init, n.Bool):
                 return "1" if decl.init.value else "0"
+            if isinstance(expr, n.Component):  # a record's bool no program changes: pdHousing.chamfer
+                try:
+                    found = self.c.computer.value(expr).value
+                except Unresolvable:
+                    found = None
+                if isinstance(found, bool):
+                    return "1" if found else "0"
             raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' must be TRUE, FALSE or a bool "
                                  "argument (a flag cannot be passed)", Blocker.CALL_ARGS)  # fmt: skip
         try:
@@ -2563,6 +2653,13 @@ class _RoutineTranslator:
                 decl = self.c.symbols.get(name)
                 if decl is not None and decl.storage == "CONST" and isinstance(decl.init, n.String):
                     return decl.init.value, []
+            case n.Component():  # a record's text no program changes: pdHousing.name
+                try:
+                    found = self.c.computer.value(expr)
+                except Unresolvable:
+                    found = None
+                if found is not None and isinstance(found.value, str):
+                    return found.value, []
         return "", [format_expr(expr)]
 
     def group(self, expr: n.Expr, kind: str, line: int) -> str:
@@ -2860,10 +2957,29 @@ class _RoutineTranslator:
             eio = self.c.eio.get(key)
             if decl is None and (key in self.c.config.group_inputs or (eio is not None and eio.signal_type == "GI")):
                 return self.group(expr, "GI", expr.span.line)
+        if (field := self.component(expr)) and self.args.kind(field) == "num":  # type: ignore[union-attr]
+            return self.args.register(field)  # type: ignore[union-attr, return-value]
         try:
             return fmt_number(self.c.evaluator.constant_number(expr))
         except Unresolvable as exc:
+            if isinstance(expr, n.Component):  # a record's number no program changes: pdHousing.passes
+                try:
+                    found = self.c.computer.value(expr).value
+                except Unresolvable:
+                    found = None
+                if isinstance(found, int | float) and not isinstance(found, bool):
+                    return fmt_number(float(found))
             raise Untranslatable(f"'{format_expr(expr)}' is not a simple numeric value ({exc})", Blocker.VALUE) from exc
+
+    def component(self, expr: n.Expr) -> str | None:
+        """'PART.PASSES' for `part.passes` when `part` is a record parameter of this routine, passed as its
+        components (crossarm.convert.arguments); None otherwise."""
+        if not (isinstance(expr, n.Component) and isinstance(expr.base, n.Name) and self.args is not None):
+            return None
+        if self.args.kind(expr.base.name) != "record":
+            return None
+        key = f"{expr.base.name}.{expr.field}".upper()
+        return key if self.args.kind(key) else None
 
     # -- control flow -----------------------------------------------------------------
 
@@ -3100,6 +3216,8 @@ class _RoutineTranslator:
                 return f"{decimal(self.numeric(left))}{op}{decimal(self.numeric(right))}"
             case n.Name(name=name) if self.args and self.args.kind(name) in ("bool", "switch"):
                 return f"{self.args.register(name)}={0 if negate else 1}"
+            case n.Component() if (field := self.component(expr)) and self.args.kind(field) == "bool":  # type: ignore[union-attr]
+                return f"{self.args.register(field)}={0 if negate else 1}"  # type: ignore[union-attr]
             case n.FuncCall(name=fn, args=(n.Arg(value=n.Name(name=name), name=None),)) if (
                 fn.upper() == "PRESENT" and self.args and self.args.kind(name) == "switch"
             ):
@@ -3111,6 +3229,15 @@ class _RoutineTranslator:
                 if signal is not None:
                     return f"{signal}={'OFF' if negate else 'ON'}"
         raise Untranslatable(f"condition not convertible: {format_expr(expr)}", Blocker.CONDITION)
+
+
+def _as_assignment(call: n.ProcCall, name: str, positional: list[n.Expr]) -> n.Assign:
+    """Incr n -> n:=n+1, Decr n -> n:=n-1, Add n,v -> n:=n+v, Clear n -> n:=0."""
+    target, span = positional[0], call.span
+    one = n.Number(span, 1, "1")
+    value = {"INCR": n.BinaryOp(span, "+", target, one), "DECR": n.BinaryOp(span, "-", target, one),
+             "ADD": n.BinaryOp(span, "+", target, positional[-1]), "CLEAR": n.Number(span, 0, "0")}[name]  # fmt: skip
+    return n.Assign(span, target, value)
 
 
 def _consecutive(free: list[int], count: int) -> list[int]:

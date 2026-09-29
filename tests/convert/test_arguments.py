@@ -58,7 +58,7 @@ def test_parameters_map_to_ar_in_order_switches_last():
 
 
 @pytest.mark.parametrize(("params", "reason"), [
-    ("INOUT num a", "parameter a is passed by reference (INOUT)"),
+    ("INOUT bool on", "bool parameter on is passed by reference (INOUT): only a num is copied back"),
     ("tooldata t", "tooldata parameter t"),
     ("\\num speed", "optional num parameter speed"),
     ("num list{*}", "parameter list is an array"),
@@ -186,7 +186,7 @@ def test_a_point_parameter_is_passed_in_a_position_register():
 
 
 def test_a_point_only_known_at_run_time_or_turned_stays_todo():
-    procs = PICK + "\nPROC Turned(robtarget p)\n  MoveL RelTool(p,0,0,10),v100,fine,tGrip;\nENDPROC"
+    procs = PICK + "\nPROC Turned(robtarget p)\n  PickAt RelTool(p,0,0,10),1;\nENDPROC"
     body = "PickAt pSeen{nRow},1;\nTurned pA;"
     source = f"MODULE M\n{POINTS}\nPROC main()\n{body}\nENDPROC\n{procs}\nENDMODULE\n"
     result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
@@ -194,7 +194,24 @@ def test_a_point_only_known_at_run_time_or_turned_stays_todo():
     assert {category for category, _ in found} == {Blocker.RUNTIME_POSITION}
     assert any("pSeen{nRow}: an array of points indexed at run time is kept in registers when no program changes"
                " it; pSeen is a VAR" in message for _, message in found)  # fmt: skip
-    assert any("moved to as it is or with Offs()" in message for _, message in found)
+    assert any("passed on as it is or with Offs()" in message for _, message in found)  # TP has no pose product
+
+
+def test_reltool_of_a_point_parameter_is_a_tool_offset():
+    """A copy of the point with the displacement and the turns in its six components, the move made to the point
+    with Tool_Offset (composed in the tool frame, TP frame probe). A negated argument is multiplied by -1: `-h`."""
+    procs = ("PROC Turned(robtarget p,num h)\n  MoveL RelTool(p,0,0,-h),v100,fine,tGrip;\n"
+             "  MoveJ RelTool(p,10,0,0\\Rz:=90),v1000,fine,tGrip;\n  MoveL Offs(p,0,0,-h),v100,fine,tGrip;\nENDPROC")
+    source = f"MODULE M\n{POINTS}\nPROC main()\n  Turned pA,40;\nENDPROC\n{procs}\nENDMODULE\n"
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    assert not [n for n in result.notes if n.kind == "TODO"]
+    lines = next(p for p in result.programs if p.program.name == "TURNED").program.lines[1:]
+    text = [line.text if isinstance(line, Instruction) else f"{line.kind} {line.target} {line.options}" for line in lines]
+    assert text[:7] == ["PR[98]=PR[99]", "PR[98,1]=0", "PR[98,2]=0", "PR[98,3]=AR[1]*(-1)", "PR[98,4]=0",
+                        "PR[98,5]=0", "PR[98,6]=0"]  # fmt: skip
+    assert "L PR[99] Tool_Offset,PR[98]" in text and "J PR[99] Tool_Offset,PR[98]" in text
+    assert "PR[98,6]=90" in text
+    assert "PR[97,3]=PR[97,3]-AR[1]" in text  # Offs: one operator, `+` and `*` together are refused
 
 
 def test_the_mapping_file_pins_the_register_of_a_point(tmp_path):
@@ -207,3 +224,71 @@ def test_the_mapping_file_pins_the_register_of_a_point(tmp_path):
     assert main.lines[1].text == "PR[40]=P[1]"
     assert [(a.rapid_name, a.number, a.fixed) for a in result.point_registers] == [
         ("PickAt.p", 40, True), ("CROSSARM.POINT", 99, False)]
+
+
+RECORD = ("RECORD partdata\n  string name;\n  num passes;\n  num depth;\n  bool chamfer;\nENDRECORD\n"
+          'PERS partdata pdHousing:=["HOUSING-120",2,0.8,TRUE];\nVAR num nDone;VAR num nDepth;\n')  # fmt: skip
+DEBURR = """PROC Deburr(partdata part)
+  FOR i FROM 1 TO part.passes DO
+    nDepth:=part.depth;
+  ENDFOR
+  IF part.chamfer THEN
+    nDone:=nDone+1;
+  ENDIF
+ENDPROC"""
+
+
+def test_a_record_is_passed_as_the_components_the_routine_reads():
+    """In the record's order, each an argument of its own; a PERS no program changes gives its saved values."""
+    assert program("Deburr pdHousing;", RECORD, DEBURR, "MAIN") == ["CALL DEBURR(2,.8,1)"]
+    assert program("Deburr pdHousing;", RECORD, DEBURR, "DEBURR") == [
+        "FOR R[1:i]=1 TO AR[1]", "R[2:nDepth]=AR[2]", "ENDFOR",
+        "IF (AR[3]=1) THEN", "R[3:nDone]=R[3:nDone]+1", "ENDIF",
+    ]  # fmt: skip
+
+
+def test_a_record_s_text_goes_in_the_call():
+    procs = "PROC Show(partdata part)\n  Say part.name;\nENDPROC\nPROC Say(string s)\nENDPROC"
+    assert program("Show pdHousing;", RECORD, procs, "MAIN") == ["CALL SHOW('HOUSING-120')"]
+    assert program("Show pdHousing;", RECORD, procs, "SHOW") == ["CALL SAY(AR[1])"]
+
+
+def test_a_record_passed_on_whole_is_not_converted():
+    procs = DEBURR + "\nPROC Twice(partdata part)\n  Deburr part;\nENDPROC"
+    result = run("Twice pdHousing;", RECORD, extra_procs=procs)
+    assert "partdata parameter part is used whole" in todos(result)[0]
+
+
+def test_a_record_used_whole_is_not_passed():
+    routine = parse_module(f"MODULE M\n{RECORD}PROC p(partdata part)\n  pdHousing:=part;\nENDPROC\nENDMODULE")
+    assert signature(routine.routines[0], {"partdata": (("name", "string"), ("passes", "num"), ("depth", "num"),
+                                                        ("chamfer", "bool"))}) == (
+        "partdata parameter part is used whole: only its components can be passed as TP arguments")  # fmt: skip
+
+
+INOUT = "PROC Count(INOUT num n,num d)\n  n:=n+d;\nENDPROC\nPROC Peek(INOUT num n)\n  nA:=n;\nENDPROC"
+
+
+def test_a_num_passed_by_reference_is_read_back_after_the_call():
+    """The routine works on a register of its own; the caller reads it into its data after the CALL."""
+    assert program("Count nSum,2;\nPeek nSum;", DATA, INOUT, "MAIN") == [
+        "CALL COUNT(R[1:nSum],2)", "R[1:nSum]=R[2:n]", "CALL PEEK(R[1:nSum])"]  # Peek does not change it
+    assert program("Count nSum,2;", DATA, INOUT, "COUNT") == ["R[2:n]=AR[1]", "R[2:n]=R[2:n]+AR[2]"]
+
+
+def test_incr_on_a_parameter_passed_by_reference_is_read_back_too():
+    procs = "PROC Bump(INOUT num n)\n  Incr n;\nENDPROC"
+    lines = program("Bump nSum;", DATA, procs, "MAIN")
+    assert lines == ["CALL BUMP(R[1:nSum])", "R[1:nSum]=R[2:n]"]
+
+
+def test_a_constant_passed_by_reference_and_changed_stays_todo():
+    result = run("Count cFive,2;", DATA, extra_procs=INOUT)
+    assert "is passed by reference and changed: it must be num data of the caller" in todos(result)[0]
+
+
+def test_incr_decr_add_and_clear_are_the_assignments_they_make():
+    assert tp_lines(run("Incr nSum;\nDecr nA;\nAdd nSum,-2;\nAdd nSum,nIn;\nClear nA;", DATA)) == [
+        "R[1:nSum]=R[1:nSum]+1", "R[2:nA]=R[2:nA]-1", "R[1:nSum]=R[1:nSum]+(-2)", "R[1:nSum]=R[1:nSum]+R[3]",
+        "R[2:nA]=0",
+    ]  # fmt: skip

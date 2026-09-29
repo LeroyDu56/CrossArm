@@ -24,10 +24,10 @@ CONTROL_CODE	= 00000000 00000000;
    3:  UTOOL[1]=PR[100] ;
    4:  PR[100]=P[2]    ;
    5:  UFRAME[1]=PR[100] ;
-   6:  PR[93]=P[3]    ;
-   7:  PR[94]=P[4]    ;
-   8:  PR[95]=P[5]    ;
-   9:  PR[96]=P[6]    ;
+   6:  PR[90]=P[3]    ;
+   7:  PR[91]=P[4]    ;
+   8:  PR[92]=P[5]    ;
+   9:  PR[93]=P[6]    ;
   10:  PR[49]=P[7]    ;
   11:  UTOOL[9]=PR[49] ;
   12:  UFRAME_NUM=0 ;
@@ -35,7 +35,7 @@ CONTROL_CODE	= 00000000 00000000;
   14:J P[8] 10% FINE    ;
   15:  R[90]=1    ;
   16:  CALL POINTPROBE    ;
-  17:  R[90]=31    ;
+  17:  R[90]=46    ;
   18:  CALL POINTDIRECT    ;
 /POS
 P[1]{

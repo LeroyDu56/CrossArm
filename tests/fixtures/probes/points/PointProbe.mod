@@ -10,10 +10,13 @@ MODULE PointProbe
         PickAt pA;
         PickAt Offs(pB,0,50,0);
         Twice pB;
+        Turn pA;
+        Lift pB,25;
         FOR r FROM 1 TO 2 DO
             FOR c FROM 1 TO 2 DO
                 MoveL pGrid{r,c},v500,fine,tProbe\WObj:=wProbe;
                 PickAt Offs(pGrid{r,c},0,0,20);
+                MoveL RelTool(pGrid{r,c},5,0,-15\Rz:=20),v500,fine,tProbe\WObj:=wProbe;
             ENDFOR
         ENDFOR
     ENDPROC
@@ -29,6 +32,17 @@ MODULE PointProbe
         PickAt Offs(pTwice,30,0,0);
     ENDPROC
 
+    PROC Turn(robtarget pTurn)
+        MoveL RelTool(pTurn,0,0,-30),v200,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pTurn,10,-5,-20\Rz:=30),v200,fine,tProbe\WObj:=wProbe;
+        MoveJ RelTool(pTurn,0,0,-20\Rx:=8\Ry:=-6\Rz:=15),v1000,fine,tProbe\WObj:=wProbe;
+    ENDPROC
+
+    PROC Lift(robtarget pLift,num nUp)
+        MoveL RelTool(pLift,0,0,-nUp),v200,fine,tProbe\WObj:=wProbe;
+        MoveL Offs(pLift,5,0,-nUp),v200,fine,tProbe\WObj:=wProbe;
+    ENDPROC
+
     PROC PointDirect()
         MoveJ Offs(pA,0,0,40),v1000,fine,tProbe\WObj:=wProbe;
         MoveL pA,v200,fine,tProbe\WObj:=wProbe;
@@ -42,21 +56,30 @@ MODULE PointProbe
         MoveJ Offs(Offs(pB,30,0,0),0,0,40),v1000,fine,tProbe\WObj:=wProbe;
         MoveL Offs(pB,30,0,0),v200,fine,tProbe\WObj:=wProbe;
         MoveL Offs(Offs(pB,30,0,0),10,-20,40),v1000,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pA,0,0,-30),v200,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pA,10,-5,-20\Rz:=30),v200,fine,tProbe\WObj:=wProbe;
+        MoveJ RelTool(pA,0,0,-20\Rx:=8\Ry:=-6\Rz:=15),v1000,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pB,0,0,-25),v200,fine,tProbe\WObj:=wProbe;
+        MoveL Offs(pB,5,0,-25),v200,fine,tProbe\WObj:=wProbe;
         MoveL pGrid{1,1},v500,fine,tProbe\WObj:=wProbe;
         MoveJ Offs(Offs(pGrid{1,1},0,0,20),0,0,40),v1000,fine,tProbe\WObj:=wProbe;
         MoveL Offs(pGrid{1,1},0,0,20),v200,fine,tProbe\WObj:=wProbe;
         MoveL Offs(Offs(pGrid{1,1},0,0,20),10,-20,40),v1000,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pGrid{1,1},5,0,-15\Rz:=20),v500,fine,tProbe\WObj:=wProbe;
         MoveL pGrid{1,2},v500,fine,tProbe\WObj:=wProbe;
         MoveJ Offs(Offs(pGrid{1,2},0,0,20),0,0,40),v1000,fine,tProbe\WObj:=wProbe;
         MoveL Offs(pGrid{1,2},0,0,20),v200,fine,tProbe\WObj:=wProbe;
         MoveL Offs(Offs(pGrid{1,2},0,0,20),10,-20,40),v1000,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pGrid{1,2},5,0,-15\Rz:=20),v500,fine,tProbe\WObj:=wProbe;
         MoveL pGrid{2,1},v500,fine,tProbe\WObj:=wProbe;
         MoveJ Offs(Offs(pGrid{2,1},0,0,20),0,0,40),v1000,fine,tProbe\WObj:=wProbe;
         MoveL Offs(pGrid{2,1},0,0,20),v200,fine,tProbe\WObj:=wProbe;
         MoveL Offs(Offs(pGrid{2,1},0,0,20),10,-20,40),v1000,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pGrid{2,1},5,0,-15\Rz:=20),v500,fine,tProbe\WObj:=wProbe;
         MoveL pGrid{2,2},v500,fine,tProbe\WObj:=wProbe;
         MoveJ Offs(Offs(pGrid{2,2},0,0,20),0,0,40),v1000,fine,tProbe\WObj:=wProbe;
         MoveL Offs(pGrid{2,2},0,0,20),v200,fine,tProbe\WObj:=wProbe;
         MoveL Offs(Offs(pGrid{2,2},0,0,20),10,-20,40),v1000,fine,tProbe\WObj:=wProbe;
+        MoveL RelTool(pGrid{2,2},5,0,-15\Rz:=20),v500,fine,tProbe\WObj:=wProbe;
     ENDPROC
 ENDMODULE

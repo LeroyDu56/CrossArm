@@ -11,8 +11,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 
 | What | Result |
 |---|---|
-| Every program converted from the test corpus, loaded on a FANUC controller | 127 of 127 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (201 forms) |
+| Every program converted from the test corpus, loaded on a FANUC controller | 128 of 128 |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (203 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -20,7 +20,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Frames and points the programs compute, worked out by CrossArm, run on ROBOGUIDE | within 0.005 mm and 0.001° of RobotStudio |
 | `TEST` / `CASE` converted to `SELECT`, run on both controllers | the branches RAPID takes |
 | Pulses, inverted outputs, clocks, payloads, converted and run on ROBOGUIDE | what RAPID does, the clock within 50 ms |
-| Points passed to routines or read from arrays indexed at run time, run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
+| Points passed to routines or read from arrays indexed at run time, `Offs()` and `RelTool()` of them, run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
+| Records and nums passed by reference, run on both controllers | the values RAPID computes |
 | Arrays of numbers indexed at run time, run on both controllers | the values RAPID reads |
 | Interrupts converted to condition monitors, run on ROBOGUIDE | the TRAP calls RAPID makes |
 
@@ -44,6 +45,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 18. [Routines given their points, and arrays of points, run](#18-routines-given-their-points-and-arrays-of-points-run)
 19. [Arrays of numbers, run](#19-arrays-of-numbers-run)
 20. [Interrupts, run](#20-interrupts-run)
+21. [Records and nums passed by reference, run](#21-records-and-nums-passed-by-reference-run)
 
 ## 1. The test corpus
 
@@ -194,8 +196,8 @@ not `<0.5`, in conditions.
 
 ## 10. Every program of the test corpus, loaded
 
-The 127 programs converted from the three RobotWare backups of the test corpus were loaded on
-ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 127 load. Earlier
+The 128 programs converted from the three RobotWare backups of the test corpus were loaded on
+ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 128 load. Earlier
 conversions of larger backups found two causes of refusal, both fixed: a group output set from a
 group input (`GO[4]=GI[3]`), and selecting more tool or user frames than the controller holds. The
 frames past the limit are loaded from position registers before use;
@@ -204,7 +206,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 201 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 203 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
@@ -425,7 +427,7 @@ moves the point 40 mm along the frame's z, as `Offs()` does. A register can also
 `L PR[R[5]]`, `J PR[R[5]]` and `PR[63]=PR[R[5]]` go to, and copy, the register whose number `R[5]` holds, and
 the index can be worked out beforehand (`R[5]=R[1]*2`, `R[5]=R[5]+R[2]`, `R[5]=R[5]+76`).
 
-**End to end.** [tools/make_point_probe.py](../tools/make_point_probe.py) converts twenty-eight moves
+**End to end.** [tools/make_point_probe.py](../tools/make_point_probe.py) converts thirty-seven moves
 twice: through routines that take a robtarget (one approaches its point with `Offs()`, moves to it,
 leaves with another `Offs()`; another passes its own point on, as it is and with `Offs()`) and through a
 CONST 2 x 2 array walked in two FOR loops (each element moved to, and handed with `Offs()` to the first
@@ -434,7 +436,7 @@ every move:
 
 | Comparison | Worst gap |
 |---|---|
-| Moves through routines and arrays vs the moves written out, over 28 moves | **0.000 mm, 0.000°** |
+| Moves through routines and arrays vs the moves written out, over 37 moves | **0.000 mm, 0.000°** |
 
 The poses are the RAPID values themselves (the point 40 mm above, the retract offset by 10, -20 and
 40 mm), the array's elements row after row, as the loops walk them. The results are in [tests/fixtures/probes/points/results](../tests/fixtures/probes/points/results).
@@ -501,3 +503,27 @@ the counts RAPID gives are worked out by hand, the virtual ABB controller having
 On the test corpus, the palletizing cell's two interrupts on inputs convert; the one on a timer
 (`ITimer`) and the assembly cell's, whose TRAP stops the motion (`StopMove`), stay TODO. The results
 are in [tests/fixtures/probes/interrupts/results](../tests/fixtures/probes/interrupts/results).
+
+## 21. Records and nums passed by reference, run
+
+TP passes values only: a CALL argument is read as `AR[n]` and cannot be written. A record is passed
+as the components the routine reads, each an argument of its own; a num passed by reference goes in a
+register of the routine's own, which the caller reads back after the CALL.
+[tools/make_param_probe.py](../tools/make_param_probe.py) converts a module that gives a routine two
+records of the backup's own type (a loop count, a decimal, a bool), passes a num by reference to a
+routine that adds to it and to one that passes it on and increments it, and changes the totals with
+`Incr`, `Decr`, `Add` and `Clear`. RobotStudio runs the RAPID, ROBOGUIDE the converted programs:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| `nSum` | 10.5 | 10.5 |
+| `nCount` | 11 | 11 |
+| `nBack` | 4.5 | 4.5 |
+
+Writing it found a routine passing on a parameter it had copied: it passed the value it was given,
+not its copy. It now passes the copy. The point probe ([section 18](#18-routines-given-their-points-and-arrays-of-points-run))
+gained `RelTool()` of a point given to a routine and of an array element, displaced and turned about
+one axis and about all three, and a displacement given negated: thirty-seven moves, the same poses as
+the moves written out, to the thousandth of a millimetre. Reading the programs back showed the
+controller stores a register's component, `PR[95,3]=(-30)`, with four spaces before `;`, as it does
+a whole register; CrossArm now writes it so.

@@ -20,8 +20,24 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   the robot or controls its motion (`StopMove`, `ClearPath`...), a TRAP serving several interrupts.
 - Data a TRAP changes is never taken as known where the programs read it: a point offset by a count
   the TRAP keeps is not worked out with its value at the start.
+- Routines with a parameter of a RECORD type the backup declares: the record is passed as the
+  components the routine reads, each an argument of its own (`DeburrPart pdHousing;` ->
+  `CALL DEBURRPART('HOUSING-120',2,35,.8,1)`), read as `AR[n]` where the routine reads `part.passes`.
+  A record used whole (assigned, passed on to another routine) stays TODO.
+- `num` parameters passed by reference (`INOUT`, `VAR`, `PERS`): the routine works on a register of
+  its own, which the caller reads back into its data after the CALL when the routine changes it,
+  directly, with `Incr` or the like, or through a routine it passes it on to.
+- `Incr`, `Decr`, `Add` and `Clear`, as the assignments they make (`R[2]=R[2]+1`).
+- `RelTool()` of a point given at run time, a routine's point parameter or an array element indexed at
+  run time: the move goes to the point with `Tool_Offset,PR[m]`, PR[m] a copy of the point with the
+  displacement and the turns in its six components (RAPID's turns about x, then y, then z, worked out
+  as W, P, R). A displacement given negated (`-h`) is multiplied by -1; in `Offs()` it is subtracted,
+  as `+` and `*` in one calculation are refused.
 
 ### Changes
+- Every position register assignment is written with four spaces before `;`, a component
+  (`PR[95,3]=(-30)    ;`) and a register named by another (`PR[R[90]]=LPOS    ;`) included, as the
+  controller stores them; from a frame still with one.
 - The TRAP routines converted take output, input and flag numbers too: without a mapping file, the
   numbers CrossArm gives a backup with interrupts can move. A mapping file written earlier gives
   the same numbers.

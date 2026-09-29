@@ -3,13 +3,14 @@
 
 """Generate and run the point probe: points passed to routines or read from arrays go where the moves written out go.
 
-PointProbe.mod makes the same twenty-eight moves twice. PROC PointProbe calls routines that take a robtarget:
+PointProbe.mod makes the same thirty-seven moves twice. PROC PointProbe calls routines that take a robtarget:
 PickAt approaches its point with Offs(), moves to it, leaves with another Offs(); Twice passes its own
-point on, as it is and with Offs(). PROC PointDirect makes the same moves with the points written in
-them. Then it walks a 2 x 2 array of points in two FOR loops, moving to each element and handing
-Offs() of it to PickAt; PointDirect makes those moves with the elements at fixed indices. CrossArm
+point on, as it is and with Offs(); Turn moves to it with RelTool(), displaced and turned about one
+axis and about all three; Lift moves to RelTool() and Offs() of it by a distance it is given, negated. PROC PointDirect makes the same moves with the points written in
+them. Then it walks a 2 x 2 array of points in two FOR loops, moving to each element, handing
+Offs() of it to PickAt and moving to RelTool() of it; PointDirect makes those moves with the elements at fixed indices. CrossArm
 converts both: the first passes each point in a position register (PR[k]=P[j] before the CALL, L PR[k]
-in the routine, Offs as component arithmetic on a copy) and reads the array from the registers
+in the routine, Offs as component arithmetic on a copy, RelTool as a Tool_Offset register) and reads the array from the registers
 SETUP_FRAMES fills (PR[R[n]], the index worked out from the loop registers); the second is plain moves.
 
 On ROBOGUIDE, PTPROBE sets the frames as SETUP_FRAMES does, runs both, and records the TCP after every
@@ -42,8 +43,8 @@ PROBE = ROOT / "tests" / "fixtures" / "probes" / "points"
 RESULT = PROBE / "results" / "pointprobe_roboguide.txt"
 PROGRAM = "PTPROBE"
 COUNTER = 90  # R[90]: the PR the next measurement goes in
-PASSED_PR, DIRECT_PR = 1, 31
-MOVES = 28
+PASSED_PR, DIRECT_PR = 1, 46
+MOVES = 37
 ZERO_PR = 49
 
 DOWN = "[0,1,0,0]"
@@ -63,10 +64,13 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
     "        PickAt pA;",
     "        PickAt Offs(pB,0,50,0);",
     "        Twice pB;",
+    "        Turn pA;",
+    "        Lift pB,25;",
     "        FOR r FROM 1 TO 2 DO",
     "            FOR c FROM 1 TO 2 DO",
     "                MoveL pGrid{r,c},v500,fine,tProbe\\WObj:=wProbe;",
     "                PickAt Offs(pGrid{r,c},0,0,20);",
+    "                MoveL RelTool(pGrid{r,c},5,0,-15\\Rz:=20),v500,fine,tProbe\\WObj:=wProbe;",
     "            ENDFOR",
     "        ENDFOR",
     "    ENDPROC",
@@ -82,17 +86,34 @@ MODULE = "\r\n".join([  # one RAPID line per item, CRLF like a controller
     "        PickAt Offs(pTwice,30,0,0);",
     "    ENDPROC",
     "",
+    "    PROC Turn(robtarget pTurn)",
+    "        MoveL RelTool(pTurn,0,0,-30),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveL RelTool(pTurn,10,-5,-20\\Rz:=30),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveJ RelTool(pTurn,0,0,-20\\Rx:=8\\Ry:=-6\\Rz:=15),v1000,fine,tProbe\\WObj:=wProbe;",
+    "    ENDPROC",
+    "",
+    "    PROC Lift(robtarget pLift,num nUp)",
+    "        MoveL RelTool(pLift,0,0,-nUp),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveL Offs(pLift,5,0,-nUp),v200,fine,tProbe\\WObj:=wProbe;",
+    "    ENDPROC",
+    "",
     "    PROC PointDirect()",
     *[f"        {line}" for point in ("pA", "Offs(pB,0,50,0)", "pB", "Offs(pB,30,0,0)") for line in (
         f"MoveJ Offs({point},0,0,40),v1000,fine,tProbe\\WObj:=wProbe;",
         f"MoveL {point},v200,fine,tProbe\\WObj:=wProbe;",
         f"MoveL Offs({point},10,-20,40),v1000,fine,tProbe\\WObj:=wProbe;",
     )],
+    "        MoveL RelTool(pA,0,0,-30),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveL RelTool(pA,10,-5,-20\\Rz:=30),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveJ RelTool(pA,0,0,-20\\Rx:=8\\Ry:=-6\\Rz:=15),v1000,fine,tProbe\\WObj:=wProbe;",
+    "        MoveL RelTool(pB,0,0,-25),v200,fine,tProbe\\WObj:=wProbe;",
+    "        MoveL Offs(pB,5,0,-25),v200,fine,tProbe\\WObj:=wProbe;",
     *[f"        {line}" for r, c in ((1, 1), (1, 2), (2, 1), (2, 2)) for line in (
         f"MoveL pGrid{{{r},{c}}},v500,fine,tProbe\\WObj:=wProbe;",
         f"MoveJ Offs(Offs(pGrid{{{r},{c}}},0,0,20),0,0,40),v1000,fine,tProbe\\WObj:=wProbe;",
         f"MoveL Offs(pGrid{{{r},{c}}},0,0,20),v200,fine,tProbe\\WObj:=wProbe;",
         f"MoveL Offs(Offs(pGrid{{{r},{c}}},0,0,20),10,-20,40),v1000,fine,tProbe\\WObj:=wProbe;",
+        f"MoveL RelTool(pGrid{{{r},{c}}},5,0,-15\\Rz:=20),v500,fine,tProbe\\WObj:=wProbe;",
     )],
     "    ENDPROC",
     "ENDMODULE",
@@ -104,7 +125,7 @@ def conversion() -> tuple[ConversionResult, ConversionConfig]:
     parsed = parse_text(MODULE, path="PointProbe.mod")
     assert parsed.module is not None, parsed.diagnostics
     config = ConversionConfig(timestamp=datetime(2026, 1, 1))
-    result = convert([parsed.module], config, routines=["PointProbe", "PickAt", "Twice", "PointDirect"],
+    result = convert([parsed.module], config, routines=["PointProbe", "PickAt", "Twice", "Turn", "Lift", "PointDirect"],
                      sources={"PointProbe": MODULE})  # fmt: skip
     assert not [n for n in result.notes if n.kind == "TODO"], [n.message for n in result.notes]
     return result, config

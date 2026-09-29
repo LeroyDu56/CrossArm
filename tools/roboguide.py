@@ -189,10 +189,26 @@ def run(name: str, timeout: float = 120, resumes: int = 0) -> str:
     `resumes`: how many pauses to continue from, for a program that pauses on purpose (SETUP_FRAMES
     starts with one). A pause past those is reported: an alarm pauses a program too.
     """
+    before = _alarms()
     script = _RUN.format(host=HOST, name=name.upper(), timeout=timeout, resumes=resumes)
     result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
                             timeout=timeout + 60, check=False)  # fmt: skip
-    return (result.stdout.strip().splitlines() or [result.stderr.strip()])[-1]
+    status = (result.stdout.strip().splitlines() or [result.stderr.strip()])[-1]
+    # A run the controller refuses (another task holds the robot: INTP-105, PROG-040) ends the task at once,
+    # which reads as done: the error log says otherwise.
+    after = _alarms()
+    for line in after - before if before is not None and after is not None else ():
+        if "Run request failed" in line and f"({name.upper()}," in line:
+            return "refused: " + " ".join(line.split('"')[2:4]).strip()
+    return status
+
+
+def _alarms() -> set[str] | None:
+    """The entries of the controller's error log, each with its time; None when it cannot be read."""
+    try:
+        return {line.split('"', 1)[-1] for line in page("md/ERRALL.LS").splitlines()[2:] if line.strip()}
+    except OSError:
+        return None
 
 
 def main() -> int:

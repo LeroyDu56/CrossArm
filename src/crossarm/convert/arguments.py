@@ -7,7 +7,11 @@ TP passes up to ten untyped values to a program called with CALL NAME(a,b,...), 
 them as AR[1], AR[2]... and cannot change them. That holds the RAPID parameters passed by
 value that TP can represent: `num`, `bool` (1 / 0), `string` (text written in the call, 38
 characters at most: ROBOGUIDE refuses 39) and optional switches (1 when given, 0 otherwise).
-A routine with any other parameter — a tooldata, one passed by reference (INOUT, VAR, PERS), an
+A record the backup declares is passed as its components the routine reads, each an argument of
+its own: `DeburrPart pdHousing;` -> `CALL DEBURRPART(2,.8,1)` for part.passes, part.depth,
+part.chamfer. A num passed by reference (INOUT, VAR, PERS) that the routine changes is copied back:
+the routine works on a register of its own, which the caller reads into its data after the CALL.
+A routine with any other parameter — a tooldata, a record passed whole to another routine, an
 optional num — is not converted, and its calls stay TODO with the reason.
 
 A `robtarget` has no place in AR[n]: it goes in a position register of its own, which the caller
@@ -39,8 +43,11 @@ _NAME = re.compile(r"([A-Za-z_]\w*)\s*(\{[^}]*\})?\s*$")
 
 @dataclass(frozen=True, slots=True)
 class Slot:
-    name: str  # as declared
-    kind: str  # "num" | "bool" | "string" | "switch" | "robtarget" (in a position register, not in AR[n])
+    name: str  # as declared; a record's component: "part.passes"
+    # "num" | "bool" | "string" | "switch" | "robtarget" (in a position register, not in AR[n]) | "record"
+    kind: str
+    fields: tuple["Slot", ...] = ()  # a record: the components the routine reads, each passed as an argument
+    by_reference: bool = False  # INOUT, VAR or PERS: what the routine changes goes back to the caller
 
     @property
     def key(self) -> str:
@@ -59,8 +66,8 @@ class Signature:
 
     @property
     def arguments(self) -> tuple[Slot, ...]:
-        """The slots passed as AR[n], in order: every one but the points."""
-        return tuple(s for s in self.slots if s.kind != "robtarget")
+        """The slots passed as AR[n], in order: every one but the points, a record as its components."""
+        return tuple(f for s in self.slots if s.kind != "robtarget" for f in (s.fields if s.kind == "record" else (s,)))
 
     def frames_of(self, name: str) -> tuple[n.Expr | None, n.Expr | None]:
         """(tool, work object) the routine moves to its point `name` with; (None, None) if it only passes it on."""
@@ -74,11 +81,19 @@ class Signature:
         return None
 
     def kind(self, name: str) -> str | None:
-        return next((s.kind for s in self.slots if s.key == name.upper()), None)
+        """The kind of a parameter, or of a record parameter's component ('PART.PASSES')."""
+        return next((s.kind for s in (*self.slots, *self.arguments) if s.key == name.upper()), None)
+
+    def returned(self) -> tuple[Slot, ...]:
+        """The parameters passed by reference that the routine changes: the caller reads them back."""
+        return tuple(s for s in self.slots if s.by_reference and s.key in self.copied)
 
 
-def signature(routine: n.Routine) -> Signature | str:
-    """The routine's AR[n] layout, or why its parameters cannot be passed as TP arguments."""
+def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]] | None = None) -> Signature | str:
+    """The routine's AR[n] layout, or why its parameters cannot be passed as TP arguments.
+
+    `records`: the RECORD types the backup declares, lower-case name -> (component, type) in order."""
+    records = records or {}
     required: list[Slot] = []
     switches: list[Slot] = []
     for part in re.split(r",|(?=\\)", routine.params):
@@ -97,8 +112,8 @@ def signature(routine: n.Routine) -> Signature | str:
             name, dims = match.group(1), match.group(2)
             mode = words[0].upper() if words[0].upper() in ("VAR", "PERS", "INOUT") else ""
             type_name = words[-2] if not dims else words[-2].split("{")[0]
-            if mode:
-                return f"parameter {name} is passed by reference ({mode}): TP arguments are values"
+            if mode and (type_name.lower() != "num" or dims or optional):
+                return f"{type_name} parameter {name} is passed by reference ({mode}): only a num is copied back"
             if dims:
                 return f"parameter {name} is an array: TP arguments are single values"
             if optional:
@@ -106,7 +121,12 @@ def signature(routine: n.Routine) -> Signature | str:
                     return f"optional {type_name} parameter {name}: only optional switches are converted"
                 switches.append(Slot(name, "switch"))
             elif type_name.lower() in ("num", "bool", "string", "robtarget"):
-                required.append(Slot(name, type_name.lower()))
+                required.append(Slot(name, type_name.lower(), by_reference=bool(mode)))
+            elif type_name.lower() in records:
+                fields = _record_fields(routine, name, type_name, records[type_name.lower()])
+                if isinstance(fields, str):
+                    return fields
+                required.append(Slot(name, "record", fields))
             else:
                 return f"{type_name} parameter {name}: TP arguments are numbers or text"
     slots = tuple(required + switches)
@@ -115,7 +135,18 @@ def signature(routine: n.Routine) -> Signature | str:
         return f"{len(arguments)} parameters: a TP CALL takes at most {MAX_ARGS} arguments"
     kinds = {s.key: s.kind for s in slots}
     copied: set[str] = set()
+    by_reference = {s.key for s in slots if s.by_reference}
     for stmt in walk_statements(routine.body):
+        changed = _changed_by_call(stmt)
+        if isinstance(stmt, n.ProcCall) and stmt.name.upper() not in _CHANGING:
+            # passed on to a routine that may change it (its own INOUT): the caller reads back what comes back
+            for arg in stmt.args:
+                if isinstance(arg.value, n.Name) and arg.value.name.upper() in by_reference:
+                    copied.add(arg.value.name.upper())
+        if changed and changed.upper() in kinds:
+            if kinds[changed.upper()] != "num":
+                return f"it changes its parameter {changed}: only a whole num parameter can be copied to a register"
+            copied.add(changed.upper())
         if isinstance(stmt, n.Assign) and (target := base_name(stmt.target)) and target.upper() in kinds:
             if kinds[target.upper()] != "num" or not isinstance(stmt.target, n.Name):
                 return f"it changes its parameter {target}: only a whole num parameter can be copied to a register"
@@ -132,6 +163,51 @@ def signature(routine: n.Routine) -> Signature | str:
                     frames.setdefault(base.name.upper(), (stmt.tool, stmt.wobj))
     return Signature(slots, frozenset(copied), routine.name,
                      tuple((key, tool, wobj) for key, (tool, wobj) in frames.items()))  # fmt: skip
+
+
+_CHANGING = frozenset({"INCR", "DECR", "ADD", "CLEAR"})  # instructions that change their first argument
+
+
+def _changed_by_call(stmt: n.Stmt) -> str | None:
+    """The data an Incr, Decr, Add or Clear changes, as written."""
+    if isinstance(stmt, n.ProcCall) and stmt.name.upper() in _CHANGING and stmt.args:
+        first = stmt.args[0].value
+        return first.name if isinstance(first, n.Name) else None
+    return None
+
+
+def _record_fields(routine: n.Routine, name: str, type_name: str,
+                   layout: tuple[tuple[str, str], ...]) -> tuple[Slot, ...] | str:  # fmt: skip
+    """The components of a record parameter the routine reads, in the record's order, each a slot of its own;
+    or why the record cannot be passed so (the routine uses it whole, or a component is not a number,
+    a bool or text)."""
+    read: set[str] = set()
+    whole = False
+
+    def visit(node: object) -> None:  # every statement and expression of the routine, conditions included
+        nonlocal whole
+        if isinstance(node, n.Component) and isinstance(node.base, n.Name) and node.base.name.upper() == name.upper():
+            read.add(node.field.lower())
+        elif isinstance(node, n.Name) and node.name.upper() == name.upper():
+            whole = True
+        elif isinstance(node, tuple | list):
+            for item in node:
+                visit(item)
+        elif hasattr(node, "__dataclass_fields__") and not isinstance(node, n.Span):
+            for field_name in node.__dataclass_fields__:
+                visit(getattr(node, field_name))
+
+    visit(routine.body)
+    if whole:
+        return f"{type_name} parameter {name} is used whole: only its components can be passed as TP arguments"
+    fields = []
+    for field_name, field_type in layout:
+        if field_name not in read:
+            continue
+        if field_type not in ("num", "bool", "string"):
+            return f"{type_name} parameter {name}: its component {field_name} is a {field_type}"
+        fields.append(Slot(f"{name}.{field_name}", field_type))
+    return tuple(fields)
 
 
 __all__ = ["MAX_ARGS", "Signature", "Slot", "signature"]
