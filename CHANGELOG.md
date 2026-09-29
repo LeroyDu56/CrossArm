@@ -3,7 +3,13 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.1.0 — 2026-09-29
+
+More of RAPID converted, each construct measured on the controllers first: `TEST`, the everyday
+instructions (pulses, clocks, analog outputs, payloads), routines given text and points, and arrays
+indexed at run time. On the three RobotWare backups of the test corpus, the share of RAPID
+instructions converted goes from 78 %, 81 % and 78 % to 84 %, 88 % and 81 %. A mapping file written
+for 1.0 gives the same numbers.
 
 ### Converts
 - `TEST` / `CASE` / `DEFAULT` to `SELECT`: one line per `CASE` value, a `CASE` that only calls a

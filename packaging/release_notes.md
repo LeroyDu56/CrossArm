@@ -1,34 +1,26 @@
-## CrossArm 1.0.0
+## CrossArm 1.1.0
 
-CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`): motions,
-positions, tool and user frames, arm configuration, speeds and zones, I/O, registers and program
-logic, with a report of everything left to review. It was checked against an IRB 6700 in
-RobotStudio on three FANUC robots in ROBOGUIDE (M-20iD/25, R-2000iC/190S, R-1000iA/80F).
+CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
+everything left to review. 1.1 converts more of what real programs are made of, and each new construct
+was measured on the controllers before CrossArm writes it: RobotStudio for the RAPID, ROBOGUIDE for the TP.
 
-**Loads, and does what the RAPID did.** Every program converted from the test corpus loads on a
-FANUC controller, every form of instruction CrossArm writes is stored as written, and the flange
-lands within 0.004 mm of where the ABB puts it.
+**`TEST` / `CASE` becomes `SELECT`.** One line per value, a case that only calls a routine calls it on
+its own line, the rest behind labels; run on both controllers, the same branches are taken.
 
-**The points are theoretical, the path is close.** The positions CrossArm writes are the ABB's,
-carried over exactly, to be touched up on the robot at commissioning as on any robot swap. The path
-between them stays within 4 mm of the ABB's on every move measured, where CrossArm aims for 10.
+**The everyday instructions.** `PulseDO` (in the tenths of a second FANUC takes), `InvertDO`, the
+RAPID clocks as `TIMER`, `SetAO` in the FANUC module's counts, and `GripLoad` as a `PAYLOAD` schedule
+of the tool and the part together, worked out by CrossArm. Motion settings FANUC does its own way are
+left out with a warning; those that slow the robot down stay TODO, rather than run it faster.
 
-**Speeds and zones measured, not guessed.** The same moves were timed and traced on both robots:
-joint moves take about as long as on the ABB, and each zone is written as the CNT that rounds a
-corner as much at the move's speed. CrossArm reads the arm in the FANUC backup and uses the profile
-measured on its series (M-20iD and ARC Mate 120iD, R-2000iC, R-1000iA); for another arm it says so.
+**Routines given text and points.** A string is passed in the call; a point (robtarget) in a position
+register the caller sets and the routine moves to, `Offs()` included. Twenty-eight moves through
+routines and arrays land at the poses of the moves written out, to the thousandth of a millimetre.
 
-**Fits the robot in place.** Given the FANUC robot's backup, CrossArm leaves its frames, registers,
-I/O and program names alone; `crossarm_mapping.json` pins any number, and `SETUP_FRAMES.LS` sets
-every tool and user frame on the robot.
+**Arrays indexed at run time.** A table of points (`pSlot{nTool}`, `pGrid{r,c}`) or of numbers
+(`nTorque{i}`) is kept in registers `SETUP_FRAMES` fills, and read as `PR[R[n]]` or `R[R[n]]`.
 
-**Computes what TP cannot.** A tool or work object the RAPID builds from fixed values (`DefFrame`,
-`PoseMult`, a FUNC of the backup) is worked out at conversion time and loaded from a position
-register where the RAPID computes it. When something can change what it reads, or it is measured
-on the robot, it stays a TODO that says why.
-
-**What 1.x keeps:** mapping files keep working, a conversion given back its mapping file keeps its
-numbers, and the command line keeps its options.
+**Still what 1.x keeps:** a mapping file written for 1.0 gives the same numbers, and the command line
+keeps its options. The whole list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 See the [README](https://github.com/LeroyDu56/CrossArm#readme), the
 [user guide](https://github.com/LeroyDu56/CrossArm/blob/main/docs/guide.md) and
@@ -44,7 +36,7 @@ programs loaded on a real robot, conversions delivered to a customer, or billed
 migration work. See [LICENSING.md](https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md)
 for where the line falls, and write to **enzoleroy56@gmail.com** for a licence.
 
-This version becomes Apache 2.0 on 2030-09-26.
+This version becomes Apache 2.0 on 2030-09-29.
 
 `python_license.txt` next to the executable covers the Python runtime bundled inside it; see
 [THIRD_PARTY_LICENSES.md](https://github.com/LeroyDu56/CrossArm/blob/main/THIRD_PARTY_LICENSES.md).
