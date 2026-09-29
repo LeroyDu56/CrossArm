@@ -46,7 +46,7 @@ def test_blockers_are_ranked_and_carry_their_most_common_case():
 def test_writing_a_frame_component_is_a_frame_blocker_not_a_record_one():
     """tool.tframe is run-time frame work, tool.tload a payload, p.trans a position: each its own job."""
     data = TOOL + "VAR robtarget pTmp:=[[0,0,0],[1,0,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];"
-    result = run("tGrip.tframe.trans.z:=GInput(giZ);\ntGrip.tload.mass:=5;\npTmp.trans.x:=GInput(giX);\n"
+    result = run("tGrip.tframe.trans.z:=GInput(giZ);\ntGrip.tload.mass:=5;\npTmp.rot.q1:=GInput(giX);\n"
                  "struct.field:=1;", data)  # fmt: skip
     categories = {category for category, _, _ in result.grouped("TODO")}
     assert categories == {Blocker.RUNTIME_FRAME, Blocker.PAYLOAD, Blocker.RUNTIME_POSITION, Blocker.RECORD}

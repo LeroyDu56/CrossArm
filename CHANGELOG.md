@@ -38,6 +38,20 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   a routine is recorded in the frames the call gives it. A frame the routine uses otherwise (a
   component read, a MoveAbsJ with it) stays TODO.
 - `Incr`, `Decr`, `Add` and `Clear`, as the assignments they make (`R[2]=R[2]+1`).
+- Calculations of several operations, `(nCol-1)*LENGTH+nShift{k}`: one operation per line in scratch
+  registers (`R[n:Calc1]`...), as TP refuses `+` and `*` in one calculation (ASBN-040), in assignments,
+  conditions, arguments and the offsets of `Offs()` / `RelTool()`. A wait on one stays TODO: worked out
+  once before the `WAIT`, it would not follow the data.
+- Points the programs work out at run time, the palletizing way: a robtarget set from data that changes
+  then (loop counters, counts, inputs) is kept in a position register every assignment sets and every
+  move reads. `Offs()` of a fixed point by run-time offsets is the point copied and offset component
+  by component (`PR[98]=P[1]`, `PR[98,1]=PR[98,1]+R[4:Calc1]`), in an assignment or in a move
+  (`MoveL Offs(pCorner,nCol*L,0,0)`); `RelTool()` of such a point whose orientation is known at
+  conversion time turns the displacement by it and writes the new W, P, R; `CRobT()` is
+  `PR[k]=LPOS`, in the frames its `\Tool` and `\WObj` name, selected first; `p.trans.x:=...` is
+  `PR[k,1]=...`. `PR[k]=P[j]` copies the values whatever frames are selected (ROBOGUIDE). A point whose
+  assignment stays TODO is never moved to: the moves to it stay TODO too, with why.
+- A VAR array no program changes holds the values it is declared with, like a CONST one.
 - `RelTool()` of a point given at run time, a routine's point parameter or an array element indexed at
   run time: the move goes to the point with `Tool_Offset,PR[m]`, PR[m] a copy of the point with the
   displacement and the turns in its six components (RAPID's turns about x, then y, then z, worked out

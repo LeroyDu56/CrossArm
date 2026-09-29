@@ -77,7 +77,17 @@ from crossarm.fanuc.tp import (
     Position,
     Program,
 )
-from crossarm.geometry import Pose, mat_mul, matrix_to_quat, matrix_to_wpr, rot_x, rot_y, rot_z, wpr_to_matrix
+from crossarm.geometry import (
+    Pose,
+    mat_mul,
+    matrix_to_quat,
+    matrix_to_wpr,
+    quat_to_matrix,
+    rot_x,
+    rot_y,
+    rot_z,
+    wpr_to_matrix,
+)
 from crossarm.rapid import nodes as n
 from crossarm.rapid.eio import Signal
 from crossarm.rapid.to_pseudo import format_expr
@@ -698,6 +708,9 @@ class Converter:
         self.volatile: set[str] = set()
         self.no_group: set[str] = set()  # routines a TRAP calls: written without a motion group
         self.watched: dict[str, str] = {}  # IPers interrupt (upper) -> the register it watches, as armed
+        # Points the programs work out at run time, kept in position registers: 'NAME' for module data,
+        # 'ROUTINE.NAME' for a routine's own (runtime_points()).
+        self.runtime_points: set[str] = set()
         self.not_converted: set[int] = set()  # id() of the statements that ended up in a TODO, for coverage
         self.parameters: set[str] = set()  # of the routine being translated (upper case)
         self.inliner = Inliner(modules, self._const_bool, self._inlined,
@@ -711,6 +724,7 @@ class Converter:
         wanted = {r.upper() for r in routines} if routines else None
         everything = [r for m in self.modules for r in m.routines]
         self.interrupts = scan_interrupts(everything, self.procs, set(self.move_routines))
+        self.runtime_points = self._runtime_points(everything)
         selected: list[tuple[n.Module, n.Routine]] = []
         skipped: list[n.Routine] = []
         for module in self.modules:
@@ -926,7 +940,12 @@ class Converter:
         taken = {f.number for f in self.result.computed_frames if f.number is not None}
         taken |= set(self.config.frame_registers.values()) | set(pinned.values())
         free = [k for k in self._banks if k not in taken]
-        numbers = {key: pinned.get(key) or (free.pop(0) if free else None) for key in self.point_keys}
+        used: set[str] = set()  # a register asked for by a statement then left TODO is in no program: none for it
+        for info in self.result.programs:
+            for line in info.program.lines:
+                text = line.text if isinstance(line, Instruction) else f"{line.target} {line.via or ''} {line.options}"
+                used.update(re.findall(r"\{PA:([^}:]*)\}", text))
+        numbers = {key: pinned.get(key) or (free.pop(0) if free else None) for key in self.point_keys if key in used}
         bases: dict[str, int | None] = {}
         for key, (_name, _dims, values) in self.arrays.items():
             if key in self.config.point_arrays:
@@ -1328,6 +1347,57 @@ class Converter:
                     mine.add(names[key])
         return names
 
+    def _runtime_points(self, routines: list[n.Routine]) -> set[str]:
+        """The robtargets (not arrays, not CONST) some assignment gives a value only known at run time: kept in a
+        position register, which every assignment sets and every read reads, in whatever routine.
+
+        An assignment is known at run time only when it reads what changes then: data the programs change, a
+        routine's own data or parameter, an input or the robot's position (CRobT...), or such a point. One
+        reading the point itself and fixed data (`pTmp.trans.z:=pTmp.trans.z-100`) is worked out where it is,
+        as before: the point stays a P of each move."""
+        assignments: list[tuple[str, n.Assign, set[str], set[str]]] = []  # key, statement, own names, params
+        for routine in routines:
+            own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
+            read = parameters(routine.params)
+            params = set(read[0]) | set(read[1]) if read else set()
+            params |= {s.var.upper() for s in walk_statements(routine.body) if isinstance(s, n.For)}  # its counters
+            for stmt in walk_statements(routine.body):
+                if not isinstance(stmt, n.Assign) or not (path := path_of(stmt.target)):
+                    continue
+                decl = own.get(path[0]) or self.symbols.get_global(path[0])
+                if decl is None or decl.type_name.lower() != "robtarget" or decl.dims or decl.storage == "CONST":
+                    continue
+                key = f"{routine.name}.{decl.name}".upper() if path[0] in own else path[0]
+                assignments.append((key, stmt, set(own), params))
+        found: set[str] = set()
+        while True:  # a point reading a point known at run time is one too
+            more = {key for key, stmt, own, params in assignments
+                    if key not in found and self._at_run_time(stmt, own, params, found)}  # fmt: skip
+            if not more:
+                return found
+            found |= more
+
+    def _at_run_time(self, stmt: n.Assign, own: set[str], params: set[str], found: set[str]) -> bool:
+        """Whether an assignment to a point reads what is only known at run time (_runtime_points)."""
+        target = path_of(stmt.target)[0]  # type: ignore[index]
+        try:
+            self.computer.value(stmt.value)
+            return False
+        except Unresolvable:
+            pass
+        for node in _nodes(stmt.value):
+            if isinstance(node, n.FuncCall) and node.name.upper() in _RUNTIME_FUNCTIONS:
+                return True
+            if not isinstance(node, n.Name) or node.name.upper() == target:
+                continue
+            key = node.name.upper()
+            decl = self.symbols.get_global(node.name)
+            if key in own or key in params or key in found:
+                return True
+            if decl is not None and decl.storage != "CONST" and self.computer.written.where((key,)) is not None:
+                return True
+        return False
+
     def _name_conditions(self, selected: list[tuple[n.Module, n.Routine]]) -> None:
         """A condition program for each interrupt whose TRAP is written, named after the interrupt."""
         written = {r.name.upper(): r for _, r in selected if r.kind == "TRAP"}
@@ -1599,6 +1669,7 @@ class _RoutineTranslator:
         self.served = served if routine.kind == "TRAP" else []  # the interrupts it serves, converted
         self.interrupt = served[0] if len(self.served) == 1 and not served[0].shared else None  # served directly
         self.epilogue: list[str] = []
+        self.stepless = False  # writing a condition read again and again (a wait): no calculation before it
 
     def run(self) -> ProgramInfo:
         self.c.symbols.enter_routine(self.routine)
@@ -1672,6 +1743,8 @@ class _RoutineTranslator:
         names, anything = self.c.effects.of(stmts)
         for name in names:
             self.known[name] = why
+            if f"{name}#ROT" in self.known:  # the orientation of a point kept in a register goes with it
+                self.known[f"{name}#ROT"] = why
         if anything:
             for name in self.known:
                 if name not in self.local_names:
@@ -1717,6 +1790,9 @@ class _RoutineTranslator:
         measured = category == Blocker.CALIBRATION or (
             isinstance(stmt, n.ProcCall) and stmt.name.upper() in ("SEARCHL", "SEARCHJ", "SEARCHC"))  # fmt: skip
         self.forget((stmt,), Unknown(f"is {'measured on the robot' if measured else 'set'} at l.{line} (left TODO)", measured))
+        path = path_of(stmt.target) if isinstance(stmt, n.Assign) else None
+        if path and self.runtime_key(path[0]):  # its register was not set: what reads it must not move there
+            self.known[f"{path[0]}#UNSET"] = self.known.get(path[0], Unknown(f"is set at l.{line} (left TODO)"))
         if isinstance(stmt, n.Unsupported) and stmt.kind == "LABEL":  # jumped to from anywhere: nothing is known
             self.known = dict.fromkeys(self.known, Unknown(f"may hold anything at the label at l.{line}"))
 
@@ -1844,6 +1920,9 @@ class _RoutineTranslator:
             self.known[key] = Unknown(f"has an initial value only known at run time ({exc})")
         if decl.init is None or decl.dims:
             return
+        if (key := self.runtime_key(decl.name)) is not None:  # set when the routine starts, as RAPID does
+            self.runtime_assign(n.Assign(decl.span, n.Name(decl.span, decl.name), decl.init), key, (key,))
+            return
         if decl.type_name.lower() == "num":
             self.emit(f"{self.c.written_register(decl.name)}={operand(self.numeric(decl.init))}")
         elif decl.type_name.lower() == "bool" and isinstance(decl.init, n.Bool):
@@ -1906,6 +1985,177 @@ class _RoutineTranslator:
         self.active_uf, self.active_ut = uf, ut
         self.lines.append(Motion(motion, target, speed, termination, via, options))
 
+    # -- points worked out at run time --------------------------------------------------
+
+    def runtime_key(self, name: str) -> str | None:
+        """The key of the position register a point worked out at run time is kept in; None for another data."""
+        if name.upper() in self.local_names or self.c.symbols.is_local(name):
+            key = f"{self.routine.name}.{name}".upper()
+        else:
+            key = name.upper()
+        return key if key in self.c.runtime_points else None
+
+    def runtime_set(self, name: str) -> None:
+        """A point kept in a register must have been set: not when its last assignment was left TODO."""
+        unset = self.known.get(f"{name.upper()}#UNSET")
+        if isinstance(unset, Unknown):
+            raise Untranslatable(str(unset.error(name)), Blocker.CALIBRATION if unset.measured else Blocker.RUNTIME_POSITION)
+
+    def runtime_axis(self, expr: n.Expr) -> str | None:
+        """`PR[k,3]` for `pDepose.trans.z`, pDepose kept in PR[k]; None for anything else."""
+        path = path_of(expr) if isinstance(expr, n.Component) else None
+        if not path or not (key := self.runtime_key(path[0])):
+            return None
+        root = expr
+        while isinstance(root, n.Component | n.Index):
+            root = root.base
+        self.runtime_set(root.name if isinstance(root, n.Name) else path[0])
+        axis = {("TRANS", "X"): 1, ("TRANS", "Y"): 2, ("TRANS", "Z"): 3}.get(path[1:])
+        if axis is None:
+            raise Untranslatable(f"{format_expr(expr)}: of a point kept in a position register, TP reads x, y and z",
+                                 Blocker.RUNTIME_POSITION)  # fmt: skip
+        return f"{self.c.point_register(key)[:-1]},{axis}]"
+
+    def runtime_assign(self, a: n.Assign, key: str, path: tuple[str, ...]) -> None:
+        """A point worked out at run time, in its position register PR[k]: a value known now (PR[k]=P[j]); a copy of
+        another one, Offs() of it (component by component); RelTool() of one whose orientation is known now
+        (the displacement turned by it, the new W, P, R written); CRobT() (PR[k]=LPOS, in the frames
+        selected); one of its x, y, z (PR[k,3]=...)."""
+        register = self.c.point_register(key)
+        name = path_of(a.target)[0] if path_of(a.target) else key  # type: ignore[index]
+        turn = f"{name}#ROT"
+        if len(path) > 1:
+            axis = self.runtime_axis(a.target)
+            self.emit(f"{axis}={self.arithmetic(a.value)}")
+            return
+        self._runtime_value(a, register, name, turn)
+        self.known.pop(f"{name}#UNSET", None)  # set whole: readable again
+
+    def _runtime_value(self, a: n.Assign, register: str, name: str, turn: str) -> None:
+        """The whole of a point kept in a register (runtime_assign)."""
+        value = a.value
+        if isinstance(value, n.FuncCall) and value.name.upper() == "CROBT":
+            self.robot_position(value)
+            self.emit(f"{register}=LPOS")
+            self.known[turn] = Unknown(f"is measured on the robot at l.{a.span.line}", measured=True)
+            return
+        if isinstance(value, n.FuncCall) and value.name.upper() == "RELTOOL":
+            orientation = self.turned(value, register)
+            if orientation is not None:
+                self.known[turn] = orientation
+                return
+        try:
+            target = self.c.evaluator.robtarget(value)
+        except Unresolvable:
+            target = None
+        if target is not None:
+            self.emit(f"{register}={self.known_point(value, target, a.span.line)}")
+            self.known[turn] = Typed(tuple(target.pose.rot), "orient")
+            return
+        offs = isinstance(value, n.FuncCall) and value.name.upper() == "OFFS" and len(value.args) == 4 \
+            and all(arg.name is None and arg.value is not None for arg in value.args)  # fmt: skip
+        base = value.args[0].value if offs else value  # type: ignore[union-attr]
+        try:  # Offs() of a point known now, by what is only known at run time: the pallet's corner and the cell
+            fixed = self.c.evaluator.robtarget(base) if offs else None  # type: ignore[arg-type]
+        except Unresolvable:
+            fixed = None
+        if fixed is not None:
+            self.emit(f"{register}={self.known_point(base, fixed, a.span.line)}")  # type: ignore[arg-type]
+            self.add_offsets(register, [arg.value for arg in value.args[1:]])  # type: ignore[union-attr, misc]
+            self.known[turn] = Typed(tuple(fixed.pose.rot), "orient")
+            return
+        if self.passed_point(value, "CROSSARM.POINT", into=register) is None:
+            raise Untranslatable(f"point {format_expr(a.target)} set to {format_expr(value)}: a point kept in a position"
+                                 " register is set to a point, Offs() or RelTool() of one, or CRobT()",
+                                 Blocker.RUNTIME_POSITION)  # fmt: skip
+        source = path_of(base) if isinstance(base, n.Name) else None  # Offs keeps the orientation
+        self.known[turn] = self.known.get(f"{source[0]}#ROT", Unknown("has an orientation known at run time only")) \
+            if source else Unknown("has an orientation known at run time only")  # fmt: skip
+
+    def known_point(self, expr: n.Expr, value: RobTarget, line: int) -> str:
+        """P[j] for a point known now that a position register is set from (`PR[k]=P[j]` keeps its values and
+        configuration, whatever frames are selected and the P is recorded in: ROBOGUIDE). Recorded in the frames
+        selected, else those of the routine's first move (its configuration worked out for them), else UF 0, UT 1."""
+        uf, ut = self.active_uf, self.active_ut
+        if uf is None or ut is None:
+            first = next((s for s in walk_statements(self.routine.body) if isinstance(s, n.Move)), None)
+            try:
+                if first is not None and self.given_frames(first) == (None, None):
+                    uf = uf or self.c.selection("UF", self.c.frame_number("UF", first.wobj, self.name, line))
+                    ut = ut or self.c.selection("UT", self.c.frame_number("UT", first.tool, self.name, line))
+            except Untranslatable:
+                pass
+        return self.point(expr, value, uf or (0, None), ut or (1, None), line)
+
+    def turned(self, call: n.FuncCall, register: str) -> Typed | None:
+        """RelTool() of a point kept in a register whose orientation is known now: the displacement turned into the
+        work object's axes and added component by component, the new orientation written as W, P, R; the
+        orientation it leaves. None when RelTool() is of a point known now (worked out whole)."""
+        positional = [a.value for a in call.args if a.name is None]
+        options = {(a.name or "").upper(): a.value for a in call.args if a.name is not None}
+        if len(positional) != 4 or not isinstance(positional[0], n.Name) or not set(options) <= {"RX", "RY", "RZ"}:
+            return None
+        source = self.runtime_key(positional[0].name)
+        if source is None:
+            return None
+        orientation = self.known.get(f"{positional[0].name.upper()}#ROT")
+        if not isinstance(orientation, Typed):
+            raise Untranslatable(f"RelTool of {positional[0].name}, whose orientation is only known at run time: TP"
+                                 " cannot turn a position register", Blocker.RUNTIME_POSITION)  # fmt: skip
+        try:
+            turns = {axis: self.c.evaluator.constant_number(v) for axis, v in options.items() if v is not None}
+        except Unresolvable as exc:
+            raise Untranslatable(f"RelTool rotation only known at run time ({exc})", Blocker.RUNTIME_POSITION) from exc
+        m = quat_to_matrix(orientation.value)
+        from_register = self.c.point_register(source)
+        if from_register != register:
+            self.emit(f"{register}={from_register}")
+        span = call.span
+        for i in range(3):  # the displacement along the tool's axes, in the work object's
+            terms = [(m[i][j], positional[j + 1]) for j in range(3) if abs(m[i][j]) > 1e-9]
+            try:
+                step = sum(c * self.c.evaluator.constant_number(d) for c, d in terms)  # type: ignore[arg-type]
+                if abs(step) > 1e-9:
+                    sign, size = ("-", -step) if step < 0 else ("+", step)
+                    self.emit(f"{register[:-1]},{i + 1}]={register[:-1]},{i + 1}]{sign}{fmt_number(round(size, 3))}")
+                continue
+            except Unresolvable:
+                pass
+            expr: n.Expr | None = None
+            for c, d in terms:
+                term = n.BinaryOp(span, "*", n.Number(span, round(c, 6), str(round(c, 6))), d)  # type: ignore[arg-type]
+                expr = term if expr is None else n.BinaryOp(span, "+", expr, term)
+            if expr is not None:
+                self.emit(f"{register[:-1]},{i + 1}]={register[:-1]},{i + 1}]+{self.single(expr)}")
+        if turns:
+            rotation = mat_mul(m, mat_mul(rot_x(turns.get("RX", 0.0)), mat_mul(rot_y(turns.get("RY", 0.0)),
+                                                                           rot_z(turns.get("RZ", 0.0)))))  # fmt: skip
+            for axis, angle in zip((4, 5, 6), matrix_to_wpr(rotation), strict=True):
+                self.emit(f"{register[:-1]},{axis}]={operand(fmt_number(round(angle, 3) + 0.0))}")
+            orientation = Typed(tuple(matrix_to_quat(rotation)), "orient")
+        return orientation
+
+    def robot_position(self, call: n.FuncCall) -> None:
+        """CRobT() as LPOS: the TCP in the frames selected, the ones \\Tool and \\WObj name selected first (a
+        selection does not move the robot), else those selected, the tool and work object RAPID reads in."""
+        wanted = {"UF": self.active_uf, "UT": self.active_ut}
+        for arg in call.args:
+            kind = {"TOOL": "UT", "WOBJ": "UF"}.get((arg.name or "").upper())
+            if kind is None:
+                raise Untranslatable(f"CRobT option \\{arg.name}: LPOS reads the TCP in the frames selected",
+                                     Blocker.CALIBRATION)  # fmt: skip
+            wanted[kind] = self.c.selection(kind, self.c.frame_number(kind, arg.value, self.name, call.span.line))
+        if wanted["UF"] is None or wanted["UT"] is None:
+            raise Untranslatable("CRobT where no move of this program says which frames are selected: give it \\Tool"
+                                 " and \\WObj", Blocker.CALIBRATION)  # fmt: skip
+        for kind, name, active in (("UF", "UFRAME", self.active_uf), ("UT", "UTOOL", self.active_ut)):
+            if wanted[kind] != active:
+                number, bank = wanted[kind]  # type: ignore[misc]
+                if bank is not None:
+                    self.emit(f"{name}[{number}]=PR[{bank}]")
+                self.emit(f"{name}_NUM={number}")
+        self.active_uf, self.active_ut = wanted["UF"], wanted["UT"]
+
     def given_frames(self, m: n.Move) -> tuple[str | None, str | None]:
         """(work object, tool) the move takes from the routine's parameters, as their AR[n]; None for a named
         frame. `\\WObj?wObj` is the work object the routine was given, 0 (wobj0) when it was not."""
@@ -1959,15 +2209,13 @@ class _RoutineTranslator:
         # RAPID turns about the tool's own axes, x then y then z: R.Rx.Ry.Rz (geometry.Pose.rel_tool)
         turned = mat_mul(rot_x(turns.get("RX", 0.0)), mat_mul(rot_y(turns.get("RY", 0.0)), rot_z(turns.get("RZ", 0.0))))
         wpr = [round(angle, 3) + 0.0 for angle in matrix_to_wpr(turned)]
-        steps = []
-        for value in positional[1:]:
-            step, negated = self.displacement(value)  # type: ignore[arg-type]
-            steps.append(f"{step}*(-1)" if negated else step)
-        steps += [operand(fmt_number(angle)) for angle in wpr]
         register = self.c.point_register("CROSSARM.TOOLOFFSET")
         self.emit(f"{register}={source}")
-        for axis, step in enumerate(steps, start=1):
-            self.emit(f"{register[:-1]},{axis}]={step}")
+        for axis, value in enumerate(positional[1:], start=1):  # each worked out just before its line
+            step, negated = self.displacement(value)  # type: ignore[arg-type]
+            self.emit(f"{register[:-1]},{axis}]={f'{step}*(-1)' if negated else step}")
+        for axis, angle in enumerate(wpr, start=4):
+            self.emit(f"{register[:-1]},{axis}]={operand(fmt_number(angle))}")
         return positional[0], f"Tool_Offset,{register}"  # type: ignore[return-value]
 
     def displacement(self, value: n.Expr) -> tuple[str, bool]:
@@ -1977,8 +2225,8 @@ class _RoutineTranslator:
             try:
                 return operand(self.numeric(value)), False
             except Untranslatable:
-                return operand(self.numeric(value.operand)), True
-        return operand(self.numeric(value)), False
+                return self.single(value.operand), True
+        return self.single(value), False
 
     def passed_point(self, expr: n.Expr, scratch: str, into: str | None = None) -> str | None:
         """The position register a move goes to when its point is not a P[] of the program: a robtarget parameter
@@ -1990,6 +2238,12 @@ class _RoutineTranslator:
                 and all(a.name is None and a.value is not None for a in expr.args)):  # fmt: skip
             base, offsets = expr.args[0].value, [a.value for a in expr.args[1:]]
         source = self.point_source(base)  # type: ignore[arg-type]
+        if source is None and offsets is not None and (fixed := self._offset_base(expr, base)) is not None:
+            # Offs() of a point known now by what is only known at run time: `MoveL Offs(pCorner,nCol*L,0,0)`
+            copy = into or self.c.point_register(scratch)
+            self.emit(f"{copy}={self.known_point(base, fixed, expr.span.line)}")  # type: ignore[arg-type]
+            self.add_offsets(copy, offsets)  # type: ignore[arg-type]
+            return copy
         if source is None:
             points = {s.key for s in self.args.slots if s.kind == "robtarget"} if self.args else set()
             if {word.upper() for word in re.findall(r"[A-Za-z_]\w*", format_expr(expr))} & points:
@@ -1999,19 +2253,40 @@ class _RoutineTranslator:
             return None
         if offsets is None and into is None:
             return source
-        steps = [self.displacement(value) for value in offsets or ()]  # type: ignore[arg-type]
         copy = into or self.c.point_register(scratch)
         self.emit(f"{copy}={source}")
-        for axis, (offset, negated) in enumerate(steps, start=1):
-            if offset != "0":  # one operator: `+` and `*` in one calculation are refused (ASBN-040)
-                self.emit(f"{copy[:-1]},{axis}]={copy[:-1]},{axis}]{'-' if negated else '+'}{offset}")
+        self.add_offsets(copy, offsets or [])  # type: ignore[arg-type]
         return copy
+
+    def _offset_base(self, expr: n.Expr, base: n.Expr | None) -> RobTarget | None:
+        """The point Offs() offsets when it is known now while the offsets are not; None otherwise (all known:
+        worked out whole, as a P)."""
+        try:
+            self.c.evaluator.robtarget(expr)
+            return None
+        except Unresolvable:
+            pass
+        try:
+            return self.c.evaluator.robtarget(base)  # type: ignore[arg-type]
+        except Unresolvable:
+            return None
+
+    def add_offsets(self, register: str, offsets: list[n.Expr]) -> None:
+        """Offs() on a position register: each displacement added to its component, worked out just before its
+        line (a calculation made in a scratch register first must not be overwritten by the next one's)."""
+        for axis, value in enumerate(offsets, start=1):
+            offset, negated = self.displacement(value)
+            if offset != "0":  # one operator: `+` and `*` in one calculation are refused (ASBN-040)
+                self.emit(f"{register[:-1]},{axis}]={register[:-1]},{axis}]{'-' if negated else '+'}{offset}")
 
     def point_source(self, expr: n.Expr) -> str | None:
         """PR[k] for a robtarget parameter, PR[R[n]] for an array of points indexed at run time (the index worked
         out in a register first); None for anything else."""
         if isinstance(expr, n.Name) and self.args and self.args.kind(expr.name) == "robtarget":
             return self.c.point_register(f"{self.args.routine}.{expr.name}")
+        if isinstance(expr, n.Name) and (key := self.runtime_key(expr.name)):
+            self.runtime_set(expr.name)
+            return self.c.point_register(key)
         if not (isinstance(expr, n.Index) and isinstance(expr.base, n.Name)):
             return None
         decl = self.c.symbols.get(expr.base.name)
@@ -2099,8 +2374,9 @@ class _RoutineTranslator:
         """An array SETUP_FRAMES can keep in registers: a CONST, or a PERS no program changes (a table the operator
         sets, as the registers are on FANUC: kept at the values saved in the backup, and said so)."""
         where = self.c.computer.written.where((decl.name.upper(),), decl.type_name.lower())
-        if decl.storage == "VAR" or where is not None:
-            why = f"changed by the programs ({where})" if where else "a VAR, reset when the program starts"
+        # A VAR no program changes holds its declared values: set again when the program starts, to the same.
+        if where is not None or decl.storage == "VAR" and decl.init is None:
+            why = f"changed by the programs ({where})" if where else "a VAR without values, set when the program runs"
             raise Untranslatable(f"{format_expr(expr)}: an array of {what} indexed at run time is kept in registers when"
                                  f" no program changes it; {decl.name} is {why}", category)  # fmt: skip
         if decl.storage == "PERS":
@@ -2331,8 +2607,13 @@ class _RoutineTranslator:
                 if not test.value:
                     raise Untranslatable("WaitUntil on a condition that is never true", Blocker.CONDITION)
                 return  # always true: nothing to wait for
-            positive = self.condition(test)
-            self.wait(f"WAIT ({positive})", positive, self.condition(test, negate=True) if limit else "", limit)
+            self.stepless = True  # a calculation made once before the wait would not follow the data
+            try:
+                positive = self.condition(test)
+                negative = self.condition(test, negate=True) if limit else ""
+            finally:
+                self.stepless = False
+            self.wait(f"WAIT ({positive})", positive, negative, limit)
         elif name == "TPERASE" and not call.args:
             pass  # the FANUC pendant has no user-screen clear: nothing to emit
         elif name == "TPWRITE" and len(positional) == 1:
@@ -2648,7 +2929,7 @@ class _RoutineTranslator:
             raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' must be TRUE, FALSE or a bool "
                                  "argument (a flag cannot be passed)", Blocker.CALL_ARGS)  # fmt: skip
         try:
-            text = operand(self.numeric(expr))
+            text = self.single(expr)
         except Untranslatable as exc:
             raise Untranslatable(f"argument {slot.name}: {exc}", Blocker.CALL_ARGS) from exc
         return decimal(text)  # CALL P(.5), not CALL P(0.5)
@@ -2921,6 +3202,9 @@ class _RoutineTranslator:
 
     def assign(self, a: n.Assign) -> None:
         path = path_of(a.target)
+        if path and (key := self.runtime_key(path[0])):
+            self.runtime_assign(a, key, path)
+            return
         root_type = self.c.symbols.type_of(path[0]) if path else None
         if root_type in _FRAME_TYPES | _POSITION_TYPES and path and path[0] not in self.copies:
             self.computed(a, root_type)
@@ -3015,16 +3299,39 @@ class _RoutineTranslator:
                          " frames, select the PAYLOAD schedule for it (PAYLOAD[n])", Blocker.PAYLOAD)  # fmt: skip
 
     def arithmetic(self, expr: n.Expr) -> str:
-        """Right-hand side of R[n]=...: a value or ONE arithmetic operation, as TP allows."""
+        """Right-hand side of R[n]=...: a value or ONE arithmetic operation, as TP allows; what a larger
+        calculation needs before it is worked out in scratch registers first (single())."""
         try:
             return operand(fmt_number(self.c.evaluator.constant_number(expr)))
         except Unresolvable:
             pass
         if isinstance(expr, n.BinaryOp) and expr.op in _ARITHMETIC:
-            left, right = operand(self.numeric(expr.left)), operand(self.numeric(expr.right))
+            left, right = self.single(expr.left, 1), self.single(expr.right, 2)
             op = f" {expr.op} " if expr.op in ("DIV", "MOD") else expr.op
             return f"{left}{op}{right}"
-        return operand(self.numeric(expr))
+        return self.single(expr, 1)
+
+    def single(self, expr: n.Expr, slot: int = 1, bare: bool = False) -> str:
+        """One TP operand for a value: itself when TP reads it as one, else worked out in the scratch register
+        R[n:Calc<slot>], one operation per line: TP refuses `+` and `*` in one calculation (ASBN-040) and a
+        calculation going on after parentheses. The left side is worked out in the slot, the right one in
+        the next slots, which never overwrite it. `bare`: a negative constant without its parentheses, as
+        conditions take it."""
+        try:
+            return self.numeric(expr) if bare else operand(self.numeric(expr))
+        except Untranslatable:
+            if self.stepless or not isinstance(expr, n.BinaryOp | n.UnaryOp):
+                raise
+            if isinstance(expr, n.UnaryOp) and expr.op != "-" or isinstance(expr, n.BinaryOp) and expr.op not in _ARITHMETIC:
+                raise
+        register = self.c.written_register(f"Calc{slot}", key=f"CROSSARM.CALC{slot}")
+        if isinstance(expr, n.UnaryOp):  # -(a*b)
+            self.emit(f"{register}={self.single(expr.operand, slot)}*(-1)")
+            return register
+        left, right = self.single(expr.left, slot), self.single(expr.right, slot + 1)
+        op = f" {expr.op} " if expr.op in ("DIV", "MOD") else expr.op
+        self.emit(f"{register}={left}{op}{right}")
+        return register
 
     def numeric(self, expr: n.Expr) -> str:
         """A single TP numeric operand: a constant (CONST or literal), a register or a group input."""
@@ -3053,6 +3360,8 @@ class _RoutineTranslator:
             eio = self.c.eio.get(key)
             if decl is None and (key in self.c.config.group_inputs or (eio is not None and eio.signal_type == "GI")):
                 return self.group(expr, "GI", expr.span.line)
+        if (axis := self.runtime_axis(expr)) is not None:
+            return axis
         if (field := self.component(expr)) and self.args.kind(field) == "num":  # type: ignore[union-attr]
             return self.args.register(field)  # type: ignore[union-attr, return-value]
         try:
@@ -3324,7 +3633,7 @@ class _RoutineTranslator:
                     if op == "<>":
                         state = "OFF" if state == "ON" else "ON"
                     return f"{signal}={state}"
-                return f"{decimal(self.numeric(left))}{op}{decimal(self.numeric(right))}"
+                return f"{decimal(self.single(left, 1, bare=True))}{op}{decimal(self.single(right, 2, bare=True))}"
             case n.Name(name=name) if self.args and self.args.kind(name) in ("bool", "switch"):
                 return f"{self.args.register(name)}={0 if negate else 1}"
             case n.Component() if (field := self.component(expr)) and self.args.kind(field) == "bool":  # type: ignore[union-attr]
@@ -3340,6 +3649,22 @@ class _RoutineTranslator:
                 if signal is not None:
                     return f"{signal}={'OFF' if negate else 'ON'}"
         raise Untranslatable(f"condition not convertible: {format_expr(expr)}", Blocker.CONDITION)
+
+
+# Functions whose value is only known at run time: the robot's position, inputs
+_RUNTIME_FUNCTIONS = frozenset({"CROBT", "CJOINTT", "CPOS", "CTOOL", "CWOBJ", "DINPUT", "DOUTPUT", "GINPUT", "GOUTPUT",
+                                "AINPUT", "AOUTPUT", "TESTDI", "READNUM", "CLKREAD"})  # fmt: skip
+
+
+def _nodes(node: object) -> Iterable[object]:
+    """Every node of an expression, itself first."""
+    yield node
+    if isinstance(node, tuple | list):
+        for item in node:
+            yield from _nodes(item)
+    elif hasattr(node, "__dataclass_fields__") and not isinstance(node, n.Span):
+        for name in node.__dataclass_fields__:
+            yield from _nodes(getattr(node, name))
 
 
 def _as_assignment(call: n.ProcCall, name: str, positional: list[n.Expr]) -> n.Assign:

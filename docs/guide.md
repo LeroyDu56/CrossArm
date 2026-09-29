@@ -110,6 +110,8 @@ crossarm stats   backup/RAPID                                          # parser 
 | array of numbers indexed at run time: `nTorque{nScrew}` | `R[R[n]]` | The same with numeric registers, read in calculations, conditions and arguments (`R[n:NumberIndex]`, a second one when a statement reads two elements). For both: a CONST array, or a PERS one no program changes, kept at the values saved in the backup (a warning says so) |
 | call to a routine that makes one move (`MyMoveL p10,v500,z10,tool1`) | `L P[n] …` | Converted when the routine does nothing else; otherwise listed in the report and converted on request ([`move_routines`](#the-mapping-file)) |
 | `Incr`, `Decr`, `Add`, `Clear` | `R[2]=R[2]+1`, `R[2]=R[2]-1`, `R[2]=R[2]+R[3]`, `R[2]=0` | |
+| calculation of several operations: `nA:=(nB-1)*600+nC*3` | `R[2:Calc1]=R[3]-1`, `R[2:Calc1]=R[2:Calc1]*600`, `R[4:Calc2]=R[5]*3`, `R[1:nA]=R[2:Calc1]+R[4:Calc2]` | One operation per line in scratch registers: TP refuses `+` and `*` in one calculation. In assignments, conditions, arguments and `Offs()` / `RelTool()` offsets; a `WaitUntil` on one stays TODO (worked out once, it would not follow the data) |
+| a point worked out at run time: `pPlace:=Offs(pCorner,(nCol-1)*L,0,nLayer*H)`, `RelTool(pPlace,0,0,0\Rz:=90)`, `CRobT()`, `pPlace.trans.z:=...`, `MoveL Offs(pCorner,nCol*L,0,0)` | `PR[98]=P[1]`, `PR[98,1]=PR[98,1]+R[4:Calc1]`, `PR[98,6]=(-90)`, `PR[97]=LPOS`, `PR[98,3]=...`, `L PR[98]` | A robtarget set from data that changes at run time is kept in a position register every assignment sets and every move reads, in any routine. `RelTool()` of it when its orientation is known at conversion time (after `Offs()` of a fixed point); `CRobT()` in the frames its `\Tool` and `\WObj` name, selected first. A point whose assignment stays TODO is never moved to |
 | `IF FALSE` / `WHILE FALSE`, `TEST` on a constant | a remark | Code switched off by hand: left out, `IF TRUE` converted without a test, a `TEST` on a constant as the branch it takes |
 | comments | `!remark` | Split to 32 characters, accents folded to ASCII |
 
@@ -118,7 +120,8 @@ crossarm stats   backup/RAPID                                          # parser 
   reference, a record used whole), a
   string argument only known at run time, a VAR array indexed at run time or one the programs change, a
   point parameter passed on with `RelTool()` (TP has no pose product), `FUNC` doing more than return a test;
-- frames and points computed from data that changes at run time, with that data and where it changes;
+- frames computed from data that changes at run time, with that data and where it changes; `RelTool()` of a
+  point whose orientation is only known at run time;
   frames **measured on the robot** (`CRobT`, a calibration), with what reads the robot;
 - payload changes (`tool.tload`), to redo with the FANUC `PAYLOAD[n]` schedules;
 - `AccSet` and `VelSet` that slow the robot down (dropping them would run it faster than the ABB), a

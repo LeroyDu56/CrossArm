@@ -16,7 +16,7 @@ def test_every_conversion_leaves_a_log_next_to_its_report(tmp_path, fixtures_dir
     assert f"CrossArm {__version__}" in log
     assert f"input: {source}" in log
     assert "target FANUC backup: none" in log
-    assert "files: 3 programs, 7 TODO, 5 warnings" in log  # what the conversion said, as it said it
+    assert "files: 3 programs, 3 TODO, 5 warnings" in log  # what the conversion said, as it said it
 
 
 def test_a_backup_log_sits_above_the_task_folders(tmp_path):

@@ -709,3 +709,53 @@ def test_a_remark_cut_to_32_characters_ends_without_a_space():
     # The controller drops it when it stores the program (measured on ROBOGUIDE).
     result = run("Abcdefghijklmnopqrstuv 1;")  # 'TODO l.4 ' + 22 characters: the 32nd is the space
     assert tp_lines(result) == ["!TODO l.4 Abcdefghijklmnopqrstuv"]
+
+
+# ---------------------------------------------------------------------------
+# Calculations of several operations, points worked out at run time
+# ---------------------------------------------------------------------------
+
+
+def test_a_calculation_of_several_operations_is_made_one_per_line():
+    """TP refuses `+` and `*` in one calculation (ASBN-040): scratch registers, the left side in the first."""
+    data = "VAR num nA:=0;\nVAR num nB:=1;\nVAR num nC:=2;"
+    assert tp_lines(run("nA:=(nB-1)*600+nC*3;", data)) == [
+        "R[2:Calc1]=R[3]-1", "R[2:Calc1]=R[2:Calc1]*600", "R[4:Calc2]=R[5]*3", "R[1:nA]=R[2:Calc1]+R[4:Calc2]"]
+
+
+def test_a_wait_on_a_calculation_stays_todo():
+    """Worked out once before the WAIT, it would not follow the data the WAIT waits on."""
+    result = run("WaitUntil nA+nB>3;", "VAR num nA:=0;\nVAR num nB:=1;")
+    assert len(todos(result)) == 1
+
+
+PALLET = HOME + TOOL + WOBJ + "VAR robtarget pPlace;\nVAR num nCol:=1;\n"
+
+
+def test_a_point_worked_out_from_run_time_data_is_kept_in_a_position_register():
+    body = ("nCol:=nCol+1;\npPlace:=Offs(pHome,(nCol-1)*100,0,0);\nIF nCol=2 pPlace:=RelTool(pPlace,0,0,0\\Rz:=90);\n"
+            "MoveL pPlace,v100,fine,tGrip\\WObj:=wFix;")
+    lines = tp_lines(run(body, PALLET))
+    assert lines[1:5] == ["PR[99]=P[1]", "R[2:Calc1]=R[1:nCol]-1", "R[2:Calc1]=R[2:Calc1]*100",
+                          "PR[99,1]=PR[99,1]+R[2:Calc1]"]  # fmt: skip
+    assert "PR[99,6]=(-90)" in lines and lines[-1] == "L PR[99] 100mm/sec FINE"
+
+
+def test_crobt_is_lpos_in_the_frames_it_names():
+    body = "pPlace:=CRobT(\\Tool:=tGrip\\WObj:=wFix);\npPlace.trans.z:=pPlace.trans.z+50;\nMoveL pPlace,v100,fine,tGrip\\WObj:=wFix;"
+    lines = tp_lines(run(body, PALLET))
+    assert lines[:4] == ["UFRAME_NUM=1", "UTOOL_NUM=1", "PR[99]=LPOS", "PR[99,3]=PR[99,3]+50"]
+
+
+def test_a_point_whose_assignment_is_left_todo_is_never_moved_to():
+    """Its register was not set: the moves to it stay TODO, with why, not moves to whatever it holds."""
+    body = "pPlace:=Offs(pHome,GInput(giX)*Abs(nCol),0,0);\nMoveL pPlace,v100,fine,tGrip;"
+    result = run(body, PALLET)
+    assert [line.startswith("!TODO") for line in tp_lines(result)] == [True, True]
+    assert "'pPlace' is set at l." in todos(result)[1]
+
+
+def test_a_var_array_no_program_changes_holds_its_declared_values():
+    data = HOME + TOOL + "VAR num nOffsets{3}:=[0,120,240];\nVAR num nSlot:=1;\n"
+    result = run("nSlot:=nSlot+1;\nMoveL Offs(pHome,nOffsets{nSlot},0,0),v100,fine,tGrip;", data)
+    assert todos(result) == []

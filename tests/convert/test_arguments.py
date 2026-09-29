@@ -126,7 +126,7 @@ def test_a_routine_of_switches_only_is_called_with_all_of_them():
 @pytest.mark.parametrize(("call", "reason"), [
     ("Sub 3,1;", "2 arguments given, Sub takes 3"),
     ("Sub 3,1,TRUE\\Fast;", "Sub has no switch \\FAST"),
-    ("Sub 3,nA+1,TRUE;", "argument b: 'nA + 1' is not a simple numeric value"),
+    ("Sub 3,Abs(nA),TRUE;", "argument b: 'Abs(nA)' is not a simple numeric value"),
     ("Sub 3,1,bFlag;", "argument on: 'bFlag' must be TRUE, FALSE or a bool argument"),
 ])  # fmt: skip
 def test_calls_that_cannot_be_passed_stay_todo(call, reason):

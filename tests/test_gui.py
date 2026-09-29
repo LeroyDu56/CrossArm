@@ -126,7 +126,7 @@ def test_convert_shows_the_result_in_plain_words(app, module, fanuc_robot):
     settle(app)
     shown = texts(app.right)
     assert "Conversion done" in shown and "Saved in crossarm_pick_and_place, next to your input." in shown
-    assert ["3", "2", "7"] == [t for t in shown if t.isdigit()]  # programs, ready as is, items to review
+    assert ["3", "2", "3"] == [t for t in shown if t.isdigit()]  # programs, ready as is, items to review
     assert any(t.startswith("Numbers already used on the FANUC robot were left free") for t in shown)
     assert app.convert_button.cget("text") == "Convert again"
 

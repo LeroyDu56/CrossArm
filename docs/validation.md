@@ -12,7 +12,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | What | Result |
 |---|---|
 | Every program converted from the test corpus, loaded on a FANUC controller | 128 of 128 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (203 forms) |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (220 forms) |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -23,6 +23,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Points passed to routines or read from arrays indexed at run time, `Offs()` and `RelTool()` of them, run on ROBOGUIDE | the poses of the moves written out, to 0.001 mm |
 | Records and nums passed by reference, run on both controllers | the values RAPID computes |
 | Routines given their tool and work object, run on ROBOGUIDE | the faceplate where the moves written out put it |
+| Points worked out at run time (palletizing), run on ROBOGUIDE | the faceplate where the moves written out put it |
 | Arrays of numbers indexed at run time, run on both controllers | the values RAPID reads |
 | Interrupts converted to condition monitors, run on ROBOGUIDE | the TRAP calls RAPID makes |
 
@@ -47,6 +48,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 19. [Arrays of numbers, run](#19-arrays-of-numbers-run)
 20. [Interrupts, run](#20-interrupts-run)
 21. [Records and nums passed by reference, run](#21-records-and-nums-passed-by-reference-run)
+22. [Points worked out at run time, run](#22-points-worked-out-at-run-time-run)
 
 ## 1. The test corpus
 
@@ -207,7 +209,7 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 203 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 220 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
@@ -533,3 +535,21 @@ would not show; the two tools put it 57 mm apart, and every move where the move 
 to the thousandth of a millimetre. Reading the programs back showed the
 controller stores a register's component, `PR[95,3]=(-30)`, with four spaces before `;`, as it does
 a whole register; CrossArm now writes it so.
+
+## 22. Points worked out at run time, run
+
+Palletizing programs work the place out as they go: `Offs()` of the pallet's corner by the loop counters
+times the part's size, a turn on every other layer, the robot's own position read with `CRobT()`. TP
+has none of that arithmetic in one line, but a position register can be copied from a P (whatever
+frames are selected: measured), offset component by component, set from `LPOS`, and moved to in the
+frames selected. A calculation of several operations is made one per line in scratch registers.
+
+[tools/make_pallet_probe.py](../tools/make_pallet_probe.py) converts a module that places parts in two
+FOR loops (`pPlace:=Offs(pOrigin,(c-1)*LENGTH+nShift{k},(k-1)*WIDTH,(k-1)*HEIGHT)`), turns them on the
+second layer with `RelTool(pPlace,0,0,0\Rz:=90)`, moves above and onto each and to `Offs()` of the
+corner by the counters written in the move, then reads `CRobT()`, moves its x and goes above it.
+ROBOGUIDE runs it and the same moves with the points written out: thirteen moves, the faceplate at the
+same pose to the thousandth of a millimetre. Reading the first conversion showed the three offsets
+of one `Offs()` worked out in the same scratch register before any was added: each is now worked out
+just before its line. On the test corpus, the palletizing cell's place is worked out so, and its
+TODO go from 39 to 25.

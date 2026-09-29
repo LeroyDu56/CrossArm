@@ -48,7 +48,7 @@ def test_convert_writes_ls_files_and_report(fixtures_dir, tmp_path, capsys):
         "crossarm_report.md",
     ]  # fmt: skip
     assert (out / "MAIN.LS").read_bytes().startswith(b"/PROG  MAIN\r\n")
-    assert "3 programs, 7 TODO" in capsys.readouterr().out
+    assert "3 programs, 3 TODO" in capsys.readouterr().out
 
 
 def test_convert_single_routine_with_mapping(fixtures_dir, tmp_path):

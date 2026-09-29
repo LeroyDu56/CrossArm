@@ -2,7 +2,7 @@
 
 - Generated: 2026-01-01 08:00:00 by CrossArm 1.1.0
 - Sources: `pick_and_place.mod`
-- Programs: 3, items to review: 7 TODO, 5 warnings
+- Programs: 3, items to review: 3 TODO, 5 warnings
 
 > The `.LS` files are text listings to load and check in ROBOGUIDE (or convert on the controller).
 > They are **not** directly executable: frames, registers, I/O numbers and every TODO below
@@ -13,8 +13,8 @@
 ## Summary
 
 - **2 of 3 programs converted with no TODO.**
-- **70.3 % of the 27 RAPID instructions converted.**
-- 7 TODO (not converted) and 5 warnings (converted on an assumption).
+- **85.1 % of the 27 RAPID instructions converted.**
+- 3 TODO (not converted) and 5 warnings (converted on an assumption).
 
 ### Instructions converted, by area
 
@@ -22,25 +22,23 @@ Counted per RAPID instruction, comments and declarations left out. Converted: wr
 
 | Area | Instructions | Converted | Share |
 |---|---|---|---|
-| Motion | 8 | 6 | 75 % |
+| Motion | 8 | 8 | 100 % |
 | I/O and waits | 4 | 4 | 100 % |
 | Program flow | 4 | 4 | 100 % |
-| Data | 4 | 2 | 50 % |
+| Data | 4 | 4 | 100 % |
 | Routine calls | 2 | 2 | 100 % |
 | Operator messages | 1 | 1 | 100 % |
 | Error handling | 2 | 0 | 0 % |
 | Other instructions | 2 | 0 | 0 % |
-| **All** | **27** | **19** | **70.3 %** |
+| **All** | **27** | **23** | **85.1 %** |
 
 ### What is blocking, most frequent first
 
 | Blocker | TODO | Share | Most common case |
 |---|---|---|---|
-| position built at run time | 2 | 29 % | position pPlace computed from data only known at run time: 'nSlot' is changed by the prog… |
-| value not known at conversion time | 2 | 29 % | 'pPlace' is set at l.55 (left TODO) |
-| RAPID goto | 1 | 14 % | GOTO is not supported |
-| RAPID label | 1 | 14 % | labels (GOTO targets) are not supported |
-| RAPID error handler | 1 | 14 % | ERROR handlers are not supported |
+| RAPID goto | 1 | 33 % | GOTO is not supported |
+| RAPID label | 1 | 33 % | labels (GOTO targets) are not supported |
+| RAPID error handler | 1 | 33 % | ERROR handlers are not supported |
 
 ### Assumptions to check
 
@@ -59,7 +57,8 @@ Numbers are allocated automatically from 1 up, with no upper bound. A resource m
 |---|---|---|---|---|
 | UFRAME | 2 | 1 | 9 | ok |
 | UTOOL | 2 | 2 | 10 | ok |
-| R | 3 | 3 | 200 | ok |
+| R | 4 | 4 | 200 | ok |
+| PR | 2 | 100 | 100 | ok |
 
 ## Programs
 
@@ -67,7 +66,7 @@ Numbers are allocated automatically from 1 up, with no upper bound. A resource m
 |---|---|---|---|---|
 | `MAIN.LS` | PickAndPlace.main | 16 | 2 | 0 |
 | `PICK.LS` | PickAndPlace.Pick | 9 | 2 | 0 |
-| `PLACE.LS` | PickAndPlace.Place | 20 | 2 | 7 |
+| `PLACE.LS` | PickAndPlace.Place | 28 | 3 | 3 |
 
 ### Routines not converted
 
@@ -115,8 +114,10 @@ Automatic numbers start at 1: pin them with a mapping file (`--map`) to avoid cl
 | R[1] | i | automatic |  |
 | R[2] | nSlot | automatic | RAPID VAR initial value 0: set it on the controller |
 | R[3] | nCycles | automatic | RAPID PERS initial value 0: set it on the controller |
+| R[4] | NumberIndex | automatic |  |
 | DO[1] | DO_GripperClose | automatic |  |
 | DI[1] | DI_PartReady | automatic |  |
+| PR[99] | PPLACE | automatic |  |
 
 ## Speed and zone mapping
 
@@ -128,15 +129,19 @@ Automatic numbers start at 1: pin them with a mapping file (`--map`) to avoid cl
 | v1000 | J | 22% |
 | v200 | L | 200mm/sec |
 | v300 | C | 300mm/sec |
+| v300 | L | 300mm/sec |
 | v500 | L | 500mm/sec |
+| v800 | J | 18% |
 
 | RAPID zone | RAPID speed | Motion | TP | Corner cut ABB / FANUC (mm) | Note |
 |---|---|---|---|---|---|
 | fine | v1000 | J | FINE |  |  |
 | fine | v200 | L | FINE |  |  |
+| fine | v300 | L | FINE |  |  |
 | z10 | v300 | C | CNT71 | 4.9 / 4.9 |  |
 | z10 | v500 | L | CNT54 | 5.3 / 5.5 |  |
 | z20 | v1000 | J | CNT55 | 8.1 / 8.3 |  |
+| z20 | v800 | J | CNT62 | 8.0 / 8.1 |  |
 | z50 | v1000 | J | CNT92 | 16.4 / 16.5 |  |
 
 ## Points
@@ -159,8 +164,9 @@ Automatic numbers start at 1: pin them with a mapping file (`--map`) to avoid cl
 
 | P | RAPID target | RAPID line | UF/UT | Value |
 |---|---|---|---|---|
-| P[1] | `pArcMid` | 59 | 1/2 | X 900.000 Y 0.000 Z 500.000 W 180.000 P 0.000 R 180.000 |
-| P[2] | `pArcEnd` | 59 | 1/2 | X 950.000 Y 100.000 Z 450.000 W 180.000 P 0.000 R 180.000 |
+| P[1] | `pHome` | 54 | 1/2 | X 600.000 Y 0.000 Z 900.000 W 180.000 P 0.000 R 180.000 |
+| P[2] | `pArcMid` | 59 | 1/2 | X 900.000 Y 0.000 Z 500.000 W 180.000 P 0.000 R 180.000 |
+| P[3] | `pArcEnd` | 59 | 1/2 | X 950.000 Y 100.000 Z 450.000 W 180.000 P 0.000 R 180.000 |
 
 ## Items to review
 
@@ -169,10 +175,6 @@ Automatic numbers start at 1: pin them with a mapping file (`--map`) to avoid cl
 | MAIN | 32 | WARNING | joint targets (MoveAbsJ) converted with the measured axis conventions (J3 absolute, J4/J5/J6 reversed, J6 +180): same posture, but the TCP lands elsewhere on another robot model, check joint limits and clearances |
 | MAIN | 33 | WARNING | CONFIG derived from ABB confdata (measured conventions, see docs). A different robot model can need a different posture to reach the same point, and the J6 turn number assumes the tool's pin is in the -x hole of the faceplate (tool_pin): check reachability in ROBOGUIDE |
 | MAIN | 35 | WARNING | 'DI_PartReady' assumed to be a digital input from its name |
-| PLACE | 54 | TODO | position pPlace computed from data only known at run time: 'nSlot' is changed by the programs (PickAndPlace.main l.37) — `pPlace:=Offs(pHome,nOffsets{nSlot},0,-400);` |
-| PLACE | 55 | TODO | position pPlace.trans.z computed from data only known at run time: 'pPlace' is set at l.54 (left TODO) — `pPlace.trans.z:=pPlace.trans.z+2.5;` |
-| PLACE | 57 | TODO | 'pPlace' is set at l.55 (left TODO) — `MoveJ pPlace,v800,z20,tGripper\WObj:=wobjFixture;` |
-| PLACE | 61 | TODO | 'pPlace' is set at l.55 (left TODO) — `MoveL pPlace,v300,fine,tGripper\WObj:=wobjFixture;` |
 | PLACE | 64 | WARNING | WaitTime options ignored: InPos |
 | PLACE | 65 | TODO | GOTO is not supported — `GOTO skip_log;` |
 | PLACE | 66 | WARNING | TPWrite value not shown (MESSAGE displays fixed text only): \Num:=nSlot |

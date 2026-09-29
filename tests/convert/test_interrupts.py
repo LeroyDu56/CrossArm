@@ -94,12 +94,14 @@ def test_isleep_and_iwatch_end_and_arm_the_monitor():
 
 def test_data_a_trap_changes_is_never_taken_as_known():
     """The main program sets nStops to 0, but the TRAP may count it up at any time: a point offset by it
-    is not worked out with 0."""
+    is not worked out with 0, but offset by its register when the move runs."""
     home = "CONST robtarget pHome:=[[600,0,900],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];"
     tool = "PERS tooldata tGrip:=[TRUE,[[0,0,185.5],[1,0,0,0]],[2.4,[0,0,90],[1,0,0,0],0,0,0]];"
     main = MAIN.replace("ENDPROC", "nStops:=0;\nMoveL Offs(pHome,0,0,nStops),v100,fine,tGrip;\nENDPROC")
     result = run(main + TRAP, data=home + tool)
-    assert todos(result) == [f"'nStops' is a VAR assigned at run time \u2014 `{'MoveL Offs(pHome,0,0,nStops),v100,fine,tGrip;'}`"]
+    assert todos(result) == []
+    lines = program(result, "MAIN")
+    assert "PR[99,3]=PR[99,3]+R[1:nStops]" in lines and lines[-1] == "L PR[99]"
 
 
 def test_a_trap_that_moves_the_robot_stays_todo():

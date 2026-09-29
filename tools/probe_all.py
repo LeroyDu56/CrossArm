@@ -24,6 +24,7 @@ change to CrossArm is checked on a controller and not only on text:
     arrays       arrays of numbers indexed at run time: the totals RobotStudio computes
     interrupts   ISignalDO, IPers, ISleep/IWatch/IDelete as condition monitors: the TRAP calls RAPID makes
     params       records passed as their components, nums passed by reference, Incr/Add: the totals RobotStudio computes
+    pallet       points worked out at run time (Offs of loop counters, RelTool, CRobT): the poses of the moves written out
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
 
@@ -51,6 +52,7 @@ import make_compute_probe
 import make_condition_probe
 import make_interrupt_probe
 import make_io_probe
+import make_pallet_probe
 import make_param_probe
 import make_point_probe
 import make_select_probe
@@ -266,6 +268,19 @@ def probe_params() -> str:
                 lambda: registers_check(make_param_probe.EXPECTED, numbers))  # fmt: skip
 
 
+def probe_pallet() -> str:
+    def check() -> str:
+        found = make_pallet_probe.read_poses(make_pallet_probe.poses(roboguide.page("md/POSREG.VA")))
+        rows = make_pallet_probe.gaps(found)
+        if len(rows) != make_pallet_probe.MOVES:
+            return f"FAIL {len(rows)} of {make_pallet_probe.MOVES} moves measured"
+        gap, turn = max(r[1] for r in rows), max(r[2] for r in rows)
+        verdict = "" if gap <= 0.01 and turn <= 0.001 else "FAIL "
+        return f"{verdict}{len(rows)} moves within {gap:.4f} mm, {turn:.4f} deg of the moves written out"
+
+    return _run("pallet", make_pallet_probe.PROGRAM, [], check, timeout=300)
+
+
 LOADED: list[str] = []
 
 
@@ -295,6 +310,7 @@ def main() -> int:
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
               "interrupts": probe_interrupts, "params": probe_params,
+              "pallet": probe_pallet,
               "abb": probe_abb}  # fmt: skip
     chosen = sys.argv[1:] or list(probes)
     failed = 0
