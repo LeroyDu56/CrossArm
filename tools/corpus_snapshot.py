@@ -6,7 +6,8 @@
 The corpus is not in the repository, and neither is what it converts to. This keeps a snapshot of
 each conversion outside it (in /local/, which git ignores): TODO, warnings and coverage by area for every task, and a fingerprint of every program
 written. After a change, `check` converts again and says what moved: a coverage going down, a TODO
-count going up, a program whose text changed. A change can be intended; the point is to see it.
+count going up (in all, and for each cause), a syntax error more, a program whose text changed. A change can be intended;
+the point is to see it.
 
 Each backup is converted twice: as is, and with every move routine accepted (the choice the window
 offers after a conversion), as both are what a user gets.
@@ -15,8 +16,10 @@ Usage:
     python tools/corpus_snapshot.py save   [corpus] [snapshot]
     python tools/corpus_snapshot.py check  [corpus] [snapshot]
 
-corpus: a backup folder, or a folder of them (default $CROSSARM_RAPID_CORPUS, else ./abb).
-snapshot: default local/corpus_snapshot.json.
+corpus: a backup folder, or a folder of them (default $CROSSARM_RAPID_CORPUS, else ./abb). A folder
+of RAPID modules that is not a backup (no RAPID/ folder: the modules of a project, loose) counts as
+one source too; folders whose name starts with '_' or '.' are left out (scripts, notes).
+snapshot: default local/corpus_snapshot.json (keep one snapshot per corpus).
 """
 
 import hashlib
@@ -24,6 +27,7 @@ import json
 import os
 import sys
 import tempfile
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -32,16 +36,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from crossarm import pipeline
 from crossarm.convert import ConversionConfig
+from crossarm.rapid import RAPID_SUFFIXES
 
 ROOT = Path(__file__).resolve().parents[1]
 MODES = ("as is", "moves accepted")
 STAMP = datetime(2026, 1, 1)  # the date written in each program: fixed, or every program would differ
 
 
+def _source(folder: Path) -> bool:
+    """A backup, or a folder holding RAPID modules anywhere below it."""
+    if folder.name.startswith(("_", ".")):
+        return False
+    return (folder / "RAPID").is_dir() or any(p.suffix.lower() in RAPID_SUFFIXES for p in folder.rglob("*"))
+
+
 def backups(corpus: Path) -> list[Path]:
-    """The corpus itself if it is a backup, and every backup directly under it."""
-    found = [corpus] if (corpus / "RAPID").is_dir() else []
-    return found + sorted(p for p in corpus.iterdir() if p.is_dir() and (p / "RAPID").is_dir())
+    """The corpus itself if it is a backup, else every backup or folder of modules directly under it."""
+    if (corpus / "RAPID").is_dir():
+        return [corpus]
+    return sorted(p for p in corpus.iterdir() if p.is_dir() and _source(p))
 
 
 def convert(backup: Path, mode: str, out: Path) -> dict:
@@ -61,8 +74,10 @@ def convert(backup: Path, mode: str, out: Path) -> dict:
         }  # fmt: skip
         tasks[task.task] = {
             "programs": len(result.programs),
+            "syntax_errors": len(task.syntax_errors),
             "todo": result.todo_count,
             "warnings": sum(1 for n in result.notes if n.kind == "WARNING"),
+            "causes": dict(sorted(Counter(n.category for n in result.notes if n.kind == "TODO").items())),
             "coverage": result.coverage.percent,
             "instructions": result.coverage.total,
             "areas": {s.area: [s.converted, s.total] for s in result.coverage.shares},
@@ -100,6 +115,14 @@ def compare(old: dict, new: dict) -> list[str]:
                 for field in ("coverage", "todo", "warnings", "programs"):
                     if a[field] != b[field]:
                         changes.append(f"{where}: {field} {a[field]} -> {b[field]}")
+                for field in ("syntax_errors",):  # snapshots saved before it was kept have none
+                    if field in a and a[field] != b[field]:
+                        changes.append(f"{where}: {field} {a[field]} -> {b[field]}")
+                if "causes" in a:  # snapshots saved before causes were kept have none
+                    for cause in sorted(set(a["causes"]) | set(b["causes"])):
+                        x, y = a["causes"].get(cause, 0), b["causes"].get(cause, 0)
+                        if x != y:
+                            changes.append(f"{where}: TODO '{cause}' {x} -> {y}")
                 for area in sorted(set(a["areas"]) | set(b["areas"])):
                     x, y = a["areas"].get(area, [0, 0]), b["areas"].get(area, [0, 0])
                     if x != y:

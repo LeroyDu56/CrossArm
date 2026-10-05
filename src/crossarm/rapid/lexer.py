@@ -13,9 +13,12 @@ from dataclasses import dataclass
 from crossarm.diagnostics import Diagnostic, Severity, Span
 from crossarm.rapid.tokens import OPERATORS, RESERVED_WORDS, CommentToken, Token, TokenKind
 
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# 12, 1.5, 1., .5, 9E+09, 1.62369E-05
-_NUMBER_RE = re.compile(r"(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+# Letters of any script are kept in a name (a real project names a routine `Ñ`): the branch in run() and this
+# pattern must agree, or the lexer would raise on a character one accepts and the other does not.
+_IDENT_RE = re.compile(r"[^\W\d]\w*")
+_DIGITS = "0123456789"  # str.isdigit() also accepts '²', which _NUMBER_RE does not
+# 12, 1.5, 1., .5, 9E+09, 1.62369E-05, and integers in hexadecimal, octal, binary: 0xFF00, 0o17, 0b101
+_NUMBER_RE = re.compile(r"0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +57,7 @@ class _Lexer:
                 self._comment()
             elif ch == '"':
                 self._string()
-            elif ch.isdigit() or (ch == "." and text[self.pos + 1 : self.pos + 2].isdigit()):
+            elif ch in _DIGITS or (ch == "." and text[self.pos + 1 : self.pos + 2] in tuple(_DIGITS)):
                 self._match(_NUMBER_RE, TokenKind.NUMBER)
             elif ch.isalpha() or ch == "_":
                 self._word()

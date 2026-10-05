@@ -21,6 +21,9 @@ dist/
 # Local working notes.
 /CLAUDE.md
 
+# Manuals and other PDFs dropped in docs/ (published with the site): kept in local/, never here.
+/docs/**/*.pdf
+
 # Licence files and the licensor signing key: never in the repository
 *.licence
 *signing_key*

@@ -148,6 +148,9 @@ def test_a_trap_two_interrupts_share_is_called_through_a_relay_each():
     assert programs["IOTHER_T"] == ["R[1:IntNo]=2", "CALL TSTOP"]  # \\Single: not armed again
     trap_lines = programs["TSTOP"]
     assert "SELECT R[1:IntNo]=1,JMP LBL[2]" in trap_lines and not any("MONITOR" in t for t in trap_lines)
+    # the mapping file gives each its name: programs already loaded arm them, call them
+    assert result.program_keys == {"main": "MAIN", "tStop": "TSTOP", "iStop": "ISTOP", "iStop.relay": "ISTOP_T",
+                                   "iOther": "IOTHER", "iOther.relay": "IOTHER_T"}  # fmt: skip
 
 
 def test_a_trap_serving_one_interrupt_and_reading_intno_is_called_through_a_relay_too():

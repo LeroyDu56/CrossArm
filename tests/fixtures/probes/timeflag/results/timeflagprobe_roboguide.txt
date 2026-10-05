@@ -1,0 +1,4 @@
+tfLate1 1
+tfLate2 0
+tfTime1 1.504
+tfTime2 0

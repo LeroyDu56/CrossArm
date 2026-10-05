@@ -190,6 +190,7 @@ def run(name: str, timeout: float = 120, resumes: int = 0) -> str:
     starts with one). A pause past those is reported: an alarm pauses a program too.
     """
     before = _alarms()
+    started = time.time()
     script = _RUN.format(host=HOST, name=name.upper(), timeout=timeout, resumes=resumes)
     result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
                             timeout=timeout + 60, check=False)  # fmt: skip
@@ -200,7 +201,18 @@ def run(name: str, timeout: float = 120, resumes: int = 0) -> str:
     for line in after - before if before is not None and after is not None else ():
         if "Run request failed" in line and f"({name.upper()}," in line:
             return "refused: " + " ".join(line.split('"')[2:4]).strip()
+    # An error stopping the program (INTP-323 Value overflow...) ends the task too: in it, or in a program it
+    # calls. Dated from the run on: the log can show an earlier run's alarm late.
+    for line in after - before if before is not None and after is not None and status == "done" else ():
+        stamp = re.search(r"(\d\d-[A-Z]{3}-\d\d \d\d:\d\d:\d\d)", line)
+        if "INTP-" in line and "ABORT" in line and stamp and _logged_at(stamp[1]) >= started - 2:
+            return "aborted: " + " ".join(line.split('"')[1:3]).split("ABORT")[0].strip()
     return status
+
+
+def _logged_at(stamp: str) -> float:
+    """An error log time ('02-OCT-26 14:26:08', the PC's clock on a virtual robot) as time.time() gives it."""
+    return time.mktime(time.strptime(stamp.title(), "%d-%b-%y %H:%M:%S"))
 
 
 def _alarms() -> set[str] | None:

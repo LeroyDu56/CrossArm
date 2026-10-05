@@ -1,0 +1,5 @@
+awSum 270
+awCheck 231
+awFixed 23
+awCorners 45
+awSecond 94

@@ -9,6 +9,7 @@ and Offs()/RelTool() applied to those. Anything that depends on the program
 state at run time raises Unresolvable with a human-readable reason.
 """
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -20,6 +21,23 @@ from crossarm.rapid.walk import base_name, module_statements
 
 class Unresolvable(Exception):
     """The value is not known at conversion time."""
+
+
+def unit_quaternion(q: Any, what: str) -> tuple[float, float, float, float]:
+    """An orientation a move or a frame can use: a unit quaternion (Pose normalises the rounding of a backup).
+
+    [0,0,0,0] is the value of a robtarget or tool nobody has set yet: a PERS the program fills in
+    before using it. There is no rotation to convert, and a value worked out from it would be wrong.
+    """
+    q = tuple(float(c) for c in q)
+    if len(q) != 4:
+        raise ValueError(f"{len(q)} components in an orientation")
+    norm = math.sqrt(sum(c * c for c in q))
+    if abs(norm - 1) > 0.01:
+        unset = ": a value only set at run time" if norm < 1e-9 else ""
+        shown = ", ".join(f"{c:g}" for c in q)
+        raise Unresolvable(f"the orientation of {what}, [{shown}], is not a unit quaternion{unset}")
+    return q  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +101,21 @@ PREDEFINED_ZONES = {
     "Z0": 0.3, "Z1": 1, "Z5": 5, "Z10": 10, "Z15": 15, "Z20": 20, "Z30": 30, "Z40": 40,
     "Z50": 50, "Z60": 60, "Z80": 80, "Z100": 100, "Z150": 150, "Z200": 200,
 }  # fmt: skip
+
+
+def predefined_value(name: str) -> list | None:
+    """A predefined speeddata or zonedata as data, for data declared with it (`CONST zonedata zPick:=z50`).
+    CrossArm reads a speed's v_tcp and a zone's finep and pzone_tcp; the other components are RAPID's
+    usual ones (v_ori 500, v_leax 5000, v_reax 1000; 1.5 and 0.15 times the TCP zone)."""
+    key = name.upper()
+    if key in PREDEFINED_SPEEDS:
+        return [PREDEFINED_SPEEDS[key], 500.0, 5000.0, 1000.0]
+    if key == "FINE":
+        return [True, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    if key in PREDEFINED_ZONES:
+        r = float(PREDEFINED_ZONES[key])
+        return [False, r, 1.5 * r, 1.5 * r, 0.15 * r, 1.5 * r, 0.15 * r]
+    return None
 _IDENTITY = Pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0))
 
 
@@ -138,6 +171,9 @@ class Evaluator:
         # The routine being converted: the value its data has at this point, when the converter knows it
         # (crossarm.convert.compute), else None; raises Unresolvable when it depends on the path taken.
         self.known: Callable[[str], Any] | None = None
+        # A field of a record data (crossarm.convert.records): its value where it is one, None for any other
+        # expression; raises Unresolvable when the programs change it.
+        self.fields: Callable[[n.Expr], Any] | None = None
 
     # -- generic -----------------------------------------------------------
 
@@ -159,6 +195,10 @@ class Evaluator:
                 if op == "/" and b == 0:
                     raise Unresolvable("division by zero")
                 return {"+": a + b, "-": a - b, "*": a * b, "/": a / b if b else 0.0}[op]
+            case n.Name(name=name) if self.symbols.get(name) is None and predefined_value(name) is not None:
+                return predefined_value(name)
+            case n.Component() if self.fields is not None and (found := self.fields(expr)) is not None:
+                return found
             case n.Name(name=name):
                 # Constants only: a register stays a register, even when its value here is known.
                 if self.known is not None and not self._constants_only:
@@ -172,6 +212,13 @@ class Evaluator:
                     return self.value(init)
                 finally:
                     self._resolving.discard(key)
+            case n.FuncCall(name=fn, args=(n.Arg(name=None, value=n.Name(name=array)), n.Arg(name=None, value=k))) if (
+                fn.upper() == "DIM" and (decl := self.symbols.get(array)) is not None and decl.dims
+            ):  # the size of an array as declared: Dim(pSlot,1)
+                axis = self.constant_number(k)
+                if not (float(axis).is_integer() and 1 <= axis <= len(decl.dims)):
+                    raise Unresolvable(f"{_short(expr)}: {array} has {len(decl.dims)} dimension(s)")
+                return self.constant_number(decl.dims[int(axis) - 1])
             case n.Index(base=n.Name() as base, indices=indices):
                 # An element at a fixed index (pSlot{2}): the index a CONST, the array as its name reads it.
                 data = self.value(base)
@@ -225,7 +272,8 @@ class Evaluator:
         data = self.value(expr)
         try:
             (x, y, z), q, conf, _extax = data
-            return RobTarget(Pose((x, y, z), tuple(q)), tuple(int(c) for c in conf))  # type: ignore[arg-type]
+            q = unit_quaternion(q, _short(expr))
+            return RobTarget(Pose((x, y, z), q), tuple(int(c) for c in conf))  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
             raise Unresolvable(f"malformed robtarget: {_short(expr)}") from exc
 
@@ -285,12 +333,19 @@ class Evaluator:
         data, saved = self._frame_value(expr)
         try:  # [robhold, [trans, rot], loaddata]
             robhold, ((x, y, z), q), load = data
-            frame = Frame(Pose((x, y, z), tuple(q)), bool(robhold), _short(expr), saved=saved)  # type: ignore[arg-type]
+            q = unit_quaternion(q, _short(expr))
+            frame = Frame(Pose((x, y, z), q), bool(robhold), _short(expr), saved=saved)  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
             raise Unresolvable(f"malformed tooldata: {_short(expr)}") from exc
         try:  # loaddata: [mass, [cog], [aom], ix, iy, iz]
             mass, (cx, cy, cz), aom, ix, iy, iz = load
-            loaded = Load(float(mass), (cx, cy, cz), tuple(aom), (ix, iy, iz))  # type: ignore[arg-type]
+            try:
+                aom = unit_quaternion(aom, "its load's axes of moment")
+            except Unresolvable:
+                if any((ix, iy, iz)):
+                    raise ValueError("inertia about axes that are no rotation") from None
+                aom = (1.0, 0.0, 0.0, 0.0)  # no inertia: its axes do not matter
+            loaded = Load(float(mass), (cx, cy, cz), aom, (ix, iy, iz))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return frame  # a malformed load must not cost the tool frame
         return Frame(frame.pose, frame.robhold, frame.name, loaded, saved)
@@ -301,7 +356,8 @@ class Evaluator:
         data, saved = self._frame_value(expr)
         try:  # [robhold, ufprog, ufmec, uframe, oframe]
             robhold, _ufprog, _ufmec, ((ux, uy, uz), uq), ((ox, oy, oz), oq) = data
-            pose = Pose((ux, uy, uz), tuple(uq)).compose(Pose((ox, oy, oz), tuple(oq)))  # type: ignore[arg-type]
+            uq, oq = unit_quaternion(uq, f"{_short(expr)}.uframe"), unit_quaternion(oq, f"{_short(expr)}.oframe")
+            pose = Pose((ux, uy, uz), uq).compose(Pose((ox, oy, oz), oq))  # type: ignore[arg-type]
             return Frame(pose, bool(robhold), _short(expr), saved=saved)
         except (TypeError, ValueError) as exc:
             raise Unresolvable(f"malformed wobjdata: {_short(expr)}") from exc

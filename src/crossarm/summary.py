@@ -33,6 +33,10 @@ def describe_source(info: Inspection) -> str:
         tasks = ", ".join(f"{name} ({count})" for name, count in info.tasks)
         text = (f'ABB backup "{info.name}": {plural(len(info.tasks), "robot task")}, '
                 f"{plural(info.modules, 'RAPID module')} — {tasks}.")  # fmt: skip
+    elif len(info.tasks) > 1:  # modules of the same name in several folders: a task per folder
+        tasks = ", ".join(f"{name} ({count})" for name, count in info.tasks)
+        text = (f"{plural(info.modules, 'RAPID module')} ({info.name}), modules of the same name in several "
+                f"folders: {plural(len(info.tasks), 'folder')} converted apart — {tasks}.")  # fmt: skip
     else:
         text = f"{plural(info.modules, 'RAPID module')} ({info.name})."
     if info.eio_signals is not None:

@@ -1,0 +1,65 @@
+{
+  "_README": "Numbers CrossArm allocated automatically, in order of first use. Change them to the ones the controller already uses, then convert again with --map on this file. Names match the RAPID data, case-insensitively. Keys starting with _ are ignored.",
+  "registers": {
+    "nParts": 1,
+    "nRow": 2,
+    "nCol": 3,
+    "tSettle": 4,
+    "k": 5,
+    "nLayer": 6,
+    "i": 7,
+    "nSlot": 8,
+    "nCycles": 9,
+    "NumberIndex": 10,
+    "nCode": 11
+  },
+  "flags": {
+    "bStackFull": 1
+  },
+  "digital_outputs": {
+    "doRowStart": 1,
+    "doVacuum": 2,
+    "DO_GripperClose": 3
+  },
+  "digital_inputs": {
+    "diStackReady": 1,
+    "diForceRow": 2,
+    "diAbort": 3,
+    "DI_PartReady": 4
+  },
+  "group_outputs": {
+    "goEchoCode": 1,
+    "goStatus": 2
+  },
+  "group_inputs": {
+    "giCycleCode": 1
+  },
+  "uframes": {
+    "wobj0": 0,
+    "wobjStack": 1,
+    "wobjFixture": 2
+  },
+  "utools": {
+    "tool0": 1,
+    "tSuction": 2,
+    "tGripper": 3
+  },
+  "_tool_pin": "The pin hole of the FANUC flange the tool's guide pin goes in, which the adapter plate decides. -x: where the ABB pin was, tool frames as they are. +x: the ISO 9409-1 hole, tool frames turned half a turn about z (see the report, 'Tool frames').",
+  "tool_pin": "-x",
+  "limits": {
+    "UFRAME": 9,
+    "UTOOL": 10,
+    "TIMER": 10,
+    "R": 200,
+    "PR": 100,
+    "F": 1024
+  },
+  "_number_arrays": "Arrays of numbers the programs index at run time (nTorque{i}): SETUP_FRAMES keeps each in consecutive registers from the one given here, read as R[R[n]]. Change it to the first of a free run.",
+  "number_arrays": {
+    "nOffsets": 198
+  },
+  "_point_registers": "Position registers a point is passed to a routine in (a robtarget parameter): the caller sets it before the CALL, the routine moves to it. CROSSARM.POINT is where a routine offsets one (Offs). Change a number to a register the robot does not use.",
+  "point_registers": {
+    "PPLACE": 99
+  }
+}

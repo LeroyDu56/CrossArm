@@ -120,3 +120,19 @@ def test_the_wait_timer_is_one_the_robot_does_not_use():
     result = run(f"WaitUntil bDone\\MaxTime:=2;\n{TRYNEXT}", DATA, config)
     assert tp_lines(result)[0] == "TIMER[8]=RESET"
     assert result.wait_clock == ("TIMER[8]", "R[1:WaitTimer]")
+
+
+def test_a_wait_with_a_time_flag_sets_it_and_goes_on_without_a_handler():
+    """\\TimeFlag: RAPID raises no error when the time runs out, it sets the flag and goes on."""
+    result = run("WaitDI diReady,1\\MaxTime:=2.5\\TimeFlag:=bLate;\nIF bLate nNext:=1;", DATA + "\nVAR bool bLate;")
+    assert todos(result) == []
+    assert tp_lines(result) == [
+        "TIMER[10]=RESET", "TIMER[10]=START",
+        "LBL[1]", "R[1:WaitTimer]=TIMER[10]", "IF (DI[1]=OFF AND R[1:WaitTimer]<2.5) THEN", "JMP LBL[1]", "ENDIF",
+        "TIMER[10]=STOP", "F[1]=(R[1:WaitTimer]>=2.5)",
+        "IF (F[1]=ON) THEN", "R[2:nNext]=1", "ENDIF",
+    ]  # fmt: skip
+
+
+def test_a_time_flag_must_be_bool_data():
+    assert "TimeFlag must be bool data" in todos(run("WaitDI diReady,1\\MaxTime:=1\\TimeFlag:=nNext;", DATA))[0]

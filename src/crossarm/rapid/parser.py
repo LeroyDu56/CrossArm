@@ -645,6 +645,8 @@ class Parser:
 
 
 def _number_value(text: str) -> int | float:
+    if text[:2].lower() in ("0x", "0o", "0b"):  # before the exponent test: 0xE0 is no float
+        return int(text, 0)
     if any(c in text for c in ".eE"):
         return float(text)
     return int(text)

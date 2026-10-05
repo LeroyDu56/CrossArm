@@ -505,6 +505,7 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
         ]
     lines += _table(["TP", "RAPID name", "Number from", "Note"],
                     _allocation_rows(result.registers, "R") + _allocation_rows(result.flags, "F")
+                    + _allocation_rows(result.string_registers, "SR")
                     + _allocation_rows(result.digital_outputs, "DO")
                     + _allocation_rows(result.digital_inputs, "DI")
                     + _allocation_rows(result.group_outputs, "GO")
@@ -512,6 +513,32 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
                     + _allocation_rows(result.analog_outputs, "AO")
                     + _allocation_rows(result.timers, "TIMER")
                     + _allocation_rows(result.point_registers, "PR"))  # fmt: skip
+    if result.string_registers:
+        lines += [
+            "",
+            "### Texts in string registers",
+            "",
+            ("Each string the programs change is a string register (SR). A TP line cannot write a text in one,"
+             " nor compare one with a text: a text written in the program is loaded by "
+             + (f"`CALL {result.text_program}(n,'text',0)`" if result.text_program else "the program loading texts")
+             + " (38 characters at a time) into a scratch register taken from the top, just before it is"
+             " compared or passed on, and never kept from one instruction to the next. An apostrophe ends a TP"
+             " text: it is written as a backquote. TP compares texts regardless of case: a comparison is"
+             " converted only when the texts compared cannot differ by case alone. A register only the"
+             " statements converted with texts use is numbered from the top down (R[200], R[199]...), so that"
+             " the other programs keep the numbers earlier versions gave them."),
+        ]
+    if result.records:
+        lines += [
+            "",
+            "### Records kept field by field",
+            "",
+            ("TP has no records: each field the programs change is a register (a bool a flag) named by its"
+             " path; a field no program changes is written as its value where it is read."),
+            "",
+        ]
+        lines += _table(["Record", "Registers", "Flags"],
+                        [[name, str(r), str(f)] for name, (r, f) in result.records.items()])  # fmt: skip
 
     lines += _motion_section(result, config)
 

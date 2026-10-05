@@ -43,7 +43,12 @@ CROSSARM_RAPID_CORPUS=/path/to/rapid CROSSARM_FANUC_CORPUS=/path/to/fanuc pytest
                                                    # + a local corpus of backups (not in the repo)
 CROSSARM_UPDATE_GOLDEN=1 pytest                     # regenerate expected outputs, then review the diff
 python tools/corpus_snapshot.py check              # what changed on the local corpus (kept outside the repo)
+python tools/corpus_snapshot.py check <folder> <snapshot.json>   # another corpus, one snapshot each
 ```
+
+`corpus_snapshot.py` takes a folder of backups or of folders of loose RAPID modules, and compares
+coverage by area, TODO in all and for each cause, warnings, syntax errors and a fingerprint of every
+program written.
 
 ## Running the controller probes
 

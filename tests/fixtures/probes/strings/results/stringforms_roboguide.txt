@@ -1,0 +1,12 @@
+STRF_LIT ASBN-092 Undefined instruction at line 22, column 16
+STRF_IFBLOCK ASBN-092 Undefined instruction at line 22, column 18
+STRF_IFLIT ASBN-092 Undefined instruction at line 22, column 19
+STRF_SELECT ASBN-092 Undefined instruction at line 22, column 17
+STRF_ARG39 ASBN-092 Undefined instruction at line 22, column 17
+STRF_APOS ASBN-092 Undefined instruction at line 22, column 29
+STRF_EMPTY stored CALL CA_TEXT(20,'...',0)
+STRF_CHARS stored CALL CA_TEXT(20,'say "hi", f(x); ok',0)
+STRF_COMMENT stored SR[20]=SR[21]
+STRF_INT_MAX stored R[60]=2147483646
+STRF_INT_OVER stored R[60]=********
+STRF_INT_MIN stored R[60]=(-129)

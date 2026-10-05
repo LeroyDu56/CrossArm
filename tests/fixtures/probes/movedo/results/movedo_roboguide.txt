@@ -1,0 +1,2 @@
+distance_mm 0.000
+after_within_0.5mm_ms 50

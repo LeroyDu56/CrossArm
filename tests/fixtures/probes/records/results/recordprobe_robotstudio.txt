@@ -1,0 +1,10 @@
+state 3
+counter 11
+nSteps 3
+nBusy 1
+nSaved 1307
+nBad 0
+nCopy 103
+nTime 0.62
+nTime2 1.3
+label IDLE

@@ -1,6 +1,6 @@
 # CrossArm conversion report
 
-- Generated: 2026-01-01 08:00:00 by CrossArm 1.2.0
+- Generated: 2026-01-01 08:00:00 by CrossArm 1.3.0
 - Sources: `logic_and_io.mod`
 - Programs: 2, items to review: 0 TODO, 4 warnings
 

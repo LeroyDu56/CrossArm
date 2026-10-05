@@ -3,6 +3,158 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## 1.3.0 — 2026-10-05
+
+More of the RAPID that cells keep their state in, converted: records, strings, arrays the programs
+write, bools set to conditions, points routines change, and searches on an input. Each construct was
+measured on the controllers before CrossArm writes it. On the three RobotWare backups of the test
+corpus, the share of RAPID instructions converted goes from 84 %, 93 % and 85 % to 86 %, 93 % and
+87 %; on public open-source programs it is about 60 % (what that means: [docs/validation.md](docs/validation.md#public-programs)).
+A mapping file written for 1.0 to 1.2 gives the same numbers.
+
+### Converts
+- Data of a `RECORD` type the backup declares, as a state machine keeps its state in it. Each field a
+  program changes is a register named by its path (`R[12:rCell.state]`), a bool field a flag; a
+  record set whole is set field by field. A field no program changes is written as its value where it
+  is read (a PERS at its saved value, with a warning). A speed or zone field is the speed or zone of
+  the moves when every write gives it the same value, with a warning, and where it is read before
+  that. A record of a routine whose fields are all num and bool is set to its initial value where the
+  routine starts, as RAPID does at each call. String, point and other fields, arrays of records, a
+  speed set to several values and a record of a routine calling itself back stay TODO, with why.
+  Measured on both controllers (record probe): the same totals, the moves at the speed of the record.
+- A speed or zone declared as a predefined one (`CONST zonedata zPick:=z50`), and the components of a
+  speed or zone (`vFast.v_tcp`).
+- Strings the programs change, as a state machine keeps its state in one or a program reads a text one
+  character at a time. Each is a string register (`SR[3]`). A TP line can neither write a text in one
+  nor compare one with a text: a text written in the program is loaded by a program CrossArm writes
+  with the others, `CALL CA_TEXT(3,'IDLE',0)` (38 characters at a time, a longer one in pieces), into
+  a scratch register just before it is compared or passed on. `IF s="RUN"` / `ELSEIF` / `WHILE` on
+  texts are jumps, `IF SR[3]<>SR[25],JMP LBL[2]`, as TP compares texts in that form only; `StrLen`,
+  `StrPart`, `StrMatch` from the first character, `+`, `NumToStr(n,0)` and `ValToStr(n)` of a number
+  only ever given whole numbers are TP's `STRLEN`, `SUBSTR`, `FINDSTR`, `+` and `SR=R`. A string of a
+  routine is set where the routine starts; a text worked out for a call is passed in a scratch register.
+  TP compares texts regardless of case: a comparison where the texts could differ by case alone stays
+  TODO, as do `StrToVal`, `StrFind`, `StrMemb`, `StrOrder`, a number with decimals written as a text and
+  strings of records. Measured on both controllers (string probe): the same totals.
+- Arrays of numbers the programs change (`nCmd{4}:=nDetail-1`, `nGrid{i,j}:=i*10+j`, `Incr nCount{k}`):
+  a block of registers, as for an array only read, written at a fixed index in the element's own
+  register (`R[186]=R[186]+1`) and at an index worked out in `R[R[n]]`; an index of several operations
+  is worked out first. `SETUP_FRAMES` sets the values the array is declared with (zeros without) or,
+  for a PERS, saved with, with a warning: a register keeps its value where RAPID sets a VAR again when
+  the program starts. The tasks of a backup share the block of a PERS array, as they share the PERS.
+  `Dim()` of a declared array is its size. An array of a routine stays TODO (RAPID sets it again at
+  each call), and so do arrays of strings: TP has 25 string registers. Measured on both controllers
+  (array write probe): the same totals.
+- Arrays of bools the programs change or index at run time (`bSlot{i}:=i>3`, `IF bSlot{k} ...`): a block
+  of consecutive flags, from the top down, `F[1022]` at a fixed index and `F[R[n]]` at an index known at
+  run time, set to a condition as the other flags (`F[R[4]]=(F[R[3]]=OFF)`). `SETUP_FRAMES` sets the
+  values the array is declared with, or saved with for a PERS. The mapping file has a `flag_arrays`
+  key, optional: the first flag of each array. Measured on both controllers (flag array probe): the
+  same totals.
+- A bool set to a condition (`bOk:=nCount>2 AND NOT bBusy`, `bOk:=bBusy`) is its flag set to TP's
+  mixed logic, `F[2]=(R[1]>2 AND F[1]=OFF)`, `F[2]=(F[1])`; to a comparison of texts, with jumps. Also a
+  bool of a routine declared with a condition and a bool field of a record. Measured on both
+  controllers (flag probe): the same totals.
+- A point passed by reference (`VAR` or `INOUT robtarget`) that the routine changes (`pAt:=Offs(pAt,0,50,0)`,
+  `pAt.trans.z:=...`, passed on): the routine works on the position register it is given, the caller
+  reads it back after the CALL (`PR[99]=PR[98]`), and its point is kept in a position register. Measured
+  on both controllers (point reference probe): the same values, after the moves.
+- `MoveLDO` / `MoveJDO` / `MoveCDO` to a fine point: the move, then the output; measured, the output
+  switches with the TCP on the point, as RAPID sets it there. Through a zone, where RAPID sets it in the
+  middle of the corner path, it stays TODO. `TestDI(di)` is the input at 1 (`DI[n]=ON`). `WaitRob \InPos`
+  or `\ZeroSpeed` after a FINE move is a remark: the line after a FINE move runs once the robot stands
+  on the point; after a move through a zone it stays TODO.
+- A wait with `\MaxTime` and `\TimeFlag` (`WaitDI diReady,1\MaxTime:=2.5\TimeFlag:=bLate`): RAPID raises no
+  error when the time runs out, it sets the bool; the wait polls a TIMER as other timed waits do, then
+  sets the flag, `F[3]=(R[5:WaitTimer]>=2.5)`, without an ERROR handler. Measured on both controllers
+  (time flag probe): the same flags.
+- `SearchL` on a digital input, as a skip: `SKIP CONDITION DI[1]=ON`, then the move to the point with
+  `Skip,LBL[2],PR[99]=LPOS`, the point found kept in a position register and read as the other points
+  known at run time (`Offs()`, its x, y, z, a move to it). A search for a change (`\PosFlank`, the
+  default, `\NegFlank`) first checks the input is not already at that level, as RAPID does; `\HighLevel`
+  and `\LowLevel` do not. `\Stop`, `\PStop`, `\SStop`: the move stops there. `\Sup` and no stop option:
+  RAPID goes on to the point without stopping, the FANUC stops, then goes on to it (warning; a second
+  switch, an error for `\Sup`, is not checked). Where RAPID stops with an error (nothing found, the
+  input already on), a `MESSAGE` and `PAUSE`, then the search again when resumed. Measured on ROBOGUIDE
+  (search probe): the point found where the input switched; the FANUC stops past it and comes back, where
+  RAPID stays past it, which the report says. A move with a skip recording the position keeps its speed
+  up to 100 mm/s, the controller slows a faster one down (measured, where the manual says 250): a faster
+  search stays TODO, never slowed down. `\Flanks`, an array element as the search point and a routine
+  with an `ERROR` handler stay TODO too.
+- The mapping file has a `string_registers` key: the string register of each string
+  (`"sState": 3`, `Routine.name` for a routine's own) and the scratch ones (`CROSSARM.TEXT`, taken
+  from the top); and `limits.SR`, 25 on a standard controller, when strings are used. The string
+  registers the FANUC robot's programs use are left free.
+- The mapping file has a `programs` key: the TP name of each program written that other programs call
+  or arm (`"pickPart": "PICKPART"`, an interrupt's condition program by the interrupt's name, its relay
+  `iStop.relay`, `CROSSARM.TEXT` the program loading texts). Given back, a conversion keeps these names
+  even when the FANUC robot has a program of that name by then, with a warning: the programs already
+  loaded call them. A conversion without it names the programs as before.
+
+### Changes
+- The automatic numbers of registers, flags and I/O can shift between versions (more RAPID
+  converted); give a conversion its mapping file back to keep them.
+- A routine calling itself back and given points passed them in position registers every call under
+  way shares, so a call overwrote the points of the calls waiting for it to end: such a call is a TODO
+  that says so.
+- A statement reading an array of numbers no run of free registers can hold was counted as converted
+  while its line became a TODO: it counts as not converted.
+- A register only the statements converted with texts use is numbered from the top down (`R[200]`,
+  `R[199]`...): the programs without texts keep the numbers they had.
+- The report gives RAPID instructions TP has nothing for a cause of their own, "RAPID instruction
+  without a TP equivalent", with why: files and serial channels, sockets, raw byte buffers, operator
+  dialogs waiting for an answer, screens of the ABB pendant, the ABB event log (`ErrWrite`, `ErrLog`),
+  system instructions, world zones. They were counted as calls with arguments or values not known at conversion time.
+- Loose modules holding several robot tasks or versions of a program (modules of the same name in
+  several folders) are converted as a task per folder, each written in a folder of its own. They were
+  converted as one task, and programs of the same name were written over one another: fewer files
+  than the programs announced. Loose modules of distinct names are one task, written as before.
+- Modules given as several files are read in path order, whatever the order they were picked in.
+- The mapping file names a field of a record by its path (`rCell.state`, `Routine.data.field` for
+  a routine's own); one it does not name is numbered after every number it pins. The report lists
+  the registers and flags each record takes.
+- The mapping file names the FOR counters of a routine and the copies of its parameters after the
+  routine (`MAIN.i`), and the registers CrossArm uses itself `CROSSARM.` and their use
+  (`CROSSARM.NUMBERINDEX`), instead of the RAPID name alone (`i`), which two routines can share.
+
+### Validated
+- The record probe keeps a state machine in records, on RobotStudio and, converted, on ROBOGUIDE: the
+  same totals, the moves at the speed of the record
+  ([docs/validation.md](docs/validation.md#23-records-kept-field-by-field-run)).
+- The string probe compares, works out and passes texts on both controllers: the same totals
+  ([docs/validation.md](docs/validation.md#24-strings-in-string-registers-run)).
+- The probes of arrays the programs write, bools set to conditions, points passed by reference, waits
+  with a time flag and arrays of bools, on both controllers: the values RAPID computes
+  ([docs/validation.md](docs/validation.md#25-arrays-the-programs-write-run), sections 25 to 31).
+- On ROBOGUIDE, with signals switched through COM as the TCP passes a point: the output after a fine
+  move switches with the TCP on the point, and a search finds the point within 0.1 mm of the switch
+  ([docs/validation.md](docs/validation.md#30-a-search-run)).
+
+### Fixes
+- A constant below 1 in an assignment is written without its zero (`R[4]=.25`), as the controller
+  stores it. A small constant keeps its significant digits (`.0000015`, was `0.000002`).
+- A whole number past what a TP register line keeps (2147483647 and more, `0xFFFFFFFF`, `1E10`) was
+  written as it is, and the controller stored it as `********` or as another number (`-2147483648`
+  as `-129`). It is a TODO that says so. Whole numbers up to 2147483646 are written digit for digit,
+  as measured.
+- A mapping file given back did not pin the FOR counters, the copies of parameters and CrossArm's own
+  registers: they were numbered again, past every number of the file. They keep their numbers, also
+  from a file written by 1.0 to 1.2, whose RAPID names pin the first register of each name.
+- Two modules of one task declaring a routine of the same name (`LOCAL PROC main`) both wrote it to
+  one file. The routine of the file that comes first by path is converted; the report lists the other
+  as not converted.
+- A name with a letter outside ASCII (`PROC Ñ`) stopped the reading of its module with an internal
+  error. Names take the letters of any script, as RAPID does.
+- Integers written in hexadecimal, octal or binary (`0xFF00`, `0o17`, `0b101`) were syntax errors.
+  They are read, and written in TP in decimal.
+- A move to a point whose orientation is no rotation, `[0,0,0,0]` (a `PERS` the program sets before
+  moving there), was an internal error. It is a TODO that says so, as is a point of an array of
+  points with such an orientation; a tool or work object with one is left unset in
+  `SETUP_FRAMES.LS`, with why, as a frame set at run time.
+- A tool whose load has no inertia and its axes of moment left at `[0,0,0,0]` stopped the whole
+  conversion at the first `GripLoad` on it. The axes of a load without inertia do not matter: the
+  payload is worked out from its mass and centre of gravity.
+
 ## 1.2.0 — 2026-09-29
 
 More of what real cells do, converted: interrupts and their TRAP routines as FANUC condition

@@ -121,3 +121,92 @@ def test_analog_scales_are_written_for_the_user_to_fill_in(tmp_path):
     result = run(body, data, config=cfg)
     assert [line.text for line in result.programs[0].program.lines[1:]] == ["AO[1]=1843", "TIMER[4]=RESET"]
     assert mapping_of(result, cfg)["analog_scales"] == {"aoFlow": 409.5}
+
+
+def test_each_routine_s_counter_is_kept_apart_in_the_mapping_file(tmp_path):
+    """Two routines counting with i: two registers, MAIN.i and other.i, each pinned when given back."""
+    from crossarm.convert.translate import NumberTable
+
+    table = NumberTable({"MAIN.I": 7, "OTHER.I": 3}, 1)
+    assert (table.number("i", key="MAIN.i"), table.number("i", key="other.i")) == (7, 3)
+
+
+def test_a_1_2_mapping_naming_a_counter_by_its_rapid_name_still_pins_it():
+    from crossarm.convert.translate import NumberTable
+
+    table = NumberTable({"I": 7}, 1)
+    assert table.number("i", key="MAIN.i") == 7  # the first register of that name
+    assert table.number("i", key="other.i") == 1  # 7 is taken: another one
+    assert table.number("i") == 2  # data named i: never the counter's register a second time
+
+
+# -- the names of the programs -------------------------------------------------------------------
+
+TEXTS = "VAR string sState:=\"\";"
+PROCS = "PROC pick()\nsState:=\"PICK\";\nENDPROC"
+
+
+def convert_on(robot: set[str], cfg: ConversionConfig):
+    """main calling pick, both loading a text, converted for a robot that already has the programs `robot`."""
+    from crossarm.convert.translate import ControllerScope
+
+    source = f"MODULE M\n{TEXTS}\nPROC main()\nsState:=\"IDLE\";\npick;\nENDPROC\n{PROCS}\nENDMODULE\n"
+    return convert([parse_module(source)], cfg, routines=["main", "pick"], sources={"M": source},
+                   shared=ControllerScope.from_config(cfg, robot))  # fmt: skip
+
+
+def names(result) -> list[str]:
+    return [info.program.name for info in result.programs]
+
+
+def test_the_mapping_file_gives_the_name_of_each_program_written():
+    data = mapping_of(convert_on(set(), config()))
+    assert data["programs"] == {"main": "MAIN", "pick": "PICK", "CROSSARM.TEXT": "CA_TEXT"}
+    assert "CROSSARM.TEXT" in data["_programs"]
+
+
+def test_given_back_the_mapping_file_keeps_the_names_with_or_without_those_programs_on_the_robot(tmp_path):
+    """A second conversion would rename CA_TEXT and PICK, programs of the robot by then: the programs already
+    loaded call the names the first one gave. Given back its mapping file, it gives the same names, twice."""
+    first = convert_on(set(), config())
+    assert names(first) == ["MAIN", "PICK", "CA_TEXT"]
+    alone = convert_on({"CA_TEXT", "PICK"}, config())  # without the mapping file: renamed, said so
+    assert names(alone) == ["MAIN", "PICK_2", "CA_TEXT_2"]
+    path = tmp_path / "map.json"
+    path.write_text(build_mapping(first, config()), encoding="utf-8")
+    for robot in (set(), {"CA_TEXT", "PICK"}, set(), {"CA_TEXT", "PICK"}):
+        cfg = ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1))
+        result = convert_on(robot, cfg)
+        assert names(result) == names(first)
+        assert "CALL CA_TEXT(1,'IDLE',0)" in [getattr(line, "text", "") for line in result.programs[0].program.lines]
+        assert build_mapping(result, cfg) == build_mapping(first, config())
+        taken = [n.message for n in result.notes if n.category == "pinned number already used on the controller"]
+        assert len(taken) == len(robot)  # each said: replaced on loading, intended if the first conversion loaded it
+        assert all("an earlier conversion" in message for message in taken)
+
+
+def test_a_name_the_mapping_file_gives_is_kept_for_its_program(tmp_path):
+    path = tmp_path / "map.json"
+    path.write_text(json.dumps({"programs": {"pick": "MAIN", "CROSSARM.TEXT": "TXT"}}), encoding="utf-8")
+    result = convert_on(set(), ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1)))
+    # MAIN is pick's: main, converted first, takes another name rather than MAIN
+    assert names(result) == ["MAIN_2", "MAIN", "TXT"]
+    assert "CALL TXT(1,'IDLE',0)" in [getattr(line, "text", "") for line in result.programs[0].program.lines]
+
+
+def test_two_programs_given_one_name_take_a_suffix_for_the_second(tmp_path):
+    path = tmp_path / "map.json"
+    path.write_text(json.dumps({"programs": {"main": "SAME", "pick": "SAME"}}), encoding="utf-8")
+    result = convert_on(set(), ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1)))
+    assert names(result)[:2] == ["SAME", "SAME_2"]
+    assert any("the mapping file gives it SAME" in n.message for n in result.notes)
+
+
+def test_a_program_name_the_controller_cannot_hold_is_refused(tmp_path):
+    import pytest
+
+    path = tmp_path / "map.json"
+    for bad in ("1PICK", "PICK-UP", 3, "P" * 40):
+        path.write_text(json.dumps({"programs": {"pick": bad}}), encoding="utf-8")
+        with pytest.raises(ValueError, match="programs.pick"):
+            ConversionConfig.from_mapping_file(path)

@@ -94,11 +94,11 @@ def test_a_clean_run_on_a_known_robot_is_all_good(tmp_path, fanuc_robot):
     assert summary.report is not None and summary.report.name == "crossarm_report.html"
 
 
-def tool_rack(folder, tools: int, broken: bool = False):
+def tool_rack(folder, tools: int, broken: bool = False, routine: str = "main"):
     """One program that needs `tools` tool frames, optionally with a statement the parser cannot read."""
     lines = ["MODULE ToolRack", "CONST robtarget pHome:=[[600,0,900],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];"]
     lines += [f"PERS tooldata t{i}:=[TRUE,[[0,0,{i}],[1,0,0,0]],[1,[0,0,1],[1,0,0,0],0,0,0]];" for i in range(tools)]
-    lines += ["PROC main()", *(f"  MoveJ pHome,v100,fine,t{i};" for i in range(tools))]
+    lines += [f"PROC {routine}()", *(f"  MoveJ pHome,v100,fine,t{i};" for i in range(tools))]
     lines += ["  x := ;"] if broken else []
     lines += ["ENDPROC", "ENDMODULE", ""]
     path = folder / "tool_rack.mod"
@@ -140,7 +140,7 @@ def test_the_main_source_of_manual_work_is_named(tmp_path):
 def test_several_tasks_say_which_one(tmp_path):
     backup = make_backup(tmp_path / "Cell_2026")
     for task in ("TASK1", "TASK2"):
-        tool_rack(backup / "RAPID" / task / "PROGMOD", 11)
+        tool_rack(backup / "RAPID" / task / "PROGMOD", 11, routine="rack")  # the task has its main already
     texts = [text for _, text in summarize(pipeline.run([backup], log=quiet, config=no_register_left())).attention]
     assert any(text.startswith("T_ROB1: Tool frames (UTOOL)") for text in texts)
     assert any(text.startswith("T_ROB2: Tool frames (UTOOL)") for text in texts)
@@ -172,3 +172,12 @@ def test_corners_rounder_on_the_abb_than_cnt100_are_said(tmp_path):
     texts = [text for _, text in summarize(pipeline.run([source], log=quiet)).attention]
     assert any(text.startswith("1 zone is rounder on the ABB than CNT100") for text in texts)
 
+
+def test_folders_converted_apart_are_named(tmp_path):
+    for version in ("v1", "v2"):
+        (tmp_path / "project" / version).mkdir(parents=True)
+        (tmp_path / "project" / version / "Main.mod").write_text("MODULE Main\nPROC main()\nStop;\nENDPROC\nENDMODULE\n")
+    info = pipeline.inspect([tmp_path / "project"])
+    assert describe_source(info).startswith(
+        "2 RAPID modules (project), modules of the same name in several folders: 2 folders converted apart"
+        " — v1 (1), v2 (1).")  # fmt: skip

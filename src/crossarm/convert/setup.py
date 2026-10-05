@@ -136,6 +136,15 @@ def build_setup(result: ConversionResult, config: ConversionConfig, name: str) -
         for k, value in enumerate(numbers.values):
             lines.append(Instruction(f"R[{numbers.base + k}]={decimal(operand(fmt_number(value)))}"))
         setup.numbers.append(numbers)
+    for flags in result.flag_arrays:  # read and set as F[R[n]] by the programs
+        if flags.base is None:
+            continue
+        last = flags.base + len(flags.values) - 1
+        for text in remark_lines(f"{flags.name}: F[{flags.base}] to F[{last}]"):
+            lines.append(Instruction(text))
+        for k, value in enumerate(flags.values):
+            lines.append(Instruction(f"F[{flags.base + k}]=({'ON' if value else 'OFF'})"))
+        setup.numbers.append(flags)
     if not setup.written and not setup.registers and not setup.arrays and not setup.numbers:
         return setup
     head = [Instruction(text) for text in remark_lines("CrossArm: tool and user frames of the ABB backup")]

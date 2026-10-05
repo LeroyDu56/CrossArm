@@ -1,0 +1,11 @@
+RECF_BOOL_SET loaded
+RECF_BOOL_COND loaded
+RECF_BOOL_AND loaded
+RECF_BOOL_IF loaded
+RECF_BOOL_COPY loaded
+RECF_STR_LIT 550 Error occurred during load: ASBN-092 Undefined instruction at line 22, column 16
+RECF_STR_ARG loaded
+RECF_STR_CALL loaded
+RECF_STR_COPY loaded
+RECF_STR_IF 550 Error occurred during load: ASBN-092 Undefined instruction at line 22, column 18
+RECF_STR_IND loaded

@@ -52,9 +52,9 @@ def write_ls(program: Program) -> str:
 # arguments is not padded: `CALL NAME(1,2) ;` (ROBOGUIDE, argument probe). A position register set
 # from a point, another register or the current position is, `PR[100]=P[17]    ;`, `PR[98]=PR[97]    ;`,
 # `PR[51]=LPOS    ;`, and so are a component, `PR[95,3]=(-30)    ;`, and a register named by another,
-# `PR[R[90]]=LPOS    ;`; but not one set from a frame, `PR[31]=UTOOL[1] ;`, nor a frame set from it,
+# `PR[R[90]]=LPOS    ;`, `R[R[3]]=R[4]+1    ;`; but not one set from a frame, `PR[31]=UTOOL[1] ;`, nor a frame set from it,
 # `UTOOL[1]=PR[100] ;` (ROBOGUIDE, probe programs as the controller stores them).
-_PADDED = re.compile(r"^(CALL [^(]*$|R\[[^\]]*\]=|PR\[.*?\]=(?!UTOOL\[|UFRAME\[)|WAIT (DI|DO)\[|WAIT \()")
+_PADDED = re.compile(r"^(CALL [^(]*$|R\[(R\[[^\]]*\]|[^\]]*)\]=|PR\[.*?\]=(?!UTOOL\[|UFRAME\[)|WAIT (DI|DO)\[|WAIT \()")
 
 
 def _terminator(text: str) -> str:

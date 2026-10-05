@@ -74,3 +74,26 @@ def test_unexpected_character_is_skipped_with_diagnostic():
     result = tokenize("a # b")
     assert [t.value for t in result.tokens[:-1]] == ["a", "b"]
     assert "unexpected character" in result.diagnostics[0].message
+
+
+@pytest.mark.parametrize("text", ["PROC \u00d1 (VAR robtarget p)", "nA:=3\u00b2;", "x:=\u00e9t\u00e9;", "a \u00b2 b", "\u0663"])
+def test_the_lexer_never_raises_on_characters_outside_ascii(text):
+    """A real project names a routine `\u00d1`: a letter of any script is a name, other characters are reported."""
+    result = tokenize(text)
+    assert result.tokens[-1].kind is TokenKind.EOF
+
+
+def test_a_name_may_start_with_a_letter_of_another_script():
+    tokens = tokenize("PROC \u00d1 ()").tokens
+    assert [t.value for t in tokens[:3]] == ["PROC", "\u00d1", "("]
+
+
+@pytest.mark.parametrize("text", ["0xFF00", "0x0000", "0XfF", "0o17", "0b101", "0B1", "0xE0"])
+def test_integers_in_hexadecimal_octal_and_binary(text):
+    """RAPID writes integers as 0x.., 0o.., 0b.. too (a Modbus library compares 0xFF00)."""
+    assert kinds_and_values(text) == [(TokenKind.NUMBER, text)]
+
+
+@pytest.mark.parametrize(("text", "tokens"), [("0x", ["0", "x"]), ("0o8", ["0", "o8"]), ("0b2", ["0", "b2"])])
+def test_a_prefix_without_digits_is_a_zero_and_a_name(text, tokens):
+    assert [value for _, value in kinds_and_values(text)] == tokens

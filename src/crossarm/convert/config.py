@@ -10,6 +10,7 @@ be pinned in a JSON file passed with --map:
 {
   "registers":       {"nCycles": 10},          RAPID num      -> R[n]
   "flags":           {"bPartPresent": 5},      RAPID bool     -> F[n]
+  "string_registers": {"sState": 3},          RAPID string the programs change -> SR[n]
   "digital_outputs": {"doGrip": 3},            RAPID signal   -> DO[n]
   "digital_inputs":  {"diPartReady": 7},       RAPID signal   -> DI[n]
   "group_outputs":   {"goStatus": 1},          RAPID signal   -> GO[n]
@@ -38,12 +39,16 @@ be pinned in a JSON file passed with --map:
   "point_registers": {"PickAt.pPick": 90}      the position register a robtarget parameter is passed in
   "point_arrays":    {"pSlot": 80}             the first of the position registers an array of points is kept in
   "number_arrays":   {"nTorque": 190}          the first of the registers an array of numbers is kept in
+  "flag_arrays":     {"bSlotFull": 1001}       the first of the flags an array of bools is kept in
+  "programs":        {"PickPart": "PICKPART"}  the TP name of a program CrossArm writes: a routine, an
+                                               interrupt's condition program, CROSSARM.TEXT (texts)
 }
 
 Names are matched case-insensitively, like RAPID.
 """
 
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -54,7 +59,7 @@ from crossarm.convert.motion import M20ID_25, MotionProfile
 
 _MAPPING_KEYS = (
     "registers", "flags", "digital_outputs", "digital_inputs", "group_outputs", "group_inputs", "uframes", "utools",
-    "analog_outputs", "timers",
+    "analog_outputs", "timers", "string_registers",
 )  # fmt: skip
 
 
@@ -71,6 +76,7 @@ class ConversionConfig:
     # Fixed numbers, upper-cased RAPID name -> number.
     registers: dict[str, int] = field(default_factory=dict)
     flags: dict[str, int] = field(default_factory=dict)
+    string_registers: dict[str, int] = field(default_factory=dict)
     digital_outputs: dict[str, int] = field(default_factory=dict)
     digital_inputs: dict[str, int] = field(default_factory=dict)
     group_outputs: dict[str, int] = field(default_factory=dict)
@@ -83,6 +89,7 @@ class ConversionConfig:
     # First number used by automatic allocation.
     first_register: int = 1
     first_flag: int = 1
+    first_string_register: int = 1
     first_digital_output: int = 1
     first_digital_input: int = 1
     first_group_output: int = 1
@@ -122,6 +129,7 @@ class ConversionConfig:
         "R": 200,       # numeric registers
         "PR": 100,      # position registers
         "F": 1024,      # flags
+        "SR": 25,       # string registers
     })  # fmt: skip
 
     # Numbers already used on the target controller, which automatic allocation leaves
@@ -148,6 +156,12 @@ class ConversionConfig:
     point_arrays: dict[str, int] = field(default_factory=dict)
     # The first numeric register of an array of numbers indexed at run time, upper-cased name -> R number.
     number_arrays: dict[str, int] = field(default_factory=dict)
+    # The first flag of an array of bools the programs change or index at run time, upper-cased name -> F number.
+    flag_arrays: dict[str, int] = field(default_factory=dict)
+    # The TP name of a program CrossArm writes, upper-cased key -> name: a routine by its name, an interrupt's
+    # condition program by the interrupt's (its relay "INTERRUPT.RELAY"), "CROSSARM.TEXT" the program loading
+    # texts. Programs already on the robot call these names: a later conversion keeps them.
+    programs: dict[str, str] = field(default_factory=dict)
 
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
@@ -170,7 +184,7 @@ class ConversionConfig:
             "joint_speed_ref_mm_s", "cnt_per_mm", "config_mapping", "joint_mapping", "default_config",
             "program_name_max_length", "tpwrite_values", "tool_pin", "limits", "reserved", "move_routines",
             "zone_mapping", "motion_profile", "frame_registers", "analog_scales", "payloads", "point_registers",
-            "point_arrays", "number_arrays",
+            "point_arrays", "number_arrays", "flag_arrays", "programs",
         }  # fmt: skip
         if unknown:
             raise ValueError(f"unknown keys in mapping file: {', '.join(sorted(unknown))}")
@@ -199,6 +213,10 @@ class ConversionConfig:
             if not isinstance(scale, int | float) or isinstance(scale, bool):
                 raise TypeError(f"analog_scales.{name}: expected a number or null, got {scale!r}")
             config.analog_scales[name.upper()] = float(scale)
+        for key, number in data.get("flag_arrays", {}).items():
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise TypeError(f"flag_arrays.{key}: expected an integer, got {number!r}")
+            config.flag_arrays[key.upper()] = number
         for key, number in data.get("number_arrays", {}).items():
             if not isinstance(number, int) or isinstance(number, bool):
                 raise TypeError(f"number_arrays.{key}: expected an integer, got {number!r}")
@@ -235,4 +253,12 @@ class ConversionConfig:
             raise ValueError(f"zone_mapping: expected 'measured' or 'linear', got {config.zone_mapping!r}")
         if config.tool_pin not in TOOL_PINS:
             raise ValueError(f"tool_pin: expected '-x' or '+x', got {config.tool_pin!r}")
+        for key, name in data.get("programs", {}).items():
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", name.upper()):
+                raise ValueError(f"programs.{key}: expected a TP program name (a letter, then letters, digits"
+                                 f" and _), got {name!r}")  # fmt: skip
+            if len(name) > config.program_name_max_length:
+                raise ValueError(f"programs.{key}: {name} is longer than program_name_max_length"
+                                 f" ({config.program_name_max_length})")  # fmt: skip
+            config.programs[key.upper()] = name.upper()
         return config

@@ -11,8 +11,11 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 
 | What | Result |
 |---|---|
-| Every program converted from the test corpus, loaded on a FANUC controller | 128 of 128 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (220 forms) |
+| RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)) | about 60 %, from about 15 % to all of it per project |
+| RAPID instructions converted, our test corpus, written for testing | 86 % to 93 % |
+| Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
+| The controller probes, run again on both simulators for this version | 26 of 26 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -26,6 +29,15 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Points worked out at run time (palletizing), run on ROBOGUIDE | the faceplate where the moves written out put it |
 | Arrays of numbers indexed at run time, run on both controllers | the values RAPID reads |
 | Interrupts converted to condition monitors, run on ROBOGUIDE | the TRAP calls RAPID makes |
+| Data of RECORD types kept field by field (a state machine), run on both controllers | the values RAPID computes, the moves at the record's speed |
+| Strings kept in string registers (texts compared, worked out, passed on), run on both controllers | the values RAPID computes |
+| Arrays of numbers the programs write, run on both controllers | the values RAPID computes |
+| Bools set to a condition, kept in flags, run on both controllers | the values RAPID computes |
+| Points a routine changes (VAR, INOUT robtarget), read back by the caller, run on both controllers | the values RAPID computes, after the moves |
+| `MoveLDO` to a fine point: the move, then the output, run on ROBOGUIDE | the output switches with the TCP on the point |
+| Waits with `\MaxTime` and `\TimeFlag`, run on both controllers | the flags RAPID sets |
+| `SearchL` converted to a skip, run on ROBOGUIDE with the input switched as the TCP passes a point | the point found within 0.1 mm of where the input switched |
+| Arrays of bools kept in flags, run on both controllers | the values RAPID computes |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -49,6 +61,15 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 20. [Interrupts, run](#20-interrupts-run)
 21. [Records and nums passed by reference, run](#21-records-and-nums-passed-by-reference-run)
 22. [Points worked out at run time, run](#22-points-worked-out-at-run-time-run)
+23. [Records kept field by field, run](#23-records-kept-field-by-field-run)
+24. [Strings in string registers, run](#24-strings-in-string-registers-run)
+25. [Arrays the programs write, run](#25-arrays-the-programs-write-run)
+26. [Bools set to a condition, run](#26-bools-set-to-a-condition-run)
+27. [Points passed by reference, run](#27-points-passed-by-reference-run)
+28. [An output set at a fine point, run](#28-an-output-set-at-a-fine-point-run)
+29. [Waits with a time flag, run](#29-waits-with-a-time-flag-run)
+30. [A search, run](#30-a-search-run)
+31. [Arrays of bools, run](#31-arrays-of-bools-run)
 
 ## 1. The test corpus
 
@@ -69,6 +90,25 @@ loaded, exported from them.
   the test corpus — goes through the parser and the converter without a single crash
   ([tests/rapid/test_fuzz.py](../tests/rapid/test_fuzz.py)).
 - The tests for this corpus run locally and are skipped in CI.
+
+### Public programs
+
+Because we wrote the test corpus, it says little about programs we did not write. So CrossArm is also
+run on a second local corpus: RAPID programs published on the Internet under permissive open-source
+licences, read and converted as they are, every program written loaded on ROBOGUIDE. CrossArm converts
+**about 60 %** of their instructions, from about 15 % to all of them depending on the project, where it
+converts 86 % to 93 % of the test corpus. The projects that convert least are built around files,
+sockets, operator dialogs and error handlers, or are libraries using data declared in other projects.
+
+What the figure does not say:
+
+- **Converted means written in TP and loaded by the controller without an error**, not validated on
+  a robot. Only the probes below compare what the programs compute and where they move; the points
+  stay theoretical, within 10 mm of the ABB's path, to be touched up at commissioning.
+- It is indicative, neither stable nor reproducible: the corpus is not distributed (its licences do
+  not allow it here), it changes as programs are added, and the figure is rounded.
+- The projects are mostly students' work and libraries, not an industrial integrator's code; copies of
+  one project in several folders are counted as many times as they appear.
 
 **Reading `.LS` back, losslessly.** The parser's contract is `write_ls(parse_ls(text)) == text`. That
 is what lets CrossArm check itself without a controller, and it holds on every `.LS` file in this
@@ -199,8 +239,8 @@ not `<0.5`, in conditions.
 
 ## 10. Every program of the test corpus, loaded
 
-The 128 programs converted from the three RobotWare backups of the test corpus were loaded on
-ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 128 load. Earlier
+The 130 programs converted from the three RobotWare backups of the test corpus were loaded on
+ROBOGUIDE by FTP, and the controller's error log read for any it refused: all 130 load. Earlier
 conversions of larger backups found two causes of refusal, both fixed: a group output set from a
 group input (`GO[4]=GI[3]`), and selecting more tool or user frames than the controller holds. The
 frames past the limit are loaded from position registers before use;
@@ -209,13 +249,13 @@ controller of 2 tool frames and 1 user frame, and the flanges land within 0.004 
 
 ## 11. Stored as written, and every probe run again unattended
 
-Every program converted from the test corpus, 220 forms of instruction between them, was loaded on
+Every program converted from the test corpus, 234 forms of instruction between them, was loaded on
 ROBOGUIDE and read back from it: the controller stores every one as CrossArm wrote it, register and
 frame names aside. Forms that first differed by a space before the `;` are now written the
 controller's way.
 
 [tools/probe_all.py](../tools/probe_all.py) then runs the probes again on both simulators with
-nobody at either pendant, in about two and a half minutes. On ROBOGUIDE: FTP to load, the FANUC COM
+nobody at either pendant, in about eighteen minutes. On ROBOGUIDE: FTP to load, the FANUC COM
 interface to run, the robot's web pages to read. On RobotStudio, where RobotWare 7 and 8 give a PC
 program no right to load or start programs, a small RAPID module started once
 ([tools/CrossArmServer.mod](../tools/CrossArmServer.mod)) loads and runs each probe module itself, and
@@ -232,7 +272,23 @@ the results are read from the virtual controller's `HOME:` folder:
 | tool pin on +x | the same moves, tools turned: faceplate half a turn about z, within 0.004 mm, 0.001° |
 | frames from registers | the same 16 moves, frames loaded from registers: same flanges |
 | computed frames | 9 moves within 0.005 mm, 0.001° of RobotStudio ([section 15](#15-frames-and-points-the-programs-compute)) |
-| ABB probe modules (RobotStudio) | the 5 modules write what RobotStudio measured by hand, number for number |
+| `TEST` / `CASE` as `SELECT` | 3 registers as RAPID computes them ([section 16](#16-test-and-case-run)) |
+| pulses, clocks, analog outputs, payloads | 3 registers as RAPID computes them, the payload of the tool with the part active ([section 17](#17-pulses-inverted-outputs-clocks-and-analog-outputs-run)) |
+| routines given their points, arrays of points | 43 moves where the moves written out go ([section 18](#18-routines-given-their-points-and-arrays-of-points-run)) |
+| arrays of numbers indexed at run time | 3 registers as RAPID computes them ([section 19](#19-arrays-of-numbers-run)) |
+| interrupts | 6 registers as RAPID computes them ([section 20](#20-interrupts-run)) |
+| records and nums passed by reference | 3 registers as RAPID computes them ([section 21](#21-records-and-nums-passed-by-reference-run)) |
+| points worked out at run time | 13 moves where the moves written out go ([section 22](#22-points-worked-out-at-run-time-run)) |
+| records kept field by field | 7 registers as RAPID computes them, in three programs (speed and zone as constants, from registers) ([section 23](#23-records-kept-field-by-field-run)) |
+| strings in string registers | 20 registers as RAPID computes them ([section 24](#24-strings-in-string-registers-run)) |
+| arrays the programs write | 5 registers as RAPID computes them ([section 25](#25-arrays-the-programs-write-run)) |
+| bools set to a condition | 6 registers as RAPID computes them ([section 26](#26-bools-set-to-a-condition-run)) |
+| points passed by reference | 5 registers as RAPID computes them, after 4 moves ([section 27](#27-points-passed-by-reference-run)) |
+| an output set at a fine point | set 0.000 mm from the point ([section 28](#28-an-output-set-at-a-fine-point-run)) |
+| waits with a time flag | 2 registers as RAPID computes them ([section 29](#29-waits-with-a-time-flag-run)) |
+| a search | the point found within 0.1 mm of the switch, `\Sup` on to the point, a pause with the input on at the start ([section 30](#30-a-search-run)) |
+| arrays of bools | 4 registers as RAPID computes them ([section 31](#31-arrays-of-bools-run)) |
+| ABB probe modules (RobotStudio) | the 15 modules write what RobotStudio measured before, number for number |
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -553,3 +609,218 @@ same pose to the thousandth of a millimetre. Reading the first conversion showed
 of one `Offs()` worked out in the same scratch register before any was added: each is now worked out
 just before its line. On the test corpus, the palletizing cell's place is worked out so, and its
 TODO go from 39 to 25.
+
+## 23. Records kept field by field, run
+
+A state machine often keeps its state in data of a RECORD type: its state, its counters, the speed and
+zone of its moves. TP has no records. CrossArm keeps each field a program changes in a register (a bool
+in a flag), named by its path, and writes a field no program changes as its value; a speed or zone
+field is the value every write gives it, when they all give the same.
+
+[tools/make_record_probe.py](../tools/make_record_probe.py) converts a module whose state machine
+(`VAR probectrl recCtrl`) is set up by one routine, moved on by two others in a `WHILE` on a `TEST` of
+its state, and read in a fourth; its moves run at the speed and zone the set-up routine gives a record
+inside it. A PERS record no program changes is read, a bool field in an `IF`; a routine keeps a record
+of its own, which RAPID sets to zeros at each call; a record is copied whole into another. RobotStudio
+runs the RAPID, ROBOGUIDE the converted programs, then two variants giving the speed, then the zone
+too, from registers (`L P[3] R[8]mm/sec`, `CNT R[9]`):
+
+| Total | RobotStudio | ROBOGUIDE (3 programs) |
+|---|---|---|
+| state, written by three routines | 3 | 3 |
+| counter | 11 | 11 |
+| passes, the bool read in another routine | 3, 1 | 3, 1 |
+| fields of a PERS no program changes, a bool among them | 1307 | 1307 |
+| calls where the routine's own record was not zeros | 0 | 0 |
+| the copy of a record (its counter, its bool) | 103 | 103 |
+| 200 mm at the record's speed, then two moves through its zone | 0.620 s, 1.300 s | 0.745 s, 1.392 s |
+
+The times differ as joint and linear moves of the same speed do between the two robots
+([section 12](#12-speeds-and-zones-measured-on-both-robots)); from registers, the moves take the same time
+as with constants, to 3 ms. The same probe loads the forms a bool or a string field would need: a
+flag set from a condition or from another flag loads, a string register set from an argument or from
+another loads, but not from text written in the program (`SR[20]='IDLE'`), and a comparison of two
+string registers in parentheses is refused too (the form without them loads:
+[section 24](#24-strings-in-string-registers-run)). Writing it found a field read inside a speed
+(`recSaved.p.speed.v_tcp`) and a bool field copied from another: both converted now. It also found
+that `CONST zonedata zPick:=z50` was not read: a predefined speed or zone given as the value of a data
+is read now.
+
+## 24. Strings in string registers, run
+
+A state machine can keep its state in a string, a program read a text one character at a time. TP
+has 25 string registers, but a TP line can neither write a text in one nor compare one with a text:
+CrossArm loads a text written in the program through a program given it as an argument
+(`CALL CA_TEXT(3,'IDLE',0)`) into a scratch register, just before it is compared or passed on, and
+compares two string registers in the one form TP has, `IF SR[a]=SR[b],JMP LBL[n]`.
+
+[tools/make_string_probe.py](../tools/make_string_probe.py) converts a module that counts the letters
+of `"LOAD. ROBOT!!"` read one character at a time (`StrLen`, `StrPart`, an `IF` / `ELSEIF` on each),
+runs a state machine whose state is a string (`WHILE strState<>"DONE"`), looks for texts (`StrMatch`,
+found and not), writes numbers as texts (`NumToStr`, `ValToStr`), loads a text of 80 characters, an
+empty one and one with an apostrophe, puts a text before itself, sets a string of a routine at each
+call and passes texts to a routine taking one. RobotStudio runs the RAPID, ROBOGUIDE the converted
+programs:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| A, O, spaces, !, other characters of "LOAD. ROBOT!!" | 1, 3, 1, 2, 6 | 1, 3, 1, 2, 6 |
+| turns of the state machine | 3 | 3 |
+| `StrMatch` found, not found | 7, 14 | 7, 14 |
+| `NumToStr(3,0)+"-"+ValToStr(1)`: its length, compared with "3-1" | 3, 1 | 3, 1 |
+| a text of 80 characters (3 pieces): its length, compared | 80, 1 | 80, 1 |
+| `"<"+strState` compared with "<DONE"; an empty text's length + 10 | 1, 10 | 1, 10 |
+| "it's" (a backquote on the FANUC): its length, compared with itself | 4, 1 | 4, 1 |
+| a routine's own string, set at each of two calls | 2 | 2 |
+| texts passed to a routine: their lengths, those equal to "42" | 10, 1 | 10, 1 |
+
+A program written by hand measures what TP does otherwise than RAPID: TP finds 'A' and 'a' equal
+(RAPID does not) but not 'A' and 'A '; `FINDSTR` finds 'ROBOT' in 'load robot' (RAPID's `StrMatch`
+does not) and gives 0 for an empty pattern (RAPID length+1, as for any text not found); a whole number
+held as a real is written '3.000000' (RAPID's `NumToStr(3,0)` '3'); '12AB' reads as 12 where RAPID's
+`StrToVal` fails. Hence what CrossArm converts: comparisons where the texts cannot differ by case
+alone, `NumToStr` of numbers only ever whole, no `StrToVal`. `SUBSTR` past the end of a text stops the
+program (INTP-323), as `StrPart` stops RAPID's. Loaded only: a text written in a string register, a
+comparison with a text, a block `IF` or a `SELECT` on string registers, an argument of 39 characters
+and an apostrophe are refused; an empty argument is stored `'...'`, so CrossArm writes an empty text
+as one character and `SUBSTR` of none past it; no string register comment is kept.
+
+Writing the probe found that a string never written and without initial value was not read as RAPID's
+empty text, and that `roboguide.py` reported a program stopped by an error as done: both fixed. The
+same measures settled the largest whole number a register line keeps, 2147483646 (2147483647 is
+stored `********`): past it CrossArm writes a TODO.
+
+## 25. Arrays the programs write, run
+
+An array of numbers the programs change (a grid filled in loops, a command table written field by
+field) is a block of registers, as an array only read is: an element at a fixed index is its own
+register, one at an index known at run time `R[R[n]]`, the index worked out in a register first. A raw
+probe first measured that the controller takes and runs `R[R[50]]=R[R[50]]+1`, `R[R[50]]=(-2.5)`,
+`R[R[50]]=R[R[52]]` and `F[R[50]]=(ON)` read back in an `IF`.
+
+[tools/make_array_write_probe.py](../tools/make_array_write_probe.py) converts a module that fills a
+VAR array of 3 x 4 in two `FOR` loops (`awGrid{i,j}:=i*10+j`) in one routine and sums it in another,
+then changes a PERS array at a fixed index from another element, with `Incr`, and at an index worked
+out (`awTable{awK+1}:=awTable{awK}*2`), and reads elements back at fixed indices and at indices known
+at run time. RobotStudio runs the RAPID, ROBOGUIDE the converted programs:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| sum of the grid | 270 | 270 |
+| sum of the table after its changes | 231 | 231 |
+| `awGrid{2,3}`; `awGrid{3,4}+awGrid{1,1}` | 23, 45 | 23, 45 |
+| `awGrid{awK,awK+2}+awTable{awK}` | 94 | 94 |
+
+Writing the probe found that the controller stores `R[R[3]]=...` with 4 spaces before `;`, as a register
+assignment: CrossArm writes it so. Two tasks declaring the same PERS array each took a block of their
+own: they share one now, as they share the PERS.
+
+## 26. Bools set to a condition, run
+
+A bool set to a condition is a flag set to TP's mixed logic, `F[n]=(R[1]<5 AND F[2]=OFF)`. A raw probe
+loaded thirteen forms (NOT, AND, OR, nested parentheses, outputs, registers, flags, a negative constant):
+each is stored as written and each gives the condition's value.
+
+[tools/make_flag_probe.py](../tools/make_flag_probe.py) converts a module setting bools to a comparison,
+to two joined by AND, to NOT another bool, to another bool, and to a comparison of texts joined with one
+of numbers (written with jumps: TP compares texts in a jump only), then looping on a bool set at each turn:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| `3<5`, `3<5 AND 7>8`, `NOT TRUE`, a copy of TRUE, `"RUN"="RUN" AND 3=3` (1 when TRUE) | 1, 0, 0, 1, 1 | 1, 0, 0, 1, 1 |
+| turns of `WHILE fpGo` with `fpGo:=fpTurns<4` | 4 | 4 |
+
+## 27. Points passed by reference, run
+
+A routine taking a point as `VAR` or `INOUT robtarget` can change it; the caller sees the change. On the
+FANUC the point travels in a position register: the caller sets it before the CALL, the routine changes it
+there and moves to it, and the caller reads it back after the CALL into the register its own point is
+kept in.
+
+[tools/make_point_ref_probe.py](../tools/make_point_ref_probe.py) converts a module that moves to a
+point, shifts it twice by a routine taking it as `VAR robtarget` (which offsets it by 50 mm and moves
+there), lowers it by 100 mm in a routine taking it as `INOUT robtarget` which passes it on to the first,
+and reads its x, y and z back:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| y after two shifts; y, z, x after the lowering and a third shift | 150; 200, 900, 1100 | 150; 200, 900, 1100 |
+| shifts made | 3 | 3 |
+
+## 28. An output set at a fine point, run
+
+`MoveLDO p,v500,fine,tool,doGrip,1` moves to `p` and sets `doGrip` when the robot reaches the fine point.
+CrossArm writes the move, then `DO[1]=ON`: the line after a FINE move runs once the robot stands on the
+point. [tools/make_move_do_probe.py](../tools/make_move_do_probe.py) runs that on ROBOGUIDE, reading the
+TCP and `DO[1]` through COM while it runs: the output switches with the TCP 0.000 mm from the point, 50 ms
+after the TCP is within 0.5 mm of it. The RobotStudio virtual controller has no signals to run `MoveLDO`
+on: RAPID's timing is the manual's. Through a zone, RAPID sets the output in the middle of the corner
+path, which no TP line does (TP sets one at a time or distance before the point): such a `MoveLDO` stays
+TODO. For the same reason `WaitRob \InPos` after a FINE move needs nothing on the FANUC.
+
+## 29. Waits with a time flag, run
+
+With `\TimeFlag`, a wait with `\MaxTime` raises no error when the time runs out: it sets the bool and
+the program goes on. CrossArm writes the timed wait as for the other waits with `\MaxTime` (a loop
+polling a TIMER: `$WAITTMOUT` is write-protected for programs), then sets the flag to whether the time
+ran out, `F[3]=(R[5:WaitTimer]>=1.5)`.
+
+[tools/make_time_flag_probe.py](../tools/make_time_flag_probe.py) converts a module waiting 1.5 s at most
+on a bool no one sets, then on one already TRUE, timing each wait with a clock:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| the flag after the wait that runs out; after the one that does not | TRUE, FALSE | TRUE, FALSE |
+| the time each wait took | 1.600 s, 0.000 s | 1.504 s, 0.000 s |
+
+RAPID's `WaitUntil` checks its condition every 0.1 s (`\PollRate`): it notices the time ran out at the
+next check, 1.6 s.
+
+## 30. A search, run
+
+`SearchL \Stop,diProbe,pFound,pEnd,v50,tool` moves towards `pEnd` until `diProbe` switches on, and
+`pFound` is where the TCP was then. CrossArm writes `SKIP CONDITION DI[1]=ON`, then the move with
+`Skip,LBL[2],PR[99]=LPOS`: `PR[99]` keeps `pFound`, read afterwards as any point known at run time. RAPID
+searches for the input switching on: before the move, the program checks it is not on already.
+
+The RobotStudio virtual controller has no signals to run `SearchL` on: what RAPID does is the manual's.
+[tools/make_search_probe.py](../tools/make_search_probe.py) converts a module searching along y from 50
+to 250 mm and runs it on ROBOGUIDE, a sampler reading the TCP through COM and switching the input on as
+the TCP passes y = 150:
+
+| Search | ROBOGUIDE | RAPID |
+|---|---|---|
+| `\Stop`: y of the point found, for the input switched at 150.025 | 150.025 | where the input switched |
+| `\Stop`: y where the robot stands after the search | 150.125 (it went 6.4 mm past, then came back) | past the switch, by the stopping distance |
+| a move 50 mm above the point found (`Offs`) | y 150.025, z 1050 | the same |
+| `\Sup`: the point found; where the robot stands after the search | 150.075; 250 | the same: it goes on to the point |
+| the input already on at the start | the program pauses on the `MESSAGE` | an error stops the program |
+
+The difference that stays is where the robot stops: past the switch on both, but the FANUC comes back to
+it. The report says it, as a search by contact pushes the tool into the part by the stopping distance at
+the search speed.
+
+The same probe moves along y at several speeds with and without a skip recording the position, never
+switched. A skip recording it (`PR[k]=LPOS`) slows the move down: at 50 and 100 mm/s the TCP moves as
+fast as without a skip, at 120 and 250 mm/s at the speed of 100 mm/s (the FANUC course says 250 for the
+high-speed skip). CrossArm leaves a search faster than 100 mm/s TODO rather than slow it down, which
+would change what it measures and the cycle time.
+
+## 31. Arrays of bools, run
+
+An array of bools the programs change, or read at an index known at run time, is a block of flags, as
+an array of numbers is a block of registers: an element at a fixed index is its own flag, one at an
+index known at run time `F[R[n]]`, the index worked out in a register first, set to a condition as
+any flag (`F[R[12]]=(F[R[2]])`, `F[1020]=(F[1023]=ON AND F[1021]=OFF)`).
+
+[tools/make_flag_array_probe.py](../tools/make_flag_array_probe.py) converts a module that marks a VAR
+array of six slots in a `FOR` loop in one routine (`faSlot{i}:=i>3`) and counts the slots set in
+another, sets elements at fixed indices and to a condition of other elements, then sets a PERS array of
+2 x 3 at indices worked out and counts what is set. RobotStudio runs the RAPID, ROBOGUIDE the converted
+programs:
+
+| Total | RobotStudio | ROBOGUIDE |
+|---|---|---|
+| slots set | 5 | 5 |
+| sum of i*10+j over the elements of the 2 x 3 array set | 44 | 44 |
+| an element and another set at fixed indices both set; an element clear | 1, 1 | 1, 1 |

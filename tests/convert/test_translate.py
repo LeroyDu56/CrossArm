@@ -450,11 +450,33 @@ def test_two_elements_in_one_statement_take_two_index_registers():
     assert lines[-1] == "R[1:nSum]=R[R[3]]+R[R[4]]"
 
 
-def test_a_pers_table_no_program_changes_is_kept_and_one_changed_or_a_var_is_not():
+def test_a_pers_table_no_program_changes_is_kept_and_a_var_no_program_sets_is_not():
     result = run("nSum:=LIMIT{k};", TABLE)
     assert any("PERS array kept in registers" in n.message for n in result.notes if n.kind == "WARNING")
     assert "nCount is a VAR" in todos(run("nSum:=nCount{k};", TABLE))[0]
-    assert "LIMIT is changed by the programs" in todos(run("LIMIT{1}:=3;\nnSum:=LIMIT{k};", TABLE))[-1]
+
+
+def test_an_array_the_programs_change_is_written_in_its_registers():
+    """ROBOGUIDE: R[R[50]]=R[R[50]]+1, R[R[50]]=(-2.5), R[R[50]]=R[R[52]] load and run as RAPID does."""
+    result = run("LIMIT{1}:=3;\nLIMIT{k}:=LIMIT{k}+1;\nnSum:=LIMIT{k};\nnCount{k+1}:=nSum*2;", TABLE)
+    assert todos(result) == []
+    assert tp_lines(result) == [
+        "R[199]=3",  # LIMIT{1}: its own register
+        "R[2:NumberIndex]=R[1]", "R[2:NumberIndex]=R[2:NumberIndex]+198", "R[R[2]]=R[R[2]]+1",
+        "R[3:nSum]=R[R[2]]",
+        "R[4:Calc8]=R[1]+1", "R[2:NumberIndex]=R[4:Calc8]", "R[2:NumberIndex]=R[2:NumberIndex]+196",
+        "R[R[2]]=R[3:nSum]*2"]  # fmt: skip
+    assert [(a.name, a.base, a.values) for a in result.number_arrays] == [("LIMIT", 199, (5.0, 6.0)),
+                                                                         ("nCount", 197, (0.0, 0.0))]  # fmt: skip
+    warnings = [n.message for n in result.notes if n.kind == "WARNING"]
+    assert any(m.startswith("LIMIT, an array the programs change") and "values saved in the backup" in m
+               for m in warnings)  # fmt: skip
+    assert any(m.startswith("nCount, an array the programs change") and "RAPID sets a VAR again" in m for m in warnings)
+
+
+def test_an_index_out_of_the_array_or_an_array_of_a_routine_stays_todo():
+    assert "index out of the array" in todos(run("LIMIT{3}:=1;", TABLE))[0]
+    assert "an array of numbers of a routine" in todos(run("VAR num nOwn{2};\nnOwn{k}:=1;", TABLE))[0]
 
 
 def test_a_group_input_read_by_its_name():
@@ -759,3 +781,170 @@ def test_a_var_array_no_program_changes_holds_its_declared_values():
     data = HOME + TOOL + "VAR num nOffsets{3}:=[0,120,240];\nVAR num nSlot:=1;\n"
     result = run("nSlot:=nSlot+1;\nMoveL Offs(pHome,nOffsets{nSlot},0,0),v100,fine,tGrip;", data)
     assert todos(result) == []
+
+
+def test_a_hexadecimal_literal_is_written_in_decimal():
+    assert tp_lines(run("nMask:=0xFF00;", "VAR num nMask;")) == ["R[1:nMask]=65280"]
+
+
+def test_a_point_nobody_set_is_a_todo_not_an_internal_error():
+    """[0,0,0,0] is the orientation of a PERS the program fills in before moving there."""
+    data = "PERS robtarget pDummy:=[[0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0,0,0]];"
+    result = run("MoveL pDummy,v200,fine,tool0;", data)
+    assert [line.startswith("!TODO") for line in tp_lines(result)] == [True]
+    assert "the orientation of pDummy, [0, 0, 0, 0], is not a unit quaternion: a value only set at run time" in todos(result)[0]
+    assert {n.category for n in result.notes if n.kind == "TODO"} == {Blocker.VALUE}
+
+
+def test_tools_work_objects_and_point_arrays_with_no_rotation_are_todo():
+    data = (HOME + "PERS tooldata tNone:=[TRUE,[[0,0,100],[0,0,0,0]],[1,[0,0,1],[1,0,0,0],0,0,0]];\n"
+            'PERS wobjdata wNone:=[FALSE,TRUE,"",[[0,0,0],[0,0,0,0]],[[0,0,0],[1,0,0,0]]];\n'
+            "CONST robtarget pRow{2}:=[[[1000,0,500],[0,0,1,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]],"
+            "[[1000,0,500],[0,0,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]]];\nVAR num i:=1;\n")
+    body = "MoveL pHome,v100,fine,tNone;\nMoveL pHome,v100,fine,tool0\\WObj:=wNone;\nFOR i FROM 1 TO 2 DO\nMoveL pRow{i},v100,fine,tool0;\nENDFOR"
+    result = run(body, data)
+    # A frame is numbered all the same: SETUP_FRAMES leaves it unset, with why, as a frame set at run time.
+    problems = {frame.rapid_name: frame.problem for frame in [*result.utools, *result.uframes]}
+    assert "tNone, [0, 0, 0, 0], is not a unit quaternion" in problems["tNone"]
+    assert "wNone.uframe, [0, 0, 0, 0], is not a unit quaternion" in problems["wNone"]
+    assert ["pRow{2}, [0, 0, 0, 0], is not a unit quaternion" in m for m in todos(result)] == [True]
+
+
+def test_a_load_with_no_inertia_keeps_its_mass_whatever_its_axes():
+    data = HOME + "PERS tooldata tLoad:=[TRUE,[[0,0,100],[1,0,0,0]],[3,[0,0,50],[0,0,0,0],0,0,0]];"
+    result = run("MoveL pHome,v100,fine,tLoad;", data)
+    assert todos(result) == []
+    assert [(f.frame.load.mass, f.frame.load.aom) for f in result.utools] == [(3, (1.0, 0.0, 0.0, 0.0))]
+
+
+def test_gripload_on_a_tool_whose_load_has_no_axes_of_moment():
+    """1.2.0 stopped the whole conversion here (zero-length quaternion): the load has no inertia to turn."""
+    data = HOME + ("PERS tooldata tLoad:=[TRUE,[[0,0,100],[1,0,0,0]],[3,[0,0,50],[0,0,0,0],0,0,0]];\n"
+                   "PERS loaddata lPart:=[2,[0,0,10],[1,0,0,0],0,0,0];")
+    result = run("MoveL pHome,v100,fine,tLoad;\nGripLoad lPart;", data)
+    assert todos(result) == []
+    assert tp_lines(result)[-1] == "PAYLOAD[10]"
+
+
+@pytest.mark.parametrize(("value", "text"), [
+    (300.000215, "300.000215"), (12.345678, "12.345678"), (99999.99, "99999.99"), (0.25, "0.25"),
+    (0.0000015, "0.0000015"), (-2.5, "-2.5"), (1234567.5, "1234567.5"), (123456.7, "123456.7"),
+])  # fmt: skip
+def test_constants_are_written_with_the_digits_the_controller_runs_with(value, text):
+    """ROBOGUIDE lists R[79]=300.000215 as 300 but runs with 300.000214, and 1234567.5 with 1234567.5."""
+    from crossarm.convert.translate import fmt_number
+
+    assert fmt_number(value) == text
+
+
+@pytest.mark.parametrize("text", ["1234567", "99999999", "16777215", "0xFFFFFF", "123456789", "2147483646",
+                                  "-2147483646", "1999999999"])  # fmt: skip
+def test_whole_numbers_a_register_keeps_are_written_digit_for_digit(text):
+    """Measured on ROBOGUIDE: each read back from NUMREG.VA as written."""
+    value = int(text, 0)
+    assert tp_lines(run(f"nId:={text};", "VAR num nId;")) == [f"R[1:nId]={value if value >= 0 else f'({value})'}"]
+
+
+@pytest.mark.parametrize("text", ["2147483647", "0xFFFFFFFF", "-2147483648", "4294967295", "1E10"])
+def test_a_constant_past_what_a_register_line_keeps_is_a_todo(text):
+    """ROBOGUIDE stores R[60]=2147483647 as `********`, -2147483648 as -129, 4294967295 as 4.29497e+09."""
+    result = run(f"nId:={text};\nIF nId={text} nId:=0;", "VAR num nId;")
+    found = [n for n in result.notes if n.kind == "TODO"]
+    assert [n.category for n in found] == [Blocker.VALUE, Blocker.VALUE]
+    assert "too large for a TP register" in found[0].message
+
+
+def test_a_constant_below_one_is_assigned_without_its_zero():
+    assert tp_lines(run("nGap:=0.25;\nnGap:=-0.5;\nnGap:=nGap*0.5;", "VAR num nGap;")) == [
+        "R[1:nGap]=.25", "R[1:nGap]=(-.5)", "R[1:nGap]=R[1:nGap]*.5"]
+
+
+@pytest.mark.parametrize(("body", "data", "start"), [
+    ('Open "HOME:"\\File:="log.txt",fLog\\Append;', "VAR iodev fLog;", "Open: files and serial channels"),
+    ('Write fLog,"cycle";', "VAR iodev fLog;", "Write: files and serial channels"),
+    ("SocketCreate sServer;", "VAR socketdev sServer;", "SocketCreate: sockets: TP has no network messaging"),
+    ("IF SocketGetStatus(sServer)=SOCKET_CONNECTED nOk:=1;", "VAR socketdev sServer;\nVAR num nOk;",
+     "SocketGetStatus: sockets"),
+    ("sState:=SocketGetStatus(sServer);", "VAR socketdev sServer;\nVAR socketstatus sState;", "SocketGetStatus: sockets"),
+    ('TPReadFK nAnswer,"Go on?","Yes","No",stEmpty,stEmpty,stEmpty;', "VAR num nAnswer;", "TPReadFK: operator dialog"),
+    ("TPShow TP_LATEST;", "", "TPShow: a screen or an application of the ABB pendant"),
+    ("BookErrNo ERR_GRIP;", "VAR errnum ERR_GRIP:=-1;", "BookErrNo: the ABB event log"),
+    ('ErrWrite\\W,"Gripper","Part lost";', "", "ErrWrite: the ABB event log"),
+    ("WZLimSup\\Temp,wzZone,shVolume;", "VAR wztemporary wzZone;\nVAR shapedata shVolume;", "WZLimSup: world zone"),
+])  # fmt: skip
+def test_rapid_instructions_without_a_tp_equivalent_are_said_so(body, data, start):
+    result = run(body, data)
+    found = [n for n in result.notes if n.kind == "TODO"]
+    assert [n.category for n in found] == [Blocker.NO_TP_EQUIVALENT]
+    assert found[0].message.startswith(start)
+
+
+def test_a_routine_of_the_backup_named_like_a_rapid_instruction_is_not_one():
+    result = run("Write 3;", "", extra_procs="PROC Write(num n)\n  nLast:=n;\nENDPROC\nVAR num nLast;")
+    assert {n.category for n in result.notes if n.kind == "TODO"} <= {Blocker.CALL_ARGS}
+
+
+def test_the_size_of_an_array_is_a_constant():
+    assert tp_lines(run("FOR i FROM 1 TO Dim(nCount,1) DO\n  nSum:=nSum+i;\nENDFOR", TABLE))[0] == "FOR R[1:i]=1 TO 2"
+
+
+def test_the_tasks_sharing_a_pers_array_share_its_registers():
+    """A PERS is the tasks' own data: an array of them changed by one is read changed by the other."""
+    from crossarm.convert.compute import Written
+    from crossarm.convert.translate import ControllerScope
+
+    def task(name: str, body: str):
+        return parse_module(f"MODULE {name}\nPERS num nPlan{{2,3}};\nVAR num k:=1;\nVAR num n{name};\n"
+                            f"PROC main()\n{body}\nENDPROC\nENDMODULE\n")  # fmt: skip
+
+    left, right = task("L", "nPlan{k,2}:=4;"), task("R", "nR:=nPlan{k,2};")
+    config = ConversionConfig(timestamp=datetime(2026, 1, 1))
+    shared = ControllerScope.from_config(config)
+    shared.written = Written.of([left, right])
+    first = convert([left], config, routines=["main"], shared=shared)
+    second = convert([right], config, routines=["main"], shared=shared)
+    assert [(a.name, a.base) for a in first.number_arrays] == [(a.name, a.base) for a in second.number_arrays]
+    assert first.number_arrays[0].base == 195
+
+
+def test_an_array_no_run_of_registers_holds_is_not_counted_as_converted():
+    result = run("nBig{k}:=1;\nnSum:=1;", TABLE + "VAR num nBig{300};")
+    assert any("no run of free registers left for the array nBig" in m for m in todos(result))
+    assert result.coverage.converted == 1  # nSum:=1 only
+
+
+@pytest.mark.parametrize(("body", "line"), [
+    ("bOk:=nCount>2;", "F[1]=(R[1]>2)"),
+    ("bOk:=nCount>2 AND NOT bBusy;", "F[2]=(R[1]>2 AND F[1]=OFF)"),
+    ("bOk:=bBusy;", "F[2]=(F[1])"),
+    ("bOk:=NOT bOk;", "F[1]=(F[1]=OFF)"),
+    ("bOk:=nCount<-1 OR nCount=3;", "F[1]=(R[1]<-1 OR R[1]=3)"),
+])  # fmt: skip
+def test_a_bool_set_to_a_condition_is_a_flag_set_to_it(body, line):
+    """ROBOGUIDE: F[n]=(R[1]<5 AND R[2]>8), F[n]=(F[m]=OFF), F[n]=(F[m]) load and give the condition's value."""
+    result = run(body, "VAR num nCount;\nVAR bool bOk;\nVAR bool bBusy;")
+    assert todos(result) == []
+    assert tp_lines(result) == [line]
+
+
+def test_moveldo_to_a_fine_point_is_the_move_then_the_output():
+    """ROBOGUIDE: the line after a FINE move sets the output with the TCP on the point, as MoveLDO does."""
+    result = run("MoveLDO pHome,v500,fine,tGrip,doGrip,1;\nMoveJDO pHome,v500,fine,tGrip,doGrip,0;", HOME + TOOL)
+    assert tp_lines(result)[-4:] == ["L P[1] 500mm/sec FINE", "DO[1]=ON", "J P[1] 11% FINE", "DO[1]=OFF"]
+    assert todos(result) == []
+
+
+def test_moveldo_through_a_zone_stays_todo():
+    result = run("MoveLDO pHome,v500,z10,tGrip,doGrip,1;", HOME + TOOL)
+    assert "in the middle of the corner path" in todos(result)[0]
+
+
+def test_testdi_is_the_input_at_one():
+    assert tp_lines(run("IF TestDI(diReady) nCount:=1;\nWHILE NOT TestDI(diReady) DO\n  nCount:=2;\nENDWHILE",
+                        "VAR num nCount;"))[:2] == ["IF (DI[1]=ON) THEN", "R[1:nCount]=1"]  # fmt: skip
+
+
+def test_waitrob_after_a_fine_move_has_nothing_to_wait_for():
+    result = run("MoveL pHome,v500,fine,tGrip;\nWaitRob\\InPos;\nMoveL pHome,v500,z10,tGrip;\nWaitRob\\InPos;", HOME + TOOL)
+    assert tp_lines(result)[3] == "!WaitRob InPos: FINE before"
+    assert [n.message.split(":")[0] for n in result.notes if n.kind == "TODO"] == ["WaitRob \\InPos"]

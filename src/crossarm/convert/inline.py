@@ -32,10 +32,12 @@ REAL_CONTROLLER = "ROBOS"  # system function: TRUE on a real controller, FALSE i
 
 class Inliner:
     def __init__(self, modules: list[n.Module], is_const_bool: Callable[[str], bool | None],
-                 on_assumption: Callable[[str], None], is_local: Callable[[str], bool] = lambda _: False) -> None:  # fmt: skip
+                 on_assumption: Callable[[str], None], is_local: Callable[[str], bool] = lambda _: False,
+                 const_field: Callable[[n.Expr], bool | None] = lambda _: None) -> None:  # fmt: skip
         """`is_const_bool(name)`: the value of a CONST bool, None for anything else.
         `on_assumption(key)` is called when RobOS() is taken as TRUE, and when a function is inlined.
-        `is_local(name)`: a data of the calling routine, which would hide the one the function reads."""
+        `is_local(name)`: a data of the calling routine, which would hide the one the function reads.
+        `const_field(expr)`: the value of a bool field of a record no program changes, None for anything else."""
         self.functions = {
             r.name.upper(): r for m in modules for r in m.routines
             if r.kind == "FUNC" and (r.return_type or "").lower() == "bool" and not r.params.strip()
@@ -43,6 +45,7 @@ class Inliner:
         self.is_const_bool = is_const_bool
         self.on_assumption = on_assumption
         self.is_local = is_local
+        self.const_field = const_field
         self._bodies: dict[str, n.Expr | None] = {}
 
     def simplify(self, expr: n.Expr, depth: int = 0) -> n.Expr:
@@ -59,6 +62,8 @@ class Inliner:
                 return self.simplify(body, depth + 1)
             case n.Name(name=name) if self.is_const_bool(name) is not None:
                 return n.Bool(expr.span, bool(self.is_const_bool(name)))
+            case n.Component() if (value := self.const_field(expr)) is not None:
+                return n.Bool(expr.span, value)
             case n.UnaryOp(op="NOT", operand=operand):
                 inner = self.simplify(operand, depth)
                 return n.Bool(expr.span, not inner.value) if isinstance(inner, n.Bool) else n.UnaryOp(expr.span, "NOT", inner)

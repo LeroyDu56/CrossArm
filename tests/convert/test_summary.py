@@ -54,10 +54,8 @@ def test_writing_a_frame_component_is_a_frame_blocker_not_a_record_one():
 
 def test_a_whole_assignment_is_told_by_the_data_type():
     data = TOOL + "VAR speeddata vFast:=[500,500,5000,1000];\nVAR bool bOn:=TRUE;"
-    result = run("tGrip:=tGrip;\nvFast:=vFast;\nbOn:=NOT bOn;", data)
-    assert [n.category for n in result.notes if n.kind == "TODO"] == [
-        Blocker.RUNTIME_FRAME, Blocker.VALUE, Blocker.VALUE,
-    ]  # fmt: skip
+    result = run("tGrip:=tGrip;\nvFast:=vFast;\nbOn:=NOT bOn;", data)  # a bool: F[1]=(F[1]=OFF)
+    assert [n.category for n in result.notes if n.kind == "TODO"] == [Blocker.RUNTIME_FRAME, Blocker.VALUE]
 
 
 def test_warnings_are_grouped_separately_from_todos():

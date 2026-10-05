@@ -1,0 +1,4 @@
+faCount 5
+faPairs 44
+faFixed 1
+faFirst 1

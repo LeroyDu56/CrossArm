@@ -24,6 +24,22 @@ change to CrossArm is checked on a controller and not only on text:
     arrays       arrays of numbers indexed at run time: the totals RobotStudio computes
     interrupts   ISignalDO, IPers, ISleep/IWatch/IDelete as condition monitors: the TRAP calls RAPID makes
     params       records passed as their components, nums passed by reference, Incr/Add: the totals RobotStudio computes
+    records      data of RECORD types kept field by field (a state machine, a routine's own record, a whole copy):
+                 the totals RobotStudio computes, the speed and zone of a record field as constants and from registers
+    arraywrite   arrays of numbers the programs write (R[R[n]], R[base+k]): the totals RobotStudio computes
+    flags        bools set to a condition, kept in flags (F[n]=(R[1]<5 AND F[2]=OFF)): the totals RobotStudio
+                 computes
+    flagarrays   arrays of bools kept in blocks of flags (F[base+k], F[R[n]]): the totals RobotStudio computes
+    pointref     points passed by reference (VAR, INOUT robtarget) changed by the routine, read back after the
+                 CALL: the values RobotStudio computes, after the moves
+    movedo       an output set on the line after a FINE move (MoveLDO to a fine point): it switches with the TCP
+                 on the point
+    timeflag     waits with \\MaxTime and \\TimeFlag: the flags RobotStudio sets
+    search       SearchL as a skip, the input switched through COM as the TCP passes a point: the point found
+                 where it switched, a move above it, \\Sup going on to the point, a pause when the input is on at
+                 the start; moves with a skip latching the position not slowed down up to the speed converted
+    strings      strings kept in string registers (texts compared, worked out, passed on): the totals RobotStudio
+                 computes
     pallet       points worked out at run time (Offs of loop counters, RelTool, CRobT): the poses of the moves written out
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
@@ -47,16 +63,25 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import make_arg_probe
 import make_array_probe
+import make_array_write_probe
 import make_bank_probe
 import make_compute_probe
 import make_condition_probe
+import make_flag_array_probe
+import make_flag_probe
 import make_interrupt_probe
 import make_io_probe
+import make_move_do_probe
 import make_pallet_probe
 import make_param_probe
 import make_point_probe
+import make_point_ref_probe
+import make_record_probe
+import make_search_probe
 import make_select_probe
 import make_setup_probe
+import make_string_probe
+import make_time_flag_probe
 import make_wait_probe
 import roboguide
 import robotstudio
@@ -77,6 +102,13 @@ ABB_PROBES = [
     (PROBES / "select" / "SelectProbe.mod", "Probe", "selectprobe.txt", make_select_probe.ABB_RESULT),
     (PROBES / "arrays" / "ArrayProbe.mod", "Probe", "arrayprobe.txt", make_array_probe.ABB_RESULT),
     (PROBES / "params" / "ParamProbe.mod", "Probe", "paramprobe.txt", make_param_probe.ABB_RESULT),
+    (PROBES / "records" / "RecordProbe.mod", "Probe", "recordprobe.txt", make_record_probe.ABB_RESULT),
+    (PROBES / "strings" / "StringProbe.mod", "Probe", "stringprobe.txt", make_string_probe.ABB_RESULT),
+    (PROBES / "arraywrite" / "ArrayWriteProbe.mod", "Probe", "arraywriteprobe.txt", make_array_write_probe.ABB_RESULT),
+    (PROBES / "flags" / "FlagProbe.mod", "Probe", "flagprobe.txt", make_flag_probe.ABB_RESULT),
+    (PROBES / "flagarrays" / "FlagArrayProbe.mod", "Probe", "flagarrayprobe.txt", make_flag_array_probe.ABB_RESULT),
+    (PROBES / "pointref" / "PointRefProbe.mod", "Probe", "pointrefprobe.txt", make_point_ref_probe.ABB_RESULT),
+    (PROBES / "timeflag" / "TimeFlagProbe.mod", "Probe", "timeflagprobe.txt", make_time_flag_probe.ABB_RESULT),
 ]
 REFUSED = {"NEG_FOR_B"}  # the negative-constant probe: the one form the controller does not load
 
@@ -268,6 +300,76 @@ def probe_params() -> str:
                 lambda: registers_check(make_param_probe.EXPECTED, numbers))  # fmt: skip
 
 
+def probe_records() -> str:
+    numbers = make_record_probe.registers(make_record_probe.conversion())
+    expected = make_record_probe.EXPECTED
+    verdicts = []
+    for program in (make_record_probe.PROGRAM, *make_record_probe.VARIANTS):  # constants, then from registers
+        verdicts.append(_run("records", program, list(numbers.values()),
+                             lambda: registers_check(expected, {k: numbers[k] for k in expected}),
+                             load=program == make_record_probe.PROGRAM))  # fmt: skip
+        if verdicts[-1].startswith("FAIL"):
+            return f"{program}: {verdicts[-1]}"
+    return f"{verdicts[0]}, in 3 programs (speed and zone as constants, from registers)"
+
+
+def probe_strings() -> str:
+    numbers = make_string_probe.registers(make_string_probe.conversion())
+    return _run("strings", make_string_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_string_probe.EXPECTED, numbers))  # fmt: skip
+
+
+def probe_arraywrite() -> str:
+    numbers = make_array_write_probe.registers(make_array_write_probe.conversion())
+    return _run("arraywrite", make_array_write_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_array_write_probe.EXPECTED, numbers))  # fmt: skip
+
+
+def probe_flagarrays() -> str:
+    numbers = make_flag_array_probe.registers(make_flag_array_probe.conversion())
+    return _run("flagarrays", make_flag_array_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_flag_array_probe.EXPECTED, numbers))  # fmt: skip
+
+
+def probe_flags() -> str:
+    numbers = make_flag_probe.registers(make_flag_probe.conversion())
+    return _run("flags", make_flag_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_flag_probe.EXPECTED, numbers))  # fmt: skip
+
+
+def probe_pointref() -> str:
+    numbers = make_point_ref_probe.registers(make_point_ref_probe.conversion())
+    return _run("pointref", make_point_ref_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(make_point_ref_probe.EXPECTED, numbers))  # fmt: skip
+
+
+def probe_movedo() -> str:
+    try:
+        distance, delay = make_move_do_probe.measure()
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    verdict = "" if distance <= 0.01 else "FAIL "
+    return f"{verdict}DO set {distance:.3f} mm from the FINE point, {delay:.0f} ms after the TCP is within 0.5 mm"
+
+
+def probe_search() -> str:
+    try:
+        found = make_search_probe.read_results("\n".join(make_search_probe.measure()))
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    ok, _ = make_search_probe.verdict(found)
+    return (f"{'' if ok else 'FAIL '}point found at y={found.get('nFoundY')} for the input switched at"
+            f" y={found.get('SPSTOP_switched_y')}, \\Sup ends at {found.get('nSupEndY')}, input on at the start:"
+            f" {found.get('SPEARLY_status')}")
+
+
+def probe_timeflag() -> str:
+    numbers = make_time_flag_probe.registers(make_time_flag_probe.conversion())
+    expected = make_time_flag_probe.EXPECTED
+    return _run("timeflag", make_time_flag_probe.PROGRAM, list(numbers.values()),
+                lambda: registers_check(expected, {k: numbers[k] for k in expected}))  # fmt: skip
+
+
 def probe_pallet() -> str:
     def check() -> str:
         found = make_pallet_probe.read_poses(make_pallet_probe.poses(roboguide.page("md/POSREG.VA")))
@@ -309,7 +411,8 @@ def main() -> int:
     probes = {"negative": probe_negative, "args": probe_args, "conditions": probe_conditions, "waits": probe_waits,
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
-              "interrupts": probe_interrupts, "params": probe_params,
+              "interrupts": probe_interrupts, "params": probe_params, "records": probe_records, "strings": probe_strings,
+              "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag,
               "pallet": probe_pallet,
               "abb": probe_abb}  # fmt: skip
     chosen = sys.argv[1:] or list(probes)

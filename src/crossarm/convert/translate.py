@@ -27,15 +27,17 @@ Mapping rules (see the report for the values actually used):
 """
 
 import dataclasses
+import itertools
 import math
 import re
 import traceback
 import unicodedata
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from crossarm.convert.arguments import Signature, signature
 from crossarm.convert.compute import (
@@ -46,6 +48,7 @@ from crossarm.convert.compute import (
     Typed,
     Unknown,
     Written,
+    parse_params,
     path_of,
     to_pose,
 )
@@ -66,7 +69,18 @@ from crossarm.convert.interrupts import GAPS, SINGLE_OPTIONS, Interrupt, arming,
 from crossarm.convert.interrupts import scan as scan_interrupts
 from crossarm.convert.motion import corner
 from crossarm.convert.payload import Payload, combined
-from crossarm.convert.values import Evaluator, Frame, JointTarget, Load, RobTarget, Symbols, Unresolvable
+from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
+from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
+from crossarm.convert.values import (
+    Evaluator,
+    Frame,
+    JointTarget,
+    Load,
+    RobTarget,
+    Symbols,
+    Unresolvable,
+    unit_quaternion,
+)
 from crossarm.convert.wrappers import CallMismatch, MoveRoutine, find_move_routines, parameters
 from crossarm.fanuc.tp import (
     Attributes,
@@ -127,6 +141,11 @@ class Blocker:
     PAYLOAD = "payload changed at run time"
     STATIONARY = "stationary tool or robot-held work object"
     RECORD = "record component or array element"
+    NO_TP_EQUIVALENT = "RAPID instruction without a TP equivalent"
+    RECORD_VALUE = "record field written as the value the programs set it to"
+    SAVED_VALUE = "PERS no program changes, read at its saved value"
+    LOCAL_RECORD = "record of a routine kept in registers every call shares"
+    TEXT = "text kept in a string register"
     CONDITION = "condition not convertible"
     VALUE = "value not known at conversion time"
     SIGNAL = "I/O signal without a mapping"
@@ -145,6 +164,7 @@ class Blocker:
     MOTION_SETTING = "motion setting (ConfL, SingArea, AccSet, VelSet...)"
     INTERRUPT = "interrupt (CONNECT, ISignalDI...) and its TRAP"
     MONITOR = "interrupt watched by a condition monitor (checked periodically)"
+    SEARCH = "search: the FANUC skip stops and fails otherwise"
     IO_ROUNDED = "I/O written approximately (pulse length)"
     INTERNAL = "CrossArm internal error"
     OTHER = "other"
@@ -218,6 +238,7 @@ class Allocation:
     rapid_name: str
     fixed: bool  # pinned by the mapping file
     detail: str = ""
+    key: str = ""  # what the mapping file names it by when not its RAPID name: Routine.counter, CROSSARM.x
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +335,14 @@ _INTERRUPT_GAPS = {
 }
 _CHANGING = frozenset({"INCR", "DECR", "ADD", "CLEAR"})  # written as the assignment they make: _as_assignment
 NO_GROUP = "*,*,*,*,*"  # DEFAULT_GROUP of a program that moves no robot: a TRAP, a condition program
+SR_LIMIT = 25  # string registers of a controller (ROBOGUIDE: SR[26] does not exist)
+TEXT_PROGRAM = "CA_TEXT"  # the program loading a text into a string register (crossarm.convert.strings)
+TEXT_KEY = "CROSSARM.TEXT"  # its key in the mapping file (programs)
+# RAPID text functions CrossArm writes with TP's string instructions (crossarm.convert.strings).
+_TEXT_WORK = frozenset({"STRLEN", "STRMATCH", "STRPART", "NUMTOSTR", "VALTOSTR"})
+# RAPID functions giving a text: an expression using one is a text, converted or not.
+_TEXT_FUNCTIONS = frozenset({"STRPART", "NUMTOSTR", "VALTOSTR", "DNUMTOSTR", "STRMAP", "BYTETOSTR", "ARGNAME",
+                             "CTIME", "CDATE", "GETTASKNAME", "GETMECUNITNAME", "ERRSTR", "STRFORMAT"})
 STRING_ARGUMENT_MAX = 38  # characters of a string CALL argument (ROBOGUIDE: 38 loads, 39 is refused)
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
 PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
@@ -328,6 +357,17 @@ def _reads(operands: Iterable[str]) -> set[int] | None:
     if any(not re.fullmatch(r"\(?-?[\d.]+\)?|R\[\d+(:[^\]]*)?\]|AR\[\d+\]", o) for o in operands):
         return None
     return {int(m[1]) for o in operands for m in [_WRITES_REGISTER.match(o)] if m}
+# SearchL: how it stops, and the input level its skip condition waits for, with whether RAPID searches for a
+# change of the input (an error when the input is at that level at the start).
+_SEARCH_STOPS = frozenset({"STOP", "PSTOP", "SSTOP"})
+_SEARCH_LEVELS = {"POSFLANK": ("ON", True), "NEGFLANK": ("OFF", True), "HIGHLEVEL": ("ON", False),
+                  "LOWLEVEL": ("OFF", False)}  # fmt: skip
+# mm/s: a move with a skip latching the position (PR[k]=LPOS) keeps its speed up to this; faster, the controller
+# slows it down to about this (ROBOGUIDE: 120 and 250 mm/s run at the speed of 100, the manual says 250)
+SKIP_SPEED_MAX = 100
+SKIP_OVERSHOOT = "6.4 mm past at 50 mm/s"  # where a skip stops before coming back (ROBOGUIDE, R-1000iA/80F)
+# Moves setting an output when the robot is on the point: written as the move, then the output.
+_SET_ON_ARRIVAL = frozenset({"MOVELDO", "MOVEJDO", "MOVECDO"})
 PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAYLOAD[11] loads, stops when run)
 # Where the tool is among the unnamed arguments of the instructions that move with one besides MoveX.
 _TOOL_ARGUMENT = {"MOVELDO": 3, "MOVEJDO": 3, "MOVECDO": 4, "MOVELAO": 3, "MOVEJAO": 3, "MOVECAO": 4,
@@ -355,6 +395,7 @@ class ConversionResult:
     notes: list[Note] = field(default_factory=list)
     registers: list[Allocation] = field(default_factory=list)
     flags: list[Allocation] = field(default_factory=list)
+    string_registers: list[Allocation] = field(default_factory=list)  # SR keeping the strings the programs change
     digital_outputs: list[Allocation] = field(default_factory=list)
     digital_inputs: list[Allocation] = field(default_factory=list)
     group_outputs: list[Allocation] = field(default_factory=list)
@@ -365,6 +406,7 @@ class ConversionResult:
     point_registers: list[Allocation] = field(default_factory=list)  # PR a robtarget argument is passed in
     point_arrays: list[PointArray] = field(default_factory=list)  # arrays of points indexed at run time
     number_arrays: list[NumberArray] = field(default_factory=list)  # arrays of numbers indexed at run time
+    flag_arrays: list[NumberArray] = field(default_factory=list)  # arrays of bools, in consecutive flags (1.0 = ON)
     uframes: list[FrameInfo] = field(default_factory=list)
     utools: list[FrameInfo] = field(default_factory=list)
     computed_frames: list[ComputedFrame] = field(default_factory=list)  # in the order the programs first load them
@@ -380,6 +422,13 @@ class ConversionResult:
     wait_clock: tuple[str, str] | None = None  # (TIMER[n], R[m]) timing the waits with a MaxTime, when used
     setup: "FrameSetup | None" = None  # the program that sets the frames on the robot (set by the pipeline)
     coverage: Coverage = field(default_factory=lambda: Coverage(()))  # instructions converted, by area
+    # Records kept field by field (crossarm.convert.records): data -> (registers, flags) its fields take.
+    records: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # The program loading a text into a string register (crossarm.convert.strings), when one is.
+    text_program: str | None = None
+    # The TP name of each program written that other programs call or arm, by its key in the mapping file
+    # (programs): a routine's name, an interrupt's (its relay INTERRUPT.relay), CROSSARM.TEXT.
+    program_keys: dict[str, str] = field(default_factory=dict)
 
     @property
     def todo_count(self) -> int:
@@ -419,7 +468,11 @@ class ConversionResult:
 
 class NumberTable:
     """RAPID name -> FANUC number: pinned by the user, else allocated in order of first use,
-    skipping the numbers already used on the controller (`reserved`)."""
+    skipping the numbers already used on the controller (`reserved`).
+
+    `defer`: while a statement CrossArm converts only since texts are kept in string registers is written,
+    what it numbers first gets a placeholder (_DEFERRED and up), numbered by finish(): the programs without
+    texts keep the numbers they had. Asked for again by another statement, it gets its number there."""
 
     def __init__(self, fixed: dict[str, int], first: int, reserved: Iterable[int] = ()) -> None:
         self.fixed = fixed
@@ -427,23 +480,79 @@ class NumberTable:
         self.reserved = frozenset(reserved)
         self.skip: set[int] = set()  # taken by CrossArm for its own use (the TIMER timing the waits)
         self.assigned: dict[str, Allocation] = {}
+        self.by_name: set[int] = set()  # numbers a keyed register took from its RAPID name (1.0-1.2 files)
+        self.defer = False
+        self.pending: dict[str, int] = {}  # key -> placeholder, while deferred
+        self.resolved: dict[int, int] = {}  # placeholder -> number
+        self._next = _DEFERRED + 1000 * next(_TABLES)  # this table's placeholders
 
-    def number(self, name: str, key: str | None = None, detail: str = "") -> int:
-        key = (key or name).upper()
+    def number(self, name: str, key: str | None = None, detail: str = "", after_pinned: bool = False,
+               top: int | None = None) -> int:  # fmt: skip
+        """`after_pinned`: a number past every one the mapping file pins, when it does not pin this one (a
+        field of a record: a mapping file written before records were converted never names it). `top`: the
+        highest free number up to it instead of the lowest (the scratch string registers).
+
+        `key` tells apart what shares a RAPID name: the FOR counter `i` of each routine (`MAIN.i`), the
+        registers CrossArm uses itself (`CROSSARM.TESTVALUE`). The mapping file names those by their key.
+
+        Mapping files written by 1.0 to 1.2 named them by their RAPID name only: such a name still pins its
+        number, to the first register of that name, so that a file given back gives the numbers it gave.
+        """
+        given, key = key, (key or name).upper()
+        if key in self.pending and not self.defer:  # first used where it was deferred: numbered here, as before
+            placeholder = self.pending.pop(key)
+            del self.assigned[key]
+            self.resolved[placeholder] = number = self.number(name, given, detail, after_pinned, top)
+            return number
         if key in self.assigned:
             return self.assigned[key].number
-        if key in self.fixed:
+        taken = {a.number for a in self.assigned.values()}
+        old = name.upper()
+        if key in self.fixed and not (key == old and self.fixed[key] in self.by_name):
             number, fixed = self.fixed[key], True
+        elif key != old and old in self.fixed and self.fixed[old] not in taken:
+            number, fixed = self.fixed[old], True
+            self.by_name.add(number)
+        elif self.defer:
+            self.pending[key] = number = self._next
+            self._next += 1
+            self.assigned[key] = Allocation(number, name, False, detail, given if given and key != old else "")
+            return number
         else:
             used = set(self.fixed.values()) | {a.number for a in self.assigned.values()} | self.reserved | self.skip
             number, fixed = self.first, False
+            if after_pinned and self.fixed:
+                number = max(self.first, max(self.fixed.values()) + 1)
+            step = 1
+            if top is not None:
+                number, step = top, -1
             while number in used:
-                number += 1
-        self.assigned[key] = Allocation(number, name, fixed, detail)
+                number += step
+        self.assigned[key] = Allocation(number, name, fixed, detail, given if given and key != old else "")
         return number
+
+    def release(self, key: str) -> None:
+        """Give a number back: one past what the controller holds, not used after all."""
+        self.assigned.pop(key.upper(), None)
+
+    def finish(self, top: int | None) -> dict[int, int]:
+        """Number what only deferred statements use: from `top` down (what the controller holds), so that the
+        numbers of the tasks converted next stay the same; past the others when the count is not known.
+        Returns placeholder -> number, for every placeholder numbered so far."""
+        for key, placeholder in list(self.pending.items()):
+            allocation = self.assigned.pop(key)
+            del self.pending[key]
+            self.resolved[placeholder] = self.number(allocation.rapid_name, allocation.key or None, allocation.detail,
+                                                     top=top)  # fmt: skip
+        return dict(self.resolved)
 
     def allocations(self) -> list[Allocation]:
         return sorted(self.assigned.values(), key=lambda a: a.number)
+
+
+_DEFERRED = 100_000_000  # placeholders of numbers deferred (NumberTable.defer): 9 digits and more
+_TABLES = itertools.count()
+_PLACEHOLDER = re.compile(r"(?<=\[)\d{9,}(?=[\]:])")
 
 
 class TableView:
@@ -467,9 +576,17 @@ class TableView:
     def reserved(self) -> frozenset[int]:
         return self.table.reserved
 
-    def number(self, name: str, key: str | None = None, detail: str = "") -> int:
+    def number(self, name: str, key: str | None = None, detail: str = "", after_pinned: bool = False,
+               top: int | None = None) -> int:  # fmt: skip
         self.keys.add((key or name).upper())
-        return self.table.number(name, key, detail)
+        return self.table.number(name, key, detail, after_pinned, top)
+
+    def release(self, key: str) -> None:
+        self.keys.discard(key.upper())
+        self.table.release(key)
+
+    def finish(self, top: int | None) -> dict[int, int]:
+        return self.table.finish(top)
 
     def allocations(self) -> list[Allocation]:
         return sorted((a for k, a in self.table.assigned.items() if k in self.keys), key=lambda a: a.number)
@@ -496,9 +613,13 @@ class ControllerScope:
     timers: NumberTable
     program_names: set[str] = field(default_factory=set)  # TP names taken: on the robot, or by a task
     existing_programs: frozenset[str] = frozenset()  # of which: already on the target robot
+    given_programs: set[str] = field(default_factory=set)  # of which: given to a program of this conversion
     # What the programs of every task can change: a PERS is shared by all tasks (crossarm.convert.compute).
     # None: only the task being converted is known.
     written: Written | None = None
+    strings: NumberTable | None = None  # SR[n]; None: made from the configuration when first needed
+    # The first register of each PERS array of numbers kept in registers: the tasks share a PERS, and so its block.
+    array_bases: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, cfg: ConversionConfig, existing_programs: Iterable[str] = ()) -> "ControllerScope":
@@ -515,6 +636,7 @@ class ControllerScope:
             NumberTable(cfg.timers, cfg.first_timer, taken.get("TIMER", ())),
             set(existing),
             existing,
+            strings=NumberTable(cfg.string_registers, cfg.first_string_register, taken.get("SR", ())),
         )
 
 
@@ -553,6 +675,15 @@ def remark_lines(text: str) -> list[str]:
     return ["!" + c for c in chunks]
 
 
+def suffixed(base: str, taken: set[str] | frozenset[str], max_length: int) -> str:
+    """base, or base with a suffix (_2, _3...) while that name is taken."""
+    candidate, suffix = base, 1
+    while candidate in taken:
+        suffix += 1
+        candidate = f"{base[: max_length - len(str(suffix)) - 1]}_{suffix}"
+    return candidate
+
+
 def tp_program_name(name: str, max_length: int) -> str:
     cleaned = re.sub(r"[^A-Z0-9_]", "_", ascii_text(name).upper())
     if not cleaned or not cleaned[0].isalpha():
@@ -585,9 +716,26 @@ def decimal(text: str) -> str:
 
 
 def fmt_number(value: float) -> str:
+    """A constant with the digits the controller runs with: whole numbers as they are, 6 decimals, and as
+    many as the 7 significant digits of a small one need (`.0000015`). ROBOGUIDE lists 6 significant
+    digits (`300.000215` as `300`) but runs with the value written (300.000214, a 32-bit real)."""
     if float(value).is_integer():
         return str(int(value))
+    if abs(value) < 0.1:
+        return format(Decimal(f"{value:.7g}"), "f")
     return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+# The largest whole number a TP line keeps (ROBOGUIDE): 2147483647 is stored `********`, -2147483648 as -129.
+REGISTER_MAX = 2147483646
+
+
+def register_value(value: float) -> str:
+    """fmt_number() of a constant written in a register line; a TODO past what a register line keeps."""
+    if abs(value) > REGISTER_MAX:
+        raise Untranslatable(f"constant {fmt_number(value)} too large for a TP register: a TP line keeps"
+                             f" {REGISTER_MAX} at most", Blocker.VALUE)  # fmt: skip
+    return fmt_number(value)
 
 
 def _comment(name: str) -> str:
@@ -655,6 +803,11 @@ class Converter:
         cfg = self.config
         shared = self.shared = shared or ControllerScope.from_config(cfg)
         self.computer = Computer(modules, self.symbols, shared.written or Written.of(modules))
+        self.records = Records(modules, self.symbols, self.computer.layouts, self.computer.written,
+                               self._fixed_value, Written.of(modules) if shared.written else None)  # fmt: skip
+        self.recursive = recursive(modules)  # routines that can call themselves back: no record of their own
+        self.strings = Strings(modules, self.symbols, self.computer.written, self._fixed_value,
+                               Written.of(modules) if shared.written else None)  # fmt: skip
         self.effects = Effects(modules)
         # Frames computed at conversion time: value key -> uses; each use is (kind, RAPID data, program, line,
         # statement), and a program line loading it reads `PR[{CF:use}]` until its register is known (convert()).
@@ -671,6 +824,10 @@ class Converter:
         self.arrays: dict[str, tuple[str, tuple[int, ...], tuple[CartesianPosition, ...]]] = {}
         # Arrays of numbers indexed at run time, likewise: `{RB:NAME:k}` until _place_number_arrays().
         self.number_arrays: dict[str, tuple[str, tuple[int, ...], tuple[float, ...]]] = {}
+        # Arrays of bools the programs change or index at run time: `{FB:NAME:k}` until _place_number_arrays().
+        self.flag_arrays: dict[str, tuple[str, tuple[int, ...], tuple[float, ...]]] = {}
+        self.array_statements: dict[str, set[int]] = {}  # array -> id() of the statements reading or writing it
+        self.shared_arrays: set[str] = set()  # arrays of numbers that are PERS of the task: one block for all tasks
         self.frames_in_moves: dict[str, set[str]] = {"UF": set(), "UT": set()}  # upper-case names, _plan_slots
         self.registers = TableView(shared.registers)
         self.flags = TableView(shared.flags)
@@ -680,6 +837,14 @@ class Converter:
         self.gins = TableView(shared.gins)
         self.aouts = TableView(shared.aouts)
         self.timers = TableView(shared.timers)
+        if shared.strings is None:
+            shared.strings = NumberTable(cfg.string_registers, cfg.first_string_register,
+                                         cfg.reserved.get("SR", {}).keys())  # fmt: skip
+        self.texts = TableView(shared.strings)
+        self.text_over: dict[str, str] = {}  # strings no string register is left for: name -> where first
+        self.trap_side: set[str] = set()  # routines a TRAP runs: scratch string registers of their own
+        self.both_sides: set[str] = set()  # ... that the programs also call
+        self.scratch_texts: set[str] = set()  # the scratch string registers, as the programs write them
         # Frames are per robot: each task starts its own.
         taken = {resource: numbers.keys() for resource, numbers in cfg.reserved.items()}
         self.uframes = NumberTable(cfg.uframes, cfg.first_uframe, taken.get("UFRAME", ()))
@@ -712,9 +877,11 @@ class Converter:
         # 'ROUTINE.NAME' for a routine's own (runtime_points()).
         self.runtime_points: set[str] = set()
         self.not_converted: set[int] = set()  # id() of the statements that ended up in a TODO, for coverage
+        self.record_uses: dict[str, tuple[set[int], set[int]]] = {}  # record data -> its registers, flags
         self.parameters: set[str] = set()  # of the routine being translated (upper case)
         self.inliner = Inliner(modules, self._const_bool, self._inlined,
-                               lambda name: self.symbols.is_local(name) or name.upper() in self.parameters)  # fmt: skip
+                               lambda name: self.symbols.is_local(name) or name.upper() in self.parameters,
+                               self._const_field)  # fmt: skip
 
     # -- entry point -------------------------------------------------------
 
@@ -739,6 +906,10 @@ class Converter:
                 elif is_system:
                     continue  # system modules: data and utilities, converted only on request
                 reason = self._skip_reason(routine, self.signatures.get(routine.name.upper()))
+                first = next((m for m, r in selected if r.name.upper() == routine.name.upper()), None)
+                if first is not None:  # two LOCAL routines of one name: one program name, one file
+                    reason = (f"{first.name} has a routine of the same name, converted: routines of one name "
+                              "in several modules are not")  # fmt: skip
                 if reason:
                     self.result.skipped_routines.append((module.name, routine.name, reason))
                     skipped.append(routine)
@@ -750,6 +921,7 @@ class Converter:
         # Names once the programs are known: only those actually written claim a name on the controller.
         self.program_names = self._program_names([routine for _, routine in selected])
         self._name_conditions(selected)
+        self._text_sides(selected)
         for module, routine in selected:
             translator = _RoutineTranslator(self, module, routine, self.program_names[routine.name.upper()])
             self.result.programs.append(translator.run())
@@ -760,6 +932,8 @@ class Converter:
                 self.note("", None, "TODO", f"routine '{missing}' not found in the given modules")
 
         self._write_conditions()
+        self._write_text_program()
+        self._number_deferred()
         self._controller_comments()
         self._place_computed()
         self._place_points()
@@ -774,8 +948,10 @@ class Converter:
         res.group_inputs = self.gins.allocations()
         res.analog_outputs = self.aouts.allocations()
         res.timers = self.timers.allocations()
+        res.string_registers = self.texts.allocations()
         res.uframes = sorted((f for (k, _), f in self.frames.items() if k == "UF"), key=lambda f: f.number)
         res.utools = sorted((f for (k, _), f in self.frames.items() if k == "UT"), key=lambda f: f.number)
+        self.result.records = {owner: (len(r), len(f)) for owner, (r, f) in sorted(self.record_uses.items())}
         self._check_capacity()
         self._report_move_routines()
         declared = {r.name.upper() for m in self.modules for r in m.routines}
@@ -984,25 +1160,42 @@ class Converter:
                                     for key, (name, dims, values) in self.arrays.items()]  # fmt: skip
 
     def _place_number_arrays(self) -> None:
-        """Number the register blocks of the arrays of numbers: the highest free run of registers, from the top
-        down, or pinned by the mapping file; kept out of the registers numbered automatically afterwards."""
-        if not self.number_arrays:
-            return
-        table = self.registers.table
-        limit = self.config.limits.get("R", 200)
+        """Number the register blocks of the arrays of numbers, then the flag blocks of the arrays of bools."""
+        self.result.number_arrays = self._place_blocks("R", self.number_arrays, self.registers.table,
+                                                       self.config.number_arrays, 200)  # fmt: skip
+        self.result.flag_arrays = self._place_blocks("F", self.flag_arrays, self.flags.table, self.config.flag_arrays,
+                                                     1024)  # fmt: skip
+
+    def _place_blocks(self, kind: str, arrays: dict[str, tuple[str, tuple[int, ...], tuple[float, ...]]],
+                      table: NumberTable, pinned: dict[str, int], default_limit: int) -> list[NumberArray]:  # fmt: skip
+        """Number the blocks of `kind` (R, F) the arrays are kept in: the highest free run, from the top down, or
+        pinned by the mapping file; kept out of the numbers given automatically afterwards. Lines read
+        `{RB:NAME:k}` (`{FB:...}` for flags) until then."""
+        if not arrays:
+            return []
+        limit = self.config.limits.get(kind, default_limit)
         used = set(table.fixed.values()) | {a.number for a in table.assigned.values()} | table.reserved | table.skip
         free = [k for k in range(limit, 0, -1) if k not in used]
         bases: dict[str, int | None] = {}
-        for key, (_name, _dims, values) in self.number_arrays.items():
-            if key in self.config.number_arrays:
-                bases[key] = self.config.number_arrays[key]
+        for key, (_name, _dims, values) in arrays.items():
+            shared = key if kind == "R" else f"{kind}:{key}"  # 1.2 files: the register blocks by their name alone
+            if key in pinned:
+                bases[key] = pinned[key]
+            elif key in self.shared_arrays and shared in self.shared.array_bases:  # a PERS another task placed
+                bases[key] = self.shared.array_bases[shared]
             else:
                 run = _consecutive(free, len(values))
                 bases[key] = run[0] if run else None
                 free = [k for k in free if k not in run]
             if bases[key] is not None:
                 table.skip.update(range(bases[key], bases[key] + len(values)))  # type: ignore[operator]
-        placeholder = re.compile(r"\{RB:([^}:]*):(-?\d+)\}")
+                if key in self.shared_arrays:
+                    self.shared.array_bases[shared] = bases[key]  # type: ignore[assignment]
+            else:  # its statements are not converted
+                for ids in self.array_statements.get(key, ()):
+                    self.not_converted.add(ids)
+        mark = "RB" if kind == "R" else "FB"
+        placeholder = re.compile(r"\{" + mark + r":([^}:]*):(-?\d+)\}")
 
         def number(match: re.Match[str]) -> str:
             found = bases[match[1]]
@@ -1013,16 +1206,16 @@ class Converter:
         for info in self.result.programs:
             lines = info.program.lines
             for i, line in enumerate(lines):
-                if isinstance(line, Instruction) and "{RB:" in line.text:
+                if isinstance(line, Instruction) and "{" + mark + ":" in line.text:
                     try:
                         lines[i] = Instruction(placeholder.sub(number, line.text), line.pad)
                     except LookupError as missing:
-                        name = self.number_arrays[str(missing.args[0])][0]
-                        lines[i] = Instruction(("!" + ascii_text(f"TODO no R left for {name}")[:REMARK_MAX]).rstrip())
-                        self.note(info.program.name, None, "TODO", f"no run of free registers left for the array {name}",
+                        name = arrays[str(missing.args[0])][0]
+                        lines[i] = Instruction(("!" + ascii_text(f"TODO no {kind} left for {name}")[:REMARK_MAX]).rstrip())
+                        what = "registers" if kind == "R" else "flags"
+                        self.note(info.program.name, None, "TODO", f"no run of free {what} left for the array {name}",
                                   Blocker.CAPACITY)  # fmt: skip
-        self.result.number_arrays = [NumberArray(name, dims, values, bases[key], key in self.config.number_arrays)
-                                     for key, (name, dims, values) in self.number_arrays.items()]  # fmt: skip
+        return [NumberArray(name, dims, values, bases[key], key in pinned) for key, (name, dims, values) in arrays.items()]
 
     def _place_payloads(self) -> None:
         """Number the payload schedules GripLoad selects and write them into the programs.
@@ -1182,6 +1375,59 @@ class Converter:
             self.result.wait_clock = (f"TIMER[{free[0]}]", self.written_register(WAIT_CLOCK, key="CROSSARM.WAITCLOCK"))
         return self.result.wait_clock
 
+    def _fixed_value(self, expr: n.Expr) -> Any:
+        """The value of an expression of fixed data, whatever routine is being written (Unresolvable if none)."""
+        scope, self.computer.scope = self.computer.scope, (lambda name: None)
+        try:
+            return self.computer.value(expr).value
+        finally:
+            self.computer.scope = scope
+
+    def _const_field(self, expr: n.Expr) -> bool | None:
+        """A bool field of a record no program changes, for conditions: its value; None for anything else."""
+        found = self.records.field(expr)
+        if found is None or found.indexed or found.type != "bool" or self.records.changed(found):
+            return None
+        try:
+            value = self.records.initial(found)
+        except Unresolvable:
+            return None
+        if not isinstance(value, bool):
+            return None
+        self.saved_value(found, value)
+        return value
+
+    def saved_value(self, found: Field, value: Any) -> None:
+        """A field of a PERS read as saved: said once per data, the first field read named."""
+        if found.root.storage == "PERS":
+            shown = value if isinstance(value, bool) else fmt_number(value) if isinstance(value, float) else value
+            self.warn_once(f"saved:{found.root.name.upper()}", "", None,
+                           f"{found.root.name}, a PERS no program changes: its fields are written as saved in the"
+                           f" backup where they are read ({found.name} {shown}...); a value set on the ABB controller"
+                           " since is not",
+                           Blocker.SAVED_VALUE)  # fmt: skip
+
+    def field_number(self, found: Field, flag: bool, program: str | None) -> str:
+        """R[n:...] / F[n:...] keeping a field of a record. `program`: the routine's own record, named
+        Routine.data.field (a routine's data and another's may share a name), else None."""
+        name = found.name if program is None else f"{program}.{found.name}"
+        detail = ""
+        if program is None and found.root.storage == "VAR" and found.root.init is not None:
+            try:
+                value = self.records.initial(found)
+                detail = f"RAPID VAR initial value {value if isinstance(value, bool) else fmt_number(value)}:" \
+                         " set it on the controller"
+            except (Unresolvable, TypeError, ValueError):
+                pass
+        table = self.flags if flag else self.registers
+        number = table.number(name, detail=detail, after_pinned=True)
+        owner = found.root.name if program is None else f"{program}.{found.root.name}"
+        uses = self.record_uses.setdefault(owner, (set(), set()))
+        uses[1 if flag else 0].add(number)
+        if not flag:
+            self.written_registers.add(number)
+        return f"{'F' if flag else 'R'}[{number}:{_comment(name)}]"
+
     def _const_bool(self, name: str) -> bool | None:
         decl = self.symbols.get(name)
         if decl is not None and decl.storage == "CONST" and isinstance(decl.init, n.Bool):
@@ -1209,7 +1455,7 @@ class Converter:
         tables = [
             ("UFRAME", self.uframes), ("UTOOL", self.utools), ("R", self.registers), ("F", self.flags),
             ("DO", self.douts), ("DI", self.dins), ("GO", self.gouts), ("GI", self.gins), ("AO", self.aouts),
-            ("TIMER", self.timers),
+            ("TIMER", self.timers), ("SR", self.texts),
         ]  # fmt: skip
         for resource, table in tables:
             allocations = table.allocations()
@@ -1314,21 +1560,15 @@ class Converter:
         max_len = self.config.program_name_max_length
         claimed = self.shared.program_names
 
-        def unique(base: str, taken: set[str]) -> str:
-            candidate, suffix = base, 1
-            while candidate in taken:
-                suffix += 1
-                candidate = f"{base[: max_len - len(str(suffix)) - 1]}_{suffix}"
-            return candidate
-
         for routine in converted:
             key = routine.name.upper()
             if key in names:
                 continue
-            base = tp_program_name(routine.name, max_len)
-            name = unique(base, claimed | mine)
+            name, base = self.program_name(routine.name, tp_program_name(routine.name, max_len), claimed | mine)
             if name != base:
-                if base in mine:
+                if base == self.config.programs.get(key):
+                    why = f"the mapping file gives it {base}, the name of another program of this conversion"
+                elif base in mine:
                     why = "another routine of this task has the same name once shortened"
                 elif base in self.shared.existing_programs:
                     why = f"the FANUC robot already has a program {base}, which loading it would replace"
@@ -1338,14 +1578,34 @@ class Converter:
                           Blocker.RENAMED)  # fmt: skip
             mine.add(name)
             claimed.add(name)
+            self.shared.given_programs.add(name)
+            self.result.program_keys[routine.name] = name
             names[key] = name
         for module in self.modules:  # not written: only called by name
             for routine in module.routines:
                 key = routine.name.upper()
                 if key not in names:
-                    names[key] = unique(tp_program_name(routine.name, max_len), mine)
+                    names[key] = self.config.programs.get(key) or suffixed(tp_program_name(routine.name, max_len),
+                                                                           mine, max_len)  # fmt: skip
                     mine.add(names[key])
         return names
+
+    def program_name(self, key: str, base: str, taken: set[str]) -> tuple[str, str]:
+        """(name, start) of a program CrossArm writes: the name the mapping file gives it (programs), kept even if
+        the FANUC robot has a program of that name (an earlier conversion loaded it, and the programs on the robot
+        call it: said so); else base, with a suffix while taken. start: the name it started from. A name the
+        mapping file gives another program is taken."""
+        pinned = self.config.programs.get(key.upper())
+        if pinned is not None and pinned not in self.shared.given_programs:
+            if pinned in self.shared.existing_programs:
+                self.note(pinned, None, "WARNING",
+                          f"the mapping file names {key} {pinned}, and the FANUC robot already has a program {pinned}:"
+                          " loading it replaces that one, intended if an earlier conversion loaded it, a clash"
+                          " otherwise", Blocker.TAKEN)  # fmt: skip
+            return pinned, pinned
+        start = pinned or base
+        others = {name for k, name in self.config.programs.items() if k != key.upper()}
+        return suffixed(start, taken | others, self.config.program_name_max_length), start
 
     def _runtime_points(self, routines: list[n.Routine]) -> set[str]:
         """The robtargets (not arrays, not CONST) some assignment gives a value only known at run time: kept in a
@@ -1370,6 +1630,25 @@ class Converter:
                 key = f"{routine.name}.{decl.name}".upper() if path[0] in own else path[0]
                 assignments.append((key, stmt, set(own), params))
         found: set[str] = set()
+        for routine in routines:  # passed to a routine changing it (VAR robtarget): read back into its register
+            own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
+            for stmt in walk_statements(routine.body):
+                searched = [a.value for a in stmt.args if a.name is None][1:2] \
+                    if isinstance(stmt, n.ProcCall) and stmt.name.upper() == "SEARCHL" else []  # fmt: skip
+                if searched and isinstance(searched[0], n.Name):  # the point SearchL finds
+                    decl = own.get(searched[0].name.upper()) or self.symbols.get_global(searched[0].name)
+                    if decl is not None and decl.type_name.lower() == "robtarget" and not decl.dims and decl.storage != "CONST":
+                        found.add(f"{routine.name}.{decl.name}".upper() if decl.name.upper() in own else decl.name.upper())
+                layout = self.signatures.get(stmt.name.upper()) if isinstance(stmt, n.ProcCall) else None
+                if not isinstance(layout, Signature) or not layout.points_changed:
+                    continue
+                for slot, value in zip(layout.required, [a.value for a in stmt.args if a.name is None], strict=False):
+                    if not (slot.kind == "robtarget" and slot.by_reference and slot.key in layout.points_changed
+                            and isinstance(value, n.Name)):  # fmt: skip
+                        continue
+                    decl = own.get(value.name.upper()) or self.symbols.get_global(value.name)
+                    if decl is not None and decl.type_name.lower() == "robtarget" and not decl.dims and decl.storage != "CONST":
+                        found.add(f"{routine.name}.{decl.name}".upper() if value.name.upper() in own else decl.name.upper())
         while True:  # a point reading a point known at run time is one too
             more = {key for key, stmt, own, params in assignments
                     if key not in found and self._at_run_time(stmt, own, params, found)}  # fmt: skip
@@ -1406,22 +1685,19 @@ class Converter:
         for interrupt in self.interrupts.values():
             if interrupt.problem or interrupt.trap not in written:
                 continue
-            base = name = tp_program_name(interrupt.name, max_len)
-            suffix = 1
-            while name in taken:
-                suffix += 1
-                name = f"{base[: max_len - len(str(suffix)) - 1]}_{suffix}"
+            name, _ = self.program_name(interrupt.name, tp_program_name(interrupt.name, max_len), taken)
             taken.add(name)
             self.shared.program_names.add(name)
+            self.shared.given_programs.add(name)
+            self.result.program_keys[interrupt.name] = name
             interrupt.program = name
             if interrupt.shared:  # a relay: notes the interrupt, calls the TRAP, arms the condition again
-                base = relay = tp_program_name(f"{interrupt.name}_T", max_len)
-                suffix = 1
-                while relay in taken:
-                    suffix += 1
-                    relay = f"{base[: max_len - len(str(suffix)) - 1]}_{suffix}"
+                key = f"{interrupt.name}.relay"
+                relay, _ = self.program_name(key, tp_program_name(f"{interrupt.name}_T", max_len), taken)
                 taken.add(relay)
                 self.shared.program_names.add(relay)
+                self.shared.given_programs.add(relay)
+                self.result.program_keys[key] = relay
                 interrupt.relay = relay
             self.volatile |= changed_by(written[interrupt.trap], self.procs)
             self.no_group |= called_by(written[interrupt.trap], self.procs)
@@ -1485,6 +1761,14 @@ class Converter:
                         first = next((a.value for a in stmt.args if a.name is None), None)
                         if isinstance(first, n.Name):
                             (inputs if stmt.name.upper() == "ISIGNALDI" else outputs).add(first.name.upper())
+                    elif isinstance(stmt, n.ProcCall) and stmt.name.upper() in ("SEARCHL", "SEARCHJ", "SEARCHC"):
+                        first = next((a.value for a in stmt.args if a.name is None), None)
+                        if isinstance(first, n.Name):
+                            inputs.add(first.name.upper())
+                    elif isinstance(stmt, n.ProcCall) and stmt.name.upper() in _SET_ON_ARRIVAL:
+                        signal = [a.value for a in stmt.args if a.name is None][-2:-1]
+                        if signal and isinstance(signal[0], n.Name):
+                            outputs.add(signal[0].name.upper())
                     elif isinstance(stmt, n.ProcCall) and stmt.args and isinstance(stmt.args[0].value, n.Name):
                         name = stmt.args[0].value.name.upper()
                         if stmt.name.upper() in ("SETDO", "PULSEDO", "WAITDO"):
@@ -1492,6 +1776,126 @@ class Converter:
                         elif stmt.name.upper() == "WAITDI":
                             inputs.add(name)
         return outputs, inputs
+
+    # -- strings (crossarm.convert.strings) -----------------------------------
+
+    def _numbered(self) -> list[tuple[str, TableView]]:
+        return [("R", self.registers), ("F", self.flags), ("DO", self.douts), ("DI", self.dins), ("GO", self.gouts),
+                ("GI", self.gins), ("AO", self.aouts), ("TIMER", self.timers)]  # fmt: skip
+
+    def deferring(self, on: bool) -> bool:
+        """Defer the numbers a statement takes first (NumberTable.defer); returns what it was."""
+        previous = self.registers.table.defer
+        for _, view in self._numbered():
+            view.table.defer = on
+        return previous
+
+    def _number_deferred(self) -> None:
+        """Number what only the statements converted with texts use, and write the numbers in their place."""
+        numbers: dict[int, int] = {}
+        for resource, view in self._numbered():
+            numbers |= view.finish(self.config.limits.get(resource))
+        if not numbers:
+            return
+
+        def number(text: str) -> str:
+            return _PLACEHOLDER.sub(lambda m: str(numbers.get(int(m[0]), m[0])), text)
+
+        for info in self.result.programs:
+            lines = info.program.lines
+            for i, line in enumerate(lines):
+                if isinstance(line, Instruction):
+                    lines[i] = Instruction(number(line.text), line.pad)
+                else:
+                    lines[i] = dataclasses.replace(line, target=number(line.target), speed=number(line.speed),
+                                                   termination=number(line.termination), options=number(line.options),
+                                                   via=number(line.via) if line.via else line.via)  # fmt: skip
+        self.written_registers = {numbers.get(k, k) for k in self.written_registers}
+        self.record_uses = {owner: ({numbers.get(k, k) for k in r}, {numbers.get(k, k) for k in f})
+                            for owner, (r, f) in self.record_uses.items()}  # fmt: skip
+        self.result.notes = [dataclasses.replace(note, message=number(note.message)) for note in self.result.notes]
+        if self.result.wait_clock:
+            self.result.wait_clock = (number(self.result.wait_clock[0]), number(self.result.wait_clock[1]))
+
+    def _text_sides(self, selected: list[tuple[n.Module, n.Routine]]) -> None:
+        """The routines a TRAP runs, and those the programs run too. A TRAP can stop a program between the
+        line loading a text into a scratch register and the line reading it: what a TRAP runs loads its
+        texts into scratch registers of its own."""
+        traps = {r.name.upper() for _, r in selected if r.kind == "TRAP"}
+        self.trap_side = traps | self.no_group
+        main: set[str] = set()
+        for _, routine in selected:
+            if routine.kind != "TRAP" and routine.name.upper() not in self.trap_side:
+                main |= {routine.name.upper()} | called_by(routine, self.procs)
+        self.both_sides = self.trap_side & main
+
+    def string_register(self, name: str, key: str | None = None) -> str:
+        """SR[n:name] keeping a string the programs change; a TODO when the controller has none left."""
+        limit = self.config.limits.get("SR", SR_LIMIT)
+        number = self.texts.number(name, key)
+        if number > limit:
+            self.texts.release(key or name)
+            self.text_over.setdefault(key or name, name)
+            raise Untranslatable(f"{name}: no string register left, the controller has {limit} (SR[1] to"
+                                 f" SR[{limit}]): see the TODO listing the strings", Blocker.CAPACITY)  # fmt: skip
+        return f"SR[{number}]"  # the controller keeps no comment of a string register (ROBOGUIDE)
+
+    def text_scratch(self, slot: int, trap: bool) -> str:
+        """A scratch string register, from the top: a text is loaded into it just before it is read, and never
+        kept from one instruction to the next. What a TRAP runs has its own (_text_sides)."""
+        name = ("TrapText" if trap else "Text") + ("" if slot == 1 else str(slot))
+        key = f"CROSSARM.{name.upper()}"
+        limit = self.config.limits.get("SR", SR_LIMIT)
+        number = self.texts.number(name, key, top=limit)
+        if not 0 < number <= limit:
+            self.texts.release(key)
+            self.text_over.setdefault(key, name)
+            raise Untranslatable(f"no string register left for the scratch register {name}, the controller has"
+                                 f" {limit}", Blocker.CAPACITY)  # fmt: skip
+        self.scratch_texts.add(f"SR[{number}]")
+        return f"SR[{number}]"
+
+    def text_program(self) -> str:
+        """The program loading a text into a string register, named when first used: a program the robot or
+        a routine already has keeps its name, this one takes a suffix."""
+        if self.result.text_program is None:
+            taken = self.shared.program_names | set(self.program_names.values())
+            base = tp_program_name(TEXT_PROGRAM, self.config.program_name_max_length)
+            name, base = self.program_name(TEXT_KEY, base, taken)
+            if name != base:
+                why = (f"the FANUC robot already has a program {base}, which loading it would replace"
+                       if base in self.shared.existing_programs else f"{base} is the name of another program")  # fmt: skip
+                self.note(name, None, "WARNING", f"the program loading texts is written as {name}.LS: {why}",
+                          Blocker.RENAMED)  # fmt: skip
+            self.shared.program_names.add(name)
+            self.shared.given_programs.add(name)
+            self.result.program_keys[TEXT_KEY] = name
+            self.result.text_program = name
+        return self.result.text_program
+
+    def _write_text_program(self) -> None:
+        """The program loading a text into a string register, once per task, when a program loads one:
+        `CALL CA_TEXT(3,'IDLE',0)`. A line cannot write a text in a string register (ROBOGUIDE refuses
+        `SR[3]='IDLE'`); a program given it as an argument can. AR[3]=1 adds it at the end (a text of more
+        than 38 characters, given in pieces). No motion group: a TRAP can call it."""
+        if self.result.text_program is not None:
+            lines = ["!Text AR[2] into SR[AR[1]]", "!AR[3]=1: added at its end", "IF AR[3]=1,JMP LBL[1]",
+                     "SR[AR[1]]=AR[2]", "END", "LBL[1]", "SR[AR[1]]=SR[AR[1]]+AR[2]"]  # fmt: skip
+            attrs = Attributes(comment="CrossArm text", created=self.config.timestamp, default_group=NO_GROUP)
+            program = Program(self.result.text_program, [Instruction(text) for text in lines], [], attrs)
+            self.result.programs.append(ProgramInfo(program, "", TEXT_PROGRAM, ()))
+        traps = [a for a in self.texts.allocations() if a.key.startswith("CROSSARM.TRAPTEXT")]
+        if traps:
+            self.note("", None, "WARNING", "what the TRAPs run loads its texts into "
+                      f"{' and '.join(f'SR[{a.number}]' for a in traps)}, apart from the scratch string registers of"
+                      " the programs: a TRAP can stop a program between the line loading a text and the line"
+                      " reading it", Blocker.TEXT)  # fmt: skip
+        if self.text_over:
+            names = sorted(self.text_over.values(), key=str.upper)
+            limit = self.config.limits.get("SR", SR_LIMIT)
+            self.note("", None, "TODO", f"{len(names)} string(s) without a string register, the controller has"
+                      f" {limit} (SR[1] to SR[{limit}]): {', '.join(names)}. Their uses are TODO: pin fewer strings,"
+                      ' or raise "limits": {"SR": n} if the controller has more', Blocker.CAPACITY)  # fmt: skip
 
     # -- shared services -----------------------------------------------------
 
@@ -1580,10 +1984,10 @@ class Converter:
 
     def signal(self, expr: n.Expr, program: str, line: int) -> str | None:
         """'DI[n]' / 'DO[n]' if expr designates a digital signal, else None."""
-        if isinstance(expr, n.FuncCall) and expr.name.upper() in ("DINPUT", "DOUTPUT") and len(expr.args) == 1:
-            arg = expr.args[0].value
+        if isinstance(expr, n.FuncCall) and expr.name.upper() in ("DINPUT", "DOUTPUT", "TESTDI") and len(expr.args) == 1:
+            arg = expr.args[0].value  # TestDI(di): TRUE when the input is 1, as DI[n]=ON
             if isinstance(arg, n.Name):
-                table, prefix = (self.dins, "DI") if expr.name.upper() == "DINPUT" else (self.douts, "DO")
+                table, prefix = (self.douts, "DO") if expr.name.upper() == "DOUTPUT" else (self.dins, "DI")
                 return f"{prefix}[{table.number(arg.name)}]"
             return None
         if not isinstance(expr, n.Name) or self.symbols.get(expr.name) is not None:
@@ -1670,16 +2074,22 @@ class _RoutineTranslator:
         self.interrupt = served[0] if len(self.served) == 1 and not served[0].shared else None  # served directly
         self.epilogue: list[str] = []
         self.stepless = False  # writing a condition read again and again (a wait): no calculation before it
+        self.time_flag: str | None = None  # the bool a wait's \\TimeFlag sets (max_time, wait)
+        self.text_slots: set[int] = set()
+        self.current: n.Stmt | None = None  # the innermost statement being written
+        self.text_params = frozenset(p.name for g in parse_params(routine.params) or [] for p in g)
 
     def run(self) -> ProgramInfo:
         self.c.symbols.enter_routine(self.routine)
         read = parameters(self.routine.params)
         self.c.parameters = set(read[0]) | read[1] if read else set()
         self.c.computer.scope, self.c.evaluator.known = self.scope, self.known_value
+        self.c.evaluator.fields = self.field_value
         try:
             return self._run()
         finally:
             self.c.computer.scope, self.c.evaluator.known = (lambda name: None), None
+            self.c.evaluator.fields = None
 
     def _run(self) -> ProgramInfo:
         for text in remark_lines(f"RAPID {self.module.name}.{self.routine.name}"):
@@ -1791,6 +2201,9 @@ class _RoutineTranslator:
             isinstance(stmt, n.ProcCall) and stmt.name.upper() in ("SEARCHL", "SEARCHJ", "SEARCHC"))  # fmt: skip
         self.forget((stmt,), Unknown(f"is {'measured on the robot' if measured else 'set'} at l.{line} (left TODO)", measured))
         path = path_of(stmt.target) if isinstance(stmt, n.Assign) else None
+        if isinstance(stmt, n.ProcCall) and stmt.name.upper() == "SEARCHL":  # the point it finds
+            found = [a.value for a in stmt.args if a.name is None][1:2]
+            path = (found[0].name.upper(),) if found and isinstance(found[0], n.Name) else None
         if path and self.runtime_key(path[0]):  # its register was not set: what reads it must not move there
             self.known[f"{path[0]}#UNSET"] = self.known.get(path[0], Unknown(f"is set at l.{line} (left TODO)"))
         if isinstance(stmt, n.Unsupported) and stmt.kind == "LABEL":  # jumped to from anywhere: nothing is known
@@ -1824,17 +2237,29 @@ class _RoutineTranslator:
             self.next_speed = following.speed if isinstance(stmt, n.Move) and isinstance(following, n.Move) else None
             self.after = stmts[i + 1 :]
             self.number_slots = set()
+            self.text_slots: set[int] = set()  # the scratch string registers the statement being written uses
+            outer, self.current = self.current, stmt
             if self.strict:
                 self.stmt(stmt)
+                self.current = outer
                 continue
             checkpoint = (len(self.lines), len(self.positions), len(self.points), self.active_uf, self.active_ut)
+            deferred = self.c.deferring(self.c.registers.table.defer or self.text_new(stmt))
             try:
                 self.stmt(stmt)
             except (Untranslatable, Unresolvable) as exc:
                 self._rollback(checkpoint)
                 # An Unresolvable that reaches here is always a value we could not work out.
                 measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
-                self.todo(stmt, str(exc), getattr(exc, "category", measured))
+                none = _no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
+                                         self.c.symbols.type_of)  # fmt: skip
+                text = _text_todo(stmt, self.c.procs.keys() | self.c.computer.functions.keys())
+                if none is not None:
+                    self.todo(stmt, none, Blocker.NO_TP_EQUIVALENT)
+                elif text is not None:
+                    self.todo(stmt, text, Blocker.VALUE)
+                else:
+                    self.todo(stmt, str(exc), getattr(exc, "category", measured))
             except Exception as exc:  # noqa: BLE001 - one statement must never cost the whole backup
                 # A bug in CrossArm on an unusual statement. Without this, the exception would end
                 # the whole task: a hundred programs lost for one line. It becomes a TODO that
@@ -1843,6 +2268,9 @@ class _RoutineTranslator:
                 where = traceback.extract_tb(exc.__traceback__)[-1]
                 self.todo(stmt, f"CrossArm internal error, please report it: {type(exc).__name__}: {exc} "
                                 f"(at {Path(where.filename).name}:{where.lineno})", Blocker.INTERNAL)  # fmt: skip
+            finally:
+                self.c.deferring(deferred)
+                self.current = outer
 
     def _rollback(self, checkpoint: tuple) -> None:
         """Drop what a statement emitted before failing: its lines, the P[n] it created, the frames it selected."""
@@ -1918,6 +2346,12 @@ class _RoutineTranslator:
             self.known[key] = Typed(value, type_name, len(decl.dims))
         except Unresolvable as exc:
             self.known[key] = Unknown(f"has an initial value only known at run time ({exc})")
+        if self.c.records.is_record(type_name) and not decl.dims:
+            self.local_record(decl)
+            return
+        if type_name == "string" and not decl.dims:
+            self.local_text(decl)
+            return
         if decl.init is None or decl.dims:
             return
         if (key := self.runtime_key(decl.name)) is not None:  # set when the routine starts, as RAPID does
@@ -1925,8 +2359,34 @@ class _RoutineTranslator:
             return
         if decl.type_name.lower() == "num":
             self.emit(f"{self.c.written_register(decl.name)}={operand(self.numeric(decl.init))}")
-        elif decl.type_name.lower() == "bool" and isinstance(decl.init, n.Bool):
-            self.emit(f"{self.c.flag(decl.name)}=({'ON' if decl.init.value else 'OFF'})")
+        elif decl.type_name.lower() == "bool":
+            self.set_flag(lambda: self.c.flag(decl.name), decl.init)
+
+    def local_record(self, decl: n.DataDecl) -> None:
+        """A record of the routine: the fields the programs change, set to their initial value where the routine
+        starts (RAPID sets a routine's VAR again at each call). Not one of a routine calling itself back, nor
+        one with other fields than num and bool: their uses stay TODO."""
+        whole = Field(decl, (), decl.type_name.lower())
+        kept = [leaf for leaf in self.c.records.leaves(whole) if self.c.records.changed(leaf)]
+        if not kept:
+            return
+        try:
+            program = self.record_owner(whole)
+        except Untranslatable:
+            return
+        numbers = []
+        for leaf in kept:
+            value = self.c.records.initial(leaf)
+            register = self.c.field_number(leaf, leaf.type == "bool", program)
+            numbers.append(register.split(":")[0] + "]")
+            self.emit(f"{register}=({'ON' if value else 'OFF'})" if leaf.type == "bool" else f"{register}={operand(register_value(float(value)))}")
+        self.c.warn_once(
+            f"local:{self.name}.{decl.name.upper()}", self.name, decl.span.line,
+            f"{self.routine.name}.{decl.name}, a record of the routine, is kept in {', '.join(numbers)}: set to its"
+            " initial value where the routine starts, as RAPID does at each call. Registers are global: any"
+            " program can read them, and one routine calling another that calls it back would share them",
+            Blocker.LOCAL_RECORD,
+        )  # fmt: skip
 
     # -- motion -------------------------------------------------------------------
 
@@ -1988,7 +2448,11 @@ class _RoutineTranslator:
     # -- points worked out at run time --------------------------------------------------
 
     def runtime_key(self, name: str) -> str | None:
-        """The key of the position register a point worked out at run time is kept in; None for another data."""
+        """The key of the position register a point worked out at run time is kept in; None for another data. A
+        robtarget parameter the routine changes is one, in the register the caller passes it in."""
+        if self.args and self.args.kind(name) == "robtarget" and name.upper() in self.args.points_changed:
+            slot = next(s for s in self.args.slots if s.key == name.upper())
+            return f"{self.routine.name}.{slot.name}"  # as the caller names it (point_argument)
         if name.upper() in self.local_names or self.c.symbols.is_local(name):
             key = f"{self.routine.name}.{name}".upper()
         else:
@@ -2254,7 +2718,8 @@ class _RoutineTranslator:
         if offsets is None and into is None:
             return source
         copy = into or self.c.point_register(scratch)
-        self.emit(f"{copy}={source}")
+        if copy != source:  # a point offset in its own register (pAt:=Offs(pAt,...)) is not copied first
+            self.emit(f"{copy}={source}")
         self.add_offsets(copy, offsets or [])  # type: ignore[arg-type]
         return copy
 
@@ -2318,36 +2783,53 @@ class _RoutineTranslator:
             self.index_reads[self.point_index] = reads | {int(_WRITES_REGISTER.match(register)[1])}  # type: ignore[index]
         return bare
 
-    def number_element(self, expr: n.Index) -> str | None:
-        """R[R[n]] for an element of a CONST array of numbers at an index only known at run time, the index worked
-        out in a register first; None for anything else (a fixed index is read as a constant)."""
+    def number_element(self, expr: n.Index, write: bool = False) -> str | None:
+        """R[R[n]] for an element of an array of numbers kept in registers at an index only known at run time, the
+        index worked out in a register first; R[base+k] at a fixed index of an array the programs change (`write`:
+        the element an assignment sets). None for anything else (a fixed index of an array no program changes is
+        read as a constant)."""
+        return self.array_element(expr, write, "num")
+
+    def flag_element(self, expr: n.Expr, write: bool = False) -> str | None:
+        """F[R[n]] / F[base+k] for an element of an array of bools kept in flags, as number_element() for numbers
+        (ROBOGUIDE: F[R[n]] loads, is read and set)."""
+        return self.array_element(expr, write, "bool") if isinstance(expr, n.Index) else None
+
+    def array_element(self, expr: n.Index, write: bool, kind: str) -> str | None:
+        """The element of an array of numbers (kind num, in registers) or bools (bool, in flags), number_element()."""
         if not isinstance(expr.base, n.Name):
             return None
         decl = self.c.symbols.get(expr.base.name)
-        if decl is None or decl.type_name.lower() != "num" or len(decl.dims) != len(expr.indices):
+        if decl is None or decl.type_name.lower() != kind or len(decl.dims) != len(expr.indices):
             return None
+        prefix, mark, store = ("R", "RB", self.c.number_arrays) if kind == "num" else ("F", "FB", self.c.flag_arrays)
+        changed = self.c.computer.written.where((decl.name.upper(),), kind)
         try:
-            [self.c.evaluator.constant_number(i) for i in expr.indices]
-            return None
+            fixed = [self.c.evaluator.constant_number(i) for i in expr.indices]
+            if not changed and not write:
+                return None
         except Unresolvable:
-            pass
-        self._fixed_array(decl, expr, "numbers", Blocker.VALUE)
+            fixed = None
         key = decl.name.upper()
-        if key not in self.c.number_arrays:
-            try:
-                dims = tuple(int(self.c.evaluator.constant_number(d)) for d in decl.dims)
-                flat = self.c.evaluator.value(n.Name(expr.span, decl.name))
-                for _ in dims[1:]:
-                    flat = [v for row in flat for v in row]
-                values = tuple(float(v) for v in flat)
-            except (Unresolvable, TypeError, ValueError) as exc:
-                raise Untranslatable(f"{decl.name}: not an array of fixed numbers ({exc})", Blocker.VALUE) from exc
-            self.c.number_arrays[key] = (decl.name, dims, values)
-        dims = self.c.number_arrays[key][1]
-        indices = tuple(self.numeric(i) for i in expr.indices)
+        if key not in store:
+            store[key] = self._number_array(decl, expr, changed)
+            if decl.storage == "PERS" and decl.scope is None:
+                self.c.shared_arrays.add(key)
+        if self.current is not None:
+            self.c.array_statements.setdefault(key, set()).update(id(s) for s in walk_statements((self.current,)))
+        dims = store[key][1]
+        if fixed is not None:  # R[base+k]: the element's own register
+            if any(not float(i).is_integer() or not 1 <= i <= size for i, size in zip(fixed, dims, strict=True)):
+                raise Untranslatable(f"{format_expr(expr)}: index out of the array ({', '.join(map(str, dims))})",
+                                     Blocker.VALUE)  # fmt: skip
+            flat = 0
+            for i, size in zip(fixed, dims, strict=True):
+                flat = flat * size + int(i) - 1
+            return f"{prefix}[{{{mark}:{key}:{flat}}}]"
+        indices = tuple(self._index(i) for i in expr.indices)
         if (key, indices) in self.number_index:  # worked out already: its register is this statement's too
             self.number_slots.add(self.number_index[(key, indices)])
-            return self.number_index[(key, indices)]
+            return prefix + self.number_index[(key, indices)][1:]
         slot = 1  # the first index register this statement does not read yet: two elements, two registers
         while True:
             name = "NumberIndex" if slot == 1 else f"NumberIndex{slot}"
@@ -2363,12 +2845,60 @@ class _RoutineTranslator:
             self.emit(f"{register}={register}*{size}")
             self.emit(f"{register}={register}+{operand(index)}")
         stride = sum(math.prod(dims[k + 1:]) for k in range(len(dims)))
-        self.emit(f"{register}={register}+{{RB:{key}:{-stride}}}")
+        self.emit(f"{register}={register}+{{{mark}:{key}:{-stride}}}")
         reads = _reads(indices)
         if reads is not None:
             self.number_index[(key, indices)] = f"R[{bare}]"
             self.index_reads[(key, indices)] = reads | {int(_WRITES_REGISTER.match(register)[1])}  # type: ignore[index]
-        return f"R[{bare}]"
+        return f"{prefix}[{bare}]"
+
+    def _index(self, expr: n.Expr) -> str:
+        """An index as one operand: worked out in scratch registers first when it is a calculation (`i+1`), in
+        slots of their own, past those a calculation of the statement may hold."""
+        try:
+            return self.numeric(expr)
+        except Untranslatable:
+            if self.stepless or not isinstance(expr, n.BinaryOp | n.UnaryOp):
+                raise
+            return self.single(expr, 8, bare=True)
+
+    def _number_array(self, decl: n.DataDecl, expr: n.Expr, changed: str | None) -> tuple[str, tuple[int, ...], tuple[float, ...]]:
+        """(name, dims, values) of an array of numbers kept in registers, which SETUP_FRAMES sets to `values`: those
+        it holds, or, for one the programs change, those it is declared with (zeros without), as a register is set
+        once on the controller where RAPID sets a VAR again when the program starts."""
+        bools = decl.type_name.lower() == "bool"
+        what, block = ("bools", "flags") if bools else ("numbers", "registers")
+        if not changed:
+            self._fixed_array(decl, expr, what, Blocker.VALUE)
+        elif self.c.symbols.is_local(decl.name):
+            raise Untranslatable(f"{decl.name}: an array of {what} of a routine, changed by it: RAPID sets it again at"
+                                 f" each call, a block of {block} keeps the last values", Blocker.VALUE)  # fmt: skip
+        try:
+            dims = tuple(int(self.c.evaluator.constant_number(d)) for d in decl.dims)
+            if not changed:
+                flat = self.c.evaluator.value(n.Name(expr.span, decl.name))
+            elif decl.init is not None:
+                flat = self.c.evaluator.value(decl.init)
+            else:
+                flat = False if bools else 0.0
+                for size in reversed(dims):
+                    flat = [flat] * size
+            for _ in dims[1:]:
+                flat = [v for row in flat for v in row]
+            if bools and not all(isinstance(v, bool) for v in flat):
+                raise TypeError("not TRUE or FALSE")
+            values = tuple(float(v) for v in flat)
+        except (Unresolvable, TypeError, ValueError) as exc:
+            raise Untranslatable(f"{decl.name}: not an array of fixed {what} ({exc})", Blocker.VALUE) from exc
+        for value in values:  # written in R[n] by SETUP_FRAMES
+            register_value(value)
+        if changed:
+            first = "saved in the backup" if decl.storage == "PERS" else "declared, once: RAPID sets a VAR again when the program starts from main"
+            self.c.warn_once(f"changed-array:{decl.name.upper()}", self.name, expr.span.line,
+                             f"{decl.name}, an array the programs change ({changed}), is kept in a block of {block}"
+                             f" read and written as {'F' if bools else 'R'}[R[n]]; SETUP_FRAMES sets the values {first}",
+                             Blocker.VALUE)  # fmt: skip
+        return decl.name, dims, values
 
     def _fixed_array(self, decl: n.DataDecl, expr: n.Expr, what: str, category: str) -> None:
         """An array SETUP_FRAMES can keep in registers: a CONST, or a PERS no program changes (a table the operator
@@ -2408,7 +2938,10 @@ class _RoutineTranslator:
                 for i in position:
                     element = element[i - 1]
                 (x, y, z), q, conf, _extax = element
-                value = RobTarget(Pose((x, y, z), tuple(q)), tuple(int(c) for c in conf))  # type: ignore[arg-type]
+                q = unit_quaternion(q, f"{decl.name}{{{','.join(map(str, position))}}}")
+                value = RobTarget(Pose((x, y, z), q), tuple(int(c) for c in conf))  # type: ignore[arg-type]
+            except Unresolvable as exc:
+                raise Untranslatable(str(exc), Blocker.RUNTIME_POSITION) from exc
             except (TypeError, ValueError, IndexError) as exc:
                 raise Untranslatable(f"{decl.name}{{{','.join(map(str, position))}}}: malformed robtarget",
                                      Blocker.RUNTIME_POSITION) from exc  # fmt: skip
@@ -2634,6 +3167,12 @@ class _RoutineTranslator:
             self.emit(f"{signal}=(!{signal})")
         elif name == "SETAO" and len(positional) == 2 and not options:
             self.analog(call, positional[0], positional[1])
+        elif name in _SET_ON_ARRIVAL:
+            self.move_and_set(call, name, positional, options)
+        elif name == "SEARCHL":
+            self.search(call, positional, options)
+        elif name == "WAITROB" and not positional and len(options) == 1 and options[0].name.upper() in ("INPOS", "ZEROSPEED"):
+            self.wait_robot(call, options[0].name)
         elif name in ("CLKRESET", "CLKSTART", "CLKSTOP") and len(positional) == 1 and not options:
             self.emit(f"{self.clock(positional[0])}={name[3:]}")
         elif name in _CHANGING and not options and len(positional) == (2 if name == "ADD" else 1):
@@ -2659,6 +3198,129 @@ class _RoutineTranslator:
             self.emit(f"CALL {self.c.program_names[name]}")
         else:
             raise Untranslatable(f"'{call.name}' is not a routine of the converted modules (system instruction?)", Blocker.CALL_ARGS)
+
+    def move_and_set(self, call: n.ProcCall, name: str, positional: list[n.Expr], options: list[n.Arg]) -> None:
+        """MoveLDO / MoveJDO / MoveCDO to a fine point: the move, then the output. RAPID sets it at the point
+        when the robot stops there; the line after a FINE move runs once the robot stands on the point
+        (ROBOGUIDE: DO[1] ON with the TCP 0.000 mm from it). Through a zone RAPID sets it in the middle of
+        the corner path, which no TP line does: TODO."""
+        count = 7 if name == "MOVECDO" else 6
+        if len(positional) != count:
+            raise Untranslatable(f"{call.name}: {len(positional)} arguments, {count} expected", Blocker.MOTION)
+        *move_args, signal, value = positional
+        zone = move_args[-2]
+        if not self.fine(zone):
+            raise Untranslatable(f"{call.name} through a zone ({format_expr(zone)}): RAPID sets the output in the middle"
+                                 " of the corner path, TP at a time or distance before the point", Blocker.MOTION)  # fmt: skip
+        wobj = next((a.value for a in options if a.name.upper() == "WOBJ"), None)
+        others = tuple(a for a in options if a.name.upper() != "WOBJ")
+        kind = {"MOVELDO": n.MoveKind.L, "MOVEJDO": n.MoveKind.J, "MOVECDO": n.MoveKind.C}[name]
+        via = move_args[0] if kind is n.MoveKind.C else None
+        to, speed, zone, tool = move_args[-4:]
+        self.move(n.Move(call.span, kind, to, speed, zone, tool, via, wobj, others))
+        self.emit(f"{self.output(signal, call)}={self.on_off(value)}")
+
+    def search(self, call: n.ProcCall, positional: list[n.Expr], options: list[n.Arg]) -> None:
+        """SearchL as a skip: `SKIP CONDITION DI[n]=ON`, then the move to the point with `Skip,LBL[m],PR[k]=LPOS`,
+        PR[k] the search point's register (a point known at run time). Measured (ROBOGUIDE): the move stops
+        where the input switches and PR[k] is the TCP there; never switched, the robot reaches the point and the
+        program jumps to LBL[m]. The skip condition is a level: RAPID's search for a change (\\PosFlank, the
+        default, \\NegFlank) checks the input is not at that level at the start first. \\Sup and no stop
+        option: RAPID goes on to the point, the FANUC once stopped moves on to it. Where RAPID stops with an
+        error (nothing found, the input already at the level), a MESSAGE and PAUSE; resumed, the search again."""
+        line = call.span.line
+        switches = {a.name.upper() for a in options if a.value is None}
+        if "FLANKS" in switches:
+            raise Untranslatable("SearchL \\Flanks: TP's skip condition waits for one level of the input, not for"
+                                 " either change", Blocker.CALIBRATION)  # fmt: skip
+        stops, levels = switches & _SEARCH_STOPS, switches & set(_SEARCH_LEVELS)
+        flying = not stops
+        if len(stops) + ("SUP" in switches) > 1 or len(levels) > 1:
+            raise Untranslatable("SearchL with options RAPID does not take together", Blocker.CALIBRATION)
+        if len(positional) != 5:
+            raise Untranslatable(f"SearchL: {len(positional)} arguments, 5 expected", Blocker.CALIBRATION)
+        if any(h.kind == "ERROR_HANDLER" for h in self.routine.handlers):
+            raise Untranslatable("SearchL in a routine with an ERROR handler: RAPID runs it when nothing is found or"
+                                 " the input is already on, and handlers are not converted", Blocker.HANDLER)  # fmt: skip
+        signal, found, to, speed, tool = positional
+        din = self.c.signal(signal, self.name, line)
+        if din is None or not din.startswith("DI["):
+            raise Untranslatable(f"SearchL on {format_expr(signal)}: TP's skip condition is written on a digital input"
+                                 " here", Blocker.CALIBRATION)  # fmt: skip
+        key = self.runtime_key(found.name) if isinstance(found, n.Name) else None
+        if key is None:
+            raise Untranslatable(f"SearchL: the search point {format_expr(found)} is kept in a position register when"
+                                 " it is a robtarget data of its own (not an array element, not a CONST)",
+                                 Blocker.CALIBRATION)  # fmt: skip
+        _, _, fanuc_speed = self.speed(speed, "L")
+        if fanuc_speed > SKIP_SPEED_MAX:
+            raise Untranslatable(f"SearchL at {fanuc_speed:g} mm/s: the FANUC skip records the position up to"
+                                 f" {SKIP_SPEED_MAX} mm/s, the controller slowing a faster move down to that (measured):"
+                                 " searching slower changes what is measured and the cycle time", Blocker.CALIBRATION)  # fmt: skip
+        level, edge = _SEARCH_LEVELS[next(iter(levels), "POSFLANK")]
+        register = self.c.point_register(key)
+        wobj = next((a.value for a in options if a.name.upper() == "WOBJ"), None)
+        others = tuple(a for a in options if a.name.upper() not in {"WOBJ", "SUP", *_SEARCH_STOPS, *_SEARCH_LEVELS})
+        move = n.Move(call.span, n.MoveKind.L, to, speed, n.Name(call.span, "fine"), tool, None, wobj, others)
+        retry, missed, done = self.label(), self.label(), self.label()
+        early = self.label() if edge else None
+        self.emit(f"LBL[{retry}]")
+        if early is not None:
+            self.emit(f"IF ({din}={level}),JMP LBL[{early}]")
+        self.emit(f"SKIP CONDITION {din}={level}")
+        self.move(move)
+        motion = self.lines[-1]
+        if not isinstance(motion, Motion) or motion.options:
+            raise Untranslatable(f"SearchL to {format_expr(to)}: a skip on a move with an offset is not written",
+                                 Blocker.CALIBRATION)  # fmt: skip
+        self.lines[-1] = dataclasses.replace(motion, options=f"Skip,LBL[{missed}],{register}=LPOS")
+        if flying:
+            self.move(move)
+        self.emit(f"JMP LBL[{done}]")
+        for label, why in ((early, f"input {level.lower()}"), (missed, "no hit")):
+            if label is not None:
+                self.emit(f"LBL[{label}]")
+                self.emit(f"MESSAGE[{f'SearchL l.{line}: {why}'[:MESSAGE_MAX]}]")
+                self.emit("PAUSE")
+                self.emit(f"JMP LBL[{retry}]")
+        self.emit(f"LBL[{done}]")
+        self.known.pop(f"{found.name.upper()}#UNSET", None)  # type: ignore[union-attr]
+        self.known[f"{found.name.upper()}#ROT"] = Unknown(f"is measured on the robot at l.{line}", measured=True)  # type: ignore[union-attr]
+        stop = (f"the FANUC stops past where {din} switched and comes back to it ({SKIP_OVERSHOOT}), RAPID stops past"
+                f" it and stays: check the stopping distance at {fanuc_speed:g} mm/s, mostly for a search by contact,"
+                " where the tool pushes into the part")  # fmt: skip
+        if flying:
+            stop = ("RAPID goes on to the point without stopping; the FANUC stops where the input switched, then goes"
+                    f" on to it ({SKIP_OVERSHOOT} first){' and does not check for a second switch, which RAPID stops on with an error' if 'SUP' in switches else ''}")  # fmt: skip
+        errors = "nothing found, the input already at the level at the start" if edge else "nothing found"
+        self.warn(call, f"SearchL as a skip ({din}={level}, {found.name} kept in a position register): {stop}. Where RAPID stops"
+                        f" with an error ({errors}), the program shows a MESSAGE and pauses; resumed, it searches"
+                        " again", Blocker.SEARCH)  # fmt: skip
+
+    def fine(self, zone: n.Expr) -> bool:
+        """Whether a zone stops the robot on the point: fine, or a zonedata with finep TRUE."""
+        if isinstance(zone, n.Name) and zone.name.upper() == "FINE":
+            return True
+        try:
+            value = self.c.evaluator.value(zone)
+        except Unresolvable:
+            return False
+        return isinstance(value, list) and bool(value) and value[0] is True
+
+    def wait_robot(self, call: n.ProcCall, option: str) -> None:
+        """WaitRob \\InPos or \\ZeroSpeed after a FINE move: TP runs the line after a FINE move once the robot
+        stands on the point, so there is nothing to wait for. After a move through a zone, or when the program
+        may arrive from elsewhere (a label, a call), TP has no wait for the robot to stop: TODO."""
+        for line in reversed(self.lines):
+            if isinstance(line, Motion):
+                if line.termination == "FINE":
+                    self.emit(f"!WaitRob {option}: FINE before")
+                    return
+                break
+            if line.text.startswith(("LBL[", "CALL ", "ENDIF", "ENDFOR", "ELSE")):
+                break
+        raise Untranslatable(f"WaitRob \\{option}: TP has no wait for the robot to stop; the move before it must be"
+                             " FINE", Blocker.MOTION)  # fmt: skip
 
     # -- interrupts: condition monitors ----------------------------------------------
 
@@ -2729,18 +3391,28 @@ class _RoutineTranslator:
     # -- waits with a time limit, error handlers ------------------------------------
 
     def max_time(self, call: n.ProcCall, options: list[n.Arg]) -> float | None:
-        """The \\MaxTime of a wait, in seconds; None without one. Any other option is not converted."""
+        """The \\MaxTime of a wait, in seconds; None without one. With \\TimeFlag, the bool it sets when the time
+        runs out (no error then) goes to wait() in `time_flag`. Any other option is not converted."""
+        self.time_flag = None
         if not options:
             return None
-        if len(options) != 1 or (options[0].name or "").upper() != "MAXTIME" or options[0].value is None:
-            raise Untranslatable(f"{call.name} with {options[0].name} is not converted", Blocker.WAIT_TIMEOUT)
-        if self.on_timeout() is None:
+        given = {(a.name or "").upper(): a for a in options}
+        if set(given) - {"MAXTIME", "TIMEFLAG"} or "MAXTIME" not in given or given["MAXTIME"].value is None:
+            other = next((a.name for a in options if (a.name or "").upper() not in ("MAXTIME", "TIMEFLAG")), "TimeFlag")
+            raise Untranslatable(f"{call.name} with {other} is not converted", Blocker.WAIT_TIMEOUT)
+        flag = given.get("TIMEFLAG")
+        if flag is not None:
+            if not (isinstance(flag.value, n.Name) and self.c.symbols.type_of(flag.value.name) == "bool"):
+                raise Untranslatable(f"{call.name}: \\TimeFlag must be bool data", Blocker.WAIT_TIMEOUT)
+        elif self.on_timeout() is None:
             raise Untranslatable(f"{call.name} with MaxTime: this routine's ERROR handler does not say what to do when"
                                  " the time runs out (the error goes to the caller)", Blocker.WAIT_TIMEOUT)  # fmt: skip
         try:
-            return self.c.evaluator.constant_number(options[0].value)
+            limit = self.c.evaluator.constant_number(given["MAXTIME"].value)
         except Unresolvable as exc:
             raise Untranslatable(f"MaxTime must be a constant: {exc}", Blocker.WAIT_TIMEOUT) from exc
+        self.time_flag = flag.value.name if flag is not None else None  # type: ignore[union-attr]
+        return limit
 
     def wait(self, text: str, test: str, untested: str, limit: float | None) -> None:
         """A WAIT; with a time limit, a loop timing it, then the ERROR handler's timeout path.
@@ -2757,11 +3429,13 @@ class _RoutineTranslator:
         if limit is None:
             self.emit(text)
             return
-        path = self.on_timeout()
-        assert isinstance(path, OnTimeout)  # max_time() checked it
+        flag, self.time_flag = self.time_flag, None
+        path = self.on_timeout() if flag is None else None
+        assert flag is not None or isinstance(path, OnTimeout)  # max_time() checked it
         timer, clock = self.c.wait_clock()
-        steps = [s for s in path.steps if not isinstance(s, n.Comment)]
-        next_only = len(steps) == 1 and isinstance(steps[0], n.Unsupported) and steps[0].kind == "TRYNEXT"
+        steps = [s for s in path.steps if not isinstance(s, n.Comment)] if path is not None else []
+        next_only = flag is not None or (len(steps) == 1 and isinstance(steps[0], n.Unsupported)
+                                         and steps[0].kind == "TRYNEXT")  # fmt: skip
         retry = None if next_only else self.label()
         if retry is not None:
             self.emit(f"LBL[{retry}]")
@@ -2776,6 +3450,9 @@ class _RoutineTranslator:
         self.emit("ENDIF")
         self.emit(f"{timer}=STOP")
         self.timed_waits += 1
+        if flag is not None:  # \\TimeFlag: TRUE when the time ran out, and the program goes on
+            self.emit(f"{self.c.flag(flag)}=({clock}>={decimal(fmt_number(limit))})")
+            return
         if retry is None:
             return  # TRYNEXT: on time or not, go on
         after = self.label()
@@ -2833,6 +3510,9 @@ class _RoutineTranslator:
         unknown = set(given) - {s.key for s in layout.slots if s.optional}
         if unknown:
             raise Untranslatable(f"{call.name} has no switch \\{min(unknown)}", Blocker.CALL_ARGS)
+        if call.name.upper() in self.c.recursive and any(s.kind == "robtarget" for s in required):
+            raise Untranslatable(f"{call.name} calls itself back and is given points: they travel in position"
+                                 " registers every call under way shares", Blocker.CALL_ARGS)  # fmt: skip
         values, points, back = [], [], []
         name = self.c.program_names[call.name.upper()]
         returned = {s.key for s in layout.returned()}
@@ -2845,6 +3525,8 @@ class _RoutineTranslator:
         for a, slot in zip(positional, required, strict=True):
             if slot.kind == "robtarget":
                 points.append(self.point_argument(a.value, slot, layout, call.span.line, frames))
+                if slot.by_reference and slot.key in layout.points_changed:  # VAR, INOUT: the point comes back
+                    back.append(f"{self.point_back(a.value, slot)}={self.c.point_register(f'{layout.routine}.{slot.name}')}")
             elif slot.kind in ("tooldata", "wobjdata"):
                 values.append(self.frame_argument(a.value, slot, points))
             elif slot.kind == "record":
@@ -2958,13 +3640,20 @@ class _RoutineTranslator:
             ut = self.c.selection("UT", self.c.frame_number("UT", tool or n.Name(expr.span, "tool0"), self.name, line))
         return f"{register}={self.point(expr, value, uf, ut, line)}"
 
+    def point_back(self, expr: n.Expr | None, slot) -> str:
+        """The position register a point passed by reference is read back into, after the CALL: the caller's own,
+        a point it keeps in a register (a VAR robtarget, or a point parameter of its own it changes)."""
+        if isinstance(expr, n.Name) and (key := self.runtime_key(expr.name)) is not None:
+            return self.c.point_register(key)
+        raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' is changed by the routine:"
+                             " it must be a robtarget of the program (VAR)", Blocker.RUNTIME_POSITION)  # fmt: skip
+
     def text_argument(self, expr: n.Expr, slot) -> str:
         """A string argument: text written in the call ('...'), as TP takes it. An apostrophe ends the text
         on FANUC (ROBOGUIDE refuses l''a): it becomes a backquote. Past 38 characters it is cut, with a warning."""
         text, dropped = self.split_text(expr)
-        if dropped:
-            raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' is only known at run time, and a TP CALL"
-                                 " passes text written in the program", Blocker.CALL_ARGS)  # fmt: skip
+        if dropped:  # a text worked out at run time: passed in a string register, which the CALL copies
+            return self.text_source(expr, tuple(k for k in (1, 2) if k not in self.text_slots))
         text = ascii_text(text).replace("'", "`")
         if len(text) > STRING_ARGUMENT_MAX:
             self.c.note(self.name, expr.span.line, "WARNING", f"argument {slot.name} cut to {STRING_ARGUMENT_MAX}"
@@ -3138,7 +3827,7 @@ class _RoutineTranslator:
                                  " file", Blocker.SIGNAL)  # fmt: skip
         try:
             counts = self.c.evaluator.constant_number(value) * scale
-            self.emit(f"{target}={operand(fmt_number(round(counts)))}")
+            self.emit(f"{target}={operand(register_value(round(counts)))}")
             return
         except Unresolvable:
             pass
@@ -3209,6 +3898,22 @@ class _RoutineTranslator:
         if root_type in _FRAME_TYPES | _POSITION_TYPES and path and path[0] not in self.copies:
             self.computed(a, root_type)
             return
+        if (found := self.c.records.field(a.target)) is not None:
+            self.record_assign(a, found)
+            return
+        if isinstance(a.target, n.Index) and root_type == "bool" and isinstance(a.target.base, n.Name) \
+                and len(self.c.symbols.get(a.target.base.name).dims) == len(a.target.indices):  # type: ignore[union-attr]  # fmt: skip
+            self.set_flag(lambda: self.flag_element(a.target, write=True), a.value)  # type: ignore[arg-type, return-value]
+            self.known[path[0]] = Unknown(f"is set at l.{a.span.line}")  # type: ignore[index]
+            return
+        if isinstance(a.target, n.Index) and root_type == "string":
+            raise Untranslatable(f"{format_expr(a.target)}: arrays of strings are not kept in string registers, of"
+                                 f" which the controller has {self.c.config.limits.get('SR', SR_LIMIT)}",
+                                 Blocker.TEXT)  # fmt: skip
+        if isinstance(a.target, n.Index) and (element := self.number_element(a.target, write=True)) is not None:
+            self.emit(f"{element}={self.arithmetic(a.value)}")
+            self.known[path[0]] = Unknown(f"is set at l.{a.span.line}")  # type: ignore[index]
+            return
         if not isinstance(a.target, n.Name):
             raise Untranslatable("assignment to a record component or array element",
                                  _assign_blocker(a.target, self.c.symbols.type_of))  # fmt: skip
@@ -3220,8 +3925,11 @@ class _RoutineTranslator:
             raise Untranslatable("assignment to a FOR loop variable", Blocker.VALUE)
         if type_name == "num":
             self.emit(f"{self.c.written_register(a.target.name)}={self.arithmetic(a.value)}")
-        elif type_name == "bool" and isinstance(a.value, n.Bool):
-            self.emit(f"{self.c.flag(a.target.name)}=({'ON' if a.value.value else 'OFF'})")
+        elif type_name == "string" and (register := self.text_register(a.target)) is not None:
+            self.load_text(a.value, register, (1, 2))
+            return
+        elif type_name == "bool":
+            self.set_flag(lambda: self.c.flag(a.target.name), a.value)  # type: ignore[union-attr]
         else:
             raise Untranslatable(f"assignment of {type_name or 'undeclared data'} '{a.target.name}'",
                                  _type_blocker(type_name))  # fmt: skip
@@ -3230,6 +3938,555 @@ class _RoutineTranslator:
             self.known[name] = value
         except Unresolvable:
             self.known[a.target.name.upper()] = Unknown(f"is set at l.{a.span.line} from a value only known at run time")
+
+    # -- strings (crossarm.convert.strings) ------------------------------------------
+
+    def is_text(self, expr: n.Expr | None) -> bool:
+        """Whether an expression is a text: a string, string data or parameter, a function giving one."""
+        match expr:
+            case n.String():
+                return True
+            case n.BinaryOp(op="+", left=left, right=right):
+                return self.is_text(left) or self.is_text(right)
+            case n.Name(name=name):
+                if self.args and self.args.kind(name) == "string":
+                    return True
+                return self.c.symbols.type_of(name) == "string"
+            case n.FuncCall(name=fn):
+                routine = self.c.computer.functions.get(fn.upper())
+                if routine is not None:
+                    return (routine.return_type or "").lower() == "string"
+                return fn.upper() in _TEXT_FUNCTIONS
+            case n.Component():
+                if (field := self.component(expr)) is not None:  # a field of the routine's record parameter
+                    return self.args.kind(field) == "string"  # type: ignore[union-attr]
+                found = self.c.records.field(expr)
+                return found is not None and found.type == "string"
+        return False
+
+    def text_new(self, stmt: n.Stmt) -> bool:
+        """Whether a statement converts only since strings are kept in string registers: it declares, reads or
+        sets a string the programs change, works a text out (StrLen, StrPart, NumToStr...) or compares texts.
+        What it numbers first is numbered after the rest (NumberTable.defer): the programs without texts keep
+        their numbers. Its own expressions only: the statements it holds are written one by one."""
+        if isinstance(stmt, n.DataDecl):
+            return stmt.type_name.lower() == "string" and not stmt.dims and self._changed_text(stmt.name)
+        for node in nodes(stmt):
+            if isinstance(node, n.Name) and self._changed_text(node.name):
+                return True
+            if isinstance(node, n.FuncCall) and node.name.upper() in _TEXT_WORK and node.name.upper() not in self.c.computer.functions:
+                try:
+                    self.c.computer.value(node)
+                except Unresolvable:
+                    return True
+            if (isinstance(node, n.BinaryOp) and node.op in ("=", "<>", "+")
+                    and (self.is_text(node.left) or self.is_text(node.right))
+                    and not (self._fixed(node.left) and self._fixed(node.right))):  # fmt: skip
+                return True
+        return False
+
+    def _changed_text(self, name: str) -> bool:
+        decl = self.c.symbols.get(name)
+        if decl is None or decl.type_name.lower() != "string" or decl.dims or (self.args and self.args.kind(name)):
+            return False
+        return self.c.strings.changed(decl, self.routine.name if self.c.symbols.is_local(name) else None) is not None
+
+    def _fixed(self, expr: n.Expr) -> bool:
+        """A text known at conversion time, told without numbering anything."""
+        match expr:
+            case n.String():
+                return True
+            case n.BinaryOp(op="+", left=left, right=right):
+                return self._fixed(left) and self._fixed(right)
+            case n.Name(name=name):
+                return not (self.args and self.args.kind(name)) and not self._changed_text(name)
+            case n.Component():
+                if self.component(expr) is not None:
+                    return False
+                try:
+                    return isinstance(self.c.computer.value(expr).value, str)
+                except Unresolvable:
+                    return False
+        return False
+
+    def fold_texts(self, expr: n.Expr) -> n.Expr:
+        """A condition with each comparison of two texts known at conversion time written as its value:
+        `IF sMode="AUTO"` with a CONST sMode is code switched on or off by hand, as `IF TRUE`."""
+        match expr:
+            case n.UnaryOp(op="NOT", operand=operand):
+                inner = self.fold_texts(operand)
+                return n.Bool(expr.span, not inner.value) if isinstance(inner, n.Bool) else n.UnaryOp(expr.span, "NOT", inner)
+            case n.BinaryOp(op="AND" | "OR", left=left, right=right):
+                a, b = self.fold_texts(left), self.fold_texts(right)
+                for known, other in ((a, b), (b, a)):
+                    if isinstance(known, n.Bool):
+                        if known.value == (expr.op == "OR"):
+                            return known  # TRUE OR x, FALSE AND x
+                        return other
+                return n.BinaryOp(expr.span, expr.op, a, b)
+        if (self.text_comparison(expr) and expr.op in ("=", "<>")  # type: ignore[attr-defined]
+                and self._fixed(expr.left) and self._fixed(expr.right)):  # type: ignore[attr-defined]  # fmt: skip
+            left, right = self.fixed_text(expr.left), self.fixed_text(expr.right)  # type: ignore[attr-defined]
+            if left is not None and right is not None:
+                return n.Bool(expr.span, (left == right) == (expr.op == "="))  # type: ignore[attr-defined]
+        return expr
+
+    def text_comparison(self, expr: n.Expr) -> bool:
+        return isinstance(expr, n.BinaryOp) and expr.op in _NEGATED and (self.is_text(expr.left) or self.is_text(expr.right))
+
+    def has_text(self, expr: n.Expr) -> bool:
+        """Whether a condition compares texts, alone or with AND / OR / NOT."""
+        match expr:
+            case n.UnaryOp(op="NOT", operand=operand):
+                return self.has_text(operand)
+            case n.BinaryOp(op="AND" | "OR", left=left, right=right):
+                return self.has_text(left) or self.has_text(right)
+        return self.text_comparison(expr)
+
+    def jump_if(self, expr: n.Expr, label: int, truth: bool = True) -> None:
+        """Lines jumping to LBL[label] when the condition is `truth`, else going on: a text comparison is
+        `IF SR[a]=SR[b],JMP LBL[n]`, the only form TP has for one; AND and OR are jumps too."""
+        match expr:
+            case n.UnaryOp(op="NOT", operand=operand):
+                self.jump_if(operand, label, not truth)
+                return
+            case n.BinaryOp(op="AND" | "OR", left=left, right=right):
+                if (expr.op == "AND") == truth:  # both sides decide: past the first when it does not hold
+                    past = self.label()
+                    self.jump_if(left, past, not truth)
+                    self.jump_if(right, label, truth)
+                    self.emit(f"LBL[{past}]")
+                else:  # either side decides
+                    self.jump_if(left, label, truth)
+                    self.jump_if(right, label, truth)
+                return
+        if self.text_comparison(expr):
+            self.jump_on_text(expr, label, truth)  # type: ignore[arg-type]
+        else:
+            self.emit(f"IF ({self.condition(expr, negate=not truth)}),JMP LBL[{label}]")
+
+    def jump_on_text(self, expr: n.BinaryOp, label: int, truth: bool) -> None:
+        """`IF SR[a]=SR[b],JMP LBL[label]` for a comparison of two texts (RAPID has = and <> only). TP compares
+        regardless of case: converted when no text of one side can differ from one of the other by case alone."""
+        if expr.op not in ("=", "<>"):
+            raise Untranslatable(f"texts compared with '{expr.op}': RAPID compares texts with = and <> only",
+                                 Blocker.CONDITION)  # fmt: skip
+        if not (self.is_text(expr.left) and self.is_text(expr.right)):
+            raise Untranslatable(f"a text compared with a value of another type: {format_expr(expr)}", Blocker.CONDITION)
+        equal = (expr.op == "=") == truth  # jump when the texts are equal
+        left, right = self.fixed_text(expr.left), self.fixed_text(expr.right)
+        if left is not None and right is not None:  # both known: the comparison is
+            if (left == right) == equal:
+                self.emit(f"JMP LBL[{label}]")
+            return
+        routine = self.routine.name
+        alphabets = [self.c.strings.alphabet(side, routine, self.text_params) for side in (expr.left, expr.right)]
+        if same_regardless_of_case(*alphabets):
+            raise Untranslatable(f"TP compares texts regardless of case ('A' = 'a'), RAPID does not: "
+                                 f"'{format_expr(expr.left)}' and '{format_expr(expr.right)}' can differ by case "
+                                 "alone", Blocker.CONDITION)  # fmt: skip
+        first = self.text_source(expr.left, (1, 2))
+        second = self.text_source(expr.right, (2,) if first in self.c.scratch_texts else (1, 2))
+        if first.startswith("AR[") and second.startswith("AR["):  # measured with a string register first
+            copy = self.text_scratch(1)
+            self.emit(f"{copy}={first}")
+            first = copy
+        elif first.startswith("AR["):
+            first, second = second, first
+        self.emit(f"IF {first}{'=' if equal else '<>'}{second},JMP LBL[{label}]")
+
+    def fixed_text(self, expr: n.Expr) -> str | None:
+        """The text of an expression known at conversion time: a string, a CONST, a string no program changes;
+        None when it depends on the run."""
+        match expr:
+            case n.String(value=value):
+                return value
+            case n.BinaryOp(op="+", left=left, right=right):
+                a, b = self.fixed_text(left), self.fixed_text(right)
+                return None if a is None or b is None else a + b
+            case n.Name(name=name):
+                if (self.args and self.args.kind(name)) or self.text_register(expr) is not None:
+                    return None
+                decl = self.c.symbols.get(name)
+                if decl is not None and decl.type_name.lower() == "string" and decl.init is None and not decl.dims:
+                    return ""  # RAPID starts a string empty
+            case n.Component():
+                if self.text_register(expr) is not None:
+                    return None
+            case _:
+                return None
+        try:
+            found = self.c.computer.value(expr).value
+        except Unresolvable:
+            return None
+        return found if isinstance(found, str) else None
+
+    def text_register(self, expr: n.Expr) -> str | None:
+        """SR[n] keeping a string the programs change, or AR[n] for a text parameter of the routine; None for
+        anything else (a string no program changes is its value)."""
+        if isinstance(expr, n.Component) and (field := self.component(expr)) is not None:
+            return self.args.register(field) if self.args.kind(field) == "string" else None  # type: ignore[union-attr]
+        if not isinstance(expr, n.Name):
+            return None
+        if self.args and self.args.kind(expr.name) == "string":
+            return self.args.register(expr.name)
+        decl = self.c.symbols.get(expr.name)
+        if decl is None or decl.type_name.lower() != "string" or decl.dims:
+            return None
+        local = self.c.symbols.is_local(expr.name)
+        if not self.c.strings.changed(decl, self.routine.name if local else None):
+            return None
+        if not local:
+            return self.c.string_register(decl.name)
+        if self.routine.name.upper() in self.c.recursive:
+            raise Untranslatable(f"{decl.name}, a string of a routine calling itself back: one string register"
+                                 " would be shared by the calls under way", Blocker.TEXT)  # fmt: skip
+        return self.c.string_register(decl.name, key=f"{self.name}.{decl.name}")
+
+    def text_scratch(self, slot: int) -> str:
+        self.text_slots.add(slot)
+        return self.c.text_scratch(slot, self.routine.kind == "TRAP" or self.routine.name.upper() in self.c.trap_side)
+
+    def text_source(self, expr: n.Expr, free: tuple[int, ...]) -> str:
+        """The register holding a text, SR[n] or AR[n], loaded into a scratch one first (from `free`) when the
+        text is worked out."""
+        found = self.text_register(expr)
+        if found is not None:
+            return found
+        if not free:
+            raise Untranslatable(f"'{format_expr(expr)}': more texts worked out in one instruction than TP has"
+                                 " scratch string registers for", Blocker.TEXT)  # fmt: skip
+        scratch = self.text_scratch(free[0])
+        self.load_text(expr, scratch, free[1:])
+        return scratch
+
+    def text_arg(self, call: n.FuncCall, index: int) -> n.Expr:
+        positional = [a.value for a in call.args if a.name is None]
+        if index >= len(positional) or positional[index] is None:
+            raise Untranslatable(f"{call.name}: argument {index + 1} is missing", Blocker.VALUE)
+        return positional[index]  # type: ignore[return-value]
+
+    def load_text(self, expr: n.Expr, into: str, free: tuple[int, ...]) -> None:
+        """Lines setting the string register `into` (SR[n:...]) to the text of `expr`; scratch registers from
+        `free` for what is worked out on the way."""
+        fixed = self.fixed_text(expr)
+        if fixed is not None:
+            self.load_literal(fixed, into, expr)
+            return
+        found = self.text_register(expr)
+        if found is not None:
+            if found != into:
+                self.emit(f"{into}={found}")
+            return
+        match expr:
+            case n.BinaryOp(op="+"):
+                parts = self._text_parts(expr)
+                if any(self.text_register(p) == into for p in parts[1:]):  # s:="x"+s: worked out apart first
+                    if not free:
+                        raise Untranslatable(f"'{format_expr(expr)}': no scratch string register left", Blocker.TEXT)
+                    scratch = self.text_scratch(free[0])
+                    self.load_text(expr, scratch, free[1:])
+                    self.emit(f"{into}={scratch}")
+                    return
+                self.load_text(parts[0], into, free)
+                for part in parts[1:]:
+                    fixed = self.fixed_text(part)
+                    if fixed is not None:
+                        self.load_literal(fixed, into, part, append=True)
+                    else:
+                        self.emit(f"{into}={into}+{self.text_source(part, free)}")
+                return
+            case n.FuncCall(name=fn) if fn.upper() not in self.c.computer.functions:
+                self.text_function(expr, into, free)  # type: ignore[arg-type]
+                return
+        raise Untranslatable(f"text '{format_expr(expr)}' is only known at run time", Blocker.VALUE)
+
+    def _text_parts(self, expr: n.Expr) -> list[n.Expr]:
+        """a+b+c, the texts known at conversion time next to each other put together: ["ab", s] for "a"+"b"+s."""
+        if isinstance(expr, n.BinaryOp) and expr.op == "+":
+            flat = self._text_parts(expr.left) + self._text_parts(expr.right)
+        else:
+            return [expr]
+        parts: list[n.Expr] = []
+        for part in flat:
+            previous = self.fixed_text(parts[-1]) if parts else None
+            current = self.fixed_text(part)
+            if previous is not None and current is not None:
+                parts[-1] = n.String(part.span, previous + current)
+            else:
+                parts.append(part)
+        return parts
+
+    def load_literal(self, text: str, into: str, expr: n.Expr, append: bool = False) -> None:
+        """A text written in the program, into a string register: through the program loading texts, 38
+        characters at a time (a longer one in pieces added at the end). An apostrophe ends a TP text: it is
+        written as a backquote."""
+        if self.routine.name.upper() in self.c.both_sides:
+            raise Untranslatable(f"{self.routine.name} is run by a TRAP and by the programs: a TRAP stopping it "
+                                 "between the line loading a text and the line reading it would load its own over "
+                                 "it", Blocker.TEXT)  # fmt: skip
+        if not text.isascii() or any(ord(c) < 32 for c in text):
+            raise Untranslatable(f"text '{format_expr(expr)}' has a character TP texts do not have", Blocker.TEXT)
+        if "'" in text:
+            self.c.note(self.name, expr.span.line, "WARNING", f"'{text}' written with a backquote for each apostrophe:"
+                        " an apostrophe ends a TP text", Blocker.TEXT)  # fmt: skip
+            text = text.replace("'", "`")
+        number = into[3:-1]
+        program = self.c.text_program()
+        if not text:
+            if not append:  # one character, then none from past it: CALL X(n,'',0) is stored '...' (ROBOGUIDE)
+                self.emit(f"CALL {program}({number},'x',0)")
+                self.emit(f"{into}=SUBSTR {into},2,0")
+            return
+        for i in range(0, len(text), TEXT_PIECE):
+            self.emit(f"CALL {program}({number},'{text[i : i + TEXT_PIECE]}',{1 if append or i else 0})")
+
+    def text_function(self, call: n.FuncCall, into: str, free: tuple[int, ...]) -> None:
+        """StrPart -> SUBSTR; NumToStr(n,0) and ValToStr(n) of a number only ever whole -> SR=R."""
+        name = call.name.upper()
+        if name == "STRPART":
+            source = self.text_source(self.text_arg(call, 0), free)
+            start = self.single(self.text_arg(call, 1), 1, bare=True)
+            length = self.single(self.text_arg(call, 2), 2, bare=True)
+            self.emit(f"{into}=SUBSTR {source},{start},{length}")
+            return
+        if name in ("NUMTOSTR", "VALTOSTR"):
+            value = self.text_arg(call, 0)
+            if name == "NUMTOSTR":
+                decimals = self.text_arg(call, 1)
+                try:
+                    whole = self.c.evaluator.constant_number(decimals) == 0
+                except Unresolvable:
+                    whole = False
+                if not whole or any(a.name is not None for a in call.args):
+                    raise Untranslatable(f"{call.name} with decimals: TP writes a number held as a real with six"
+                                         " decimals, whatever RAPID asks for", Blocker.VALUE)  # fmt: skip
+            elif isinstance(value, n.Name) and (kind := self.c.symbols.type_of(value.name)) not in (None, "num"):
+                raise Untranslatable(f"{call.name} of a {kind}: TP writes numbers only", Blocker.VALUE)
+            try:
+                whole_value = self.c.evaluator.constant_number(value)
+            except Unresolvable:
+                whole_value = None
+            if whole_value is not None and float(whole_value).is_integer():
+                self.load_literal(str(int(whole_value)), into, value)
+                return
+            if not self.c.strings.integral(value, self.routine.name):
+                raise Untranslatable(f"{call.name}({format_expr(value)}): TP writes a number held as a real with six"
+                                     " decimals ('2.500000', '3.000000'): converted for a number the programs only"
+                                     " ever give whole numbers", Blocker.VALUE)  # fmt: skip
+            register = self.single(value, 1)
+            if not register.startswith("R["):
+                copy = self.c.written_register("Calc1", key="CROSSARM.CALC1")
+                self.emit(f"{copy}={register}")
+                register = copy
+            self.emit(f"{into}={register}")
+            return
+        raise Untranslatable(f"{call.name}: no TP string instruction does what it does", Blocker.VALUE)
+
+    def local_text(self, decl: n.DataDecl) -> None:
+        """A string of the routine the programs change: set to its initial value where the routine starts, as
+        RAPID does at each call. Its string register is shared by every call."""
+        register = self.text_register(n.Name(decl.span, decl.name))
+        if register is None:
+            return
+        self.load_text(decl.init if decl.init is not None else n.String(decl.span, ""), register, (1, 2))
+        self.c.warn_once(
+            f"text:{self.name}.{decl.name.upper()}", self.name, decl.span.line,
+            f"{self.routine.name}.{decl.name}, a string of the routine, is kept in {register}: set to"
+            " its initial value where the routine starts, as RAPID does at each call. The register is the"
+            " controller's: every call of the routine shares it", Blocker.TEXT,
+        )  # fmt: skip
+
+    def text_number(self, call: n.FuncCall, slot: int) -> str:
+        """StrLen -> STRLEN, StrMatch from the first character -> FINDSTR, worked out in R[n:Calc<slot>]. FINDSTR
+        gives 0 when the pattern is not there, RAPID StrLen+1: set so on a line of its own."""
+        text = self.text_arg(call, 0)
+        if call.name.upper() == "STRLEN" and (fixed := self.fixed_text(text)) is not None:
+            return str(len(fixed))
+        register = self.c.written_register(f"Calc{slot}", key=f"CROSSARM.CALC{slot}")
+        if call.name.upper() == "STRLEN":
+            self.emit(f"{register}=STRLEN {self.text_source(text, (1, 2))}")
+            return register
+        try:
+            start = self.c.evaluator.constant_number(self.text_arg(call, 1))
+        except Unresolvable:
+            start = None
+        if start != 1:
+            raise Untranslatable(f"{call.name} from character '{format_expr(self.text_arg(call, 1))}': FINDSTR searches"
+                                 " from the first only", Blocker.VALUE)  # fmt: skip
+        pattern = self.text_arg(call, 2)
+        alphabets = [self.c.strings.alphabet(side, self.routine.name, self.text_params) for side in (text, pattern)]
+        if same_regardless_of_case(*alphabets):
+            raise Untranslatable(f"FINDSTR searches regardless of case ('A' finds 'a'), StrMatch does not: "
+                                 f"'{format_expr(text)}' and '{format_expr(pattern)}' can differ by case alone",
+                                 Blocker.VALUE)  # fmt: skip
+        source = self.text_source(text, (1, 2))
+        found = self.text_source(pattern, (2,) if source in self.c.scratch_texts else (1, 2))
+        done = self.label()
+        self.emit(f"{register}=FINDSTR {source},{found}")
+        self.emit(f"IF {register}<>0,JMP LBL[{done}]")
+        self.emit(f"{register}=STRLEN {source}")
+        self.emit(f"{register}={register}+1")
+        self.emit(f"LBL[{done}]")
+        return register
+
+    # -- records (crossarm.convert.records) ------------------------------------------
+
+    def record_owner(self, found: Field) -> str | None:
+        """This program's name when the record is the routine's own data, None for module data."""
+        if not self.c.symbols.is_local(found.root.name):
+            return None
+        if any(leaf.type not in SCALARS for leaf in self.c.records.leaves(Field(found.root, (), found.root.type_name.lower()))):
+            raise Untranslatable(f"{found.root.name}: a record of the routine is converted when all its fields are"
+                                 " num or bool", Blocker.RECORD)  # fmt: skip
+        if self.routine.name.upper() in self.c.recursive:
+            raise Untranslatable(f"{found.root.name}: a record of a routine that calls itself back: the registers"
+                                 " would be shared by its calls", Blocker.RECORD)  # fmt: skip
+        return self.name
+
+    def field_value(self, expr: n.Expr) -> Any:
+        """For the Evaluator: the value of a record field written as its value (no program changes it, or a
+        speed or zone every write sets the same); None for any other expression. Unresolvable when it
+        changes at run time."""
+        found = self.c.records.field(expr)
+        if found is None or found.indexed or self.c.records.is_record(found.type):
+            return None
+        if found.within is not None:  # a component of a speed or zone field: of its value
+            value, type_name = self.motion_value(found.within), found.within.type
+            for name in found.path[len(found.within.path):]:
+                index, type_name = self.c.computer.layouts.field(type_name, name)
+                value = value[index]
+            return value
+        if found.type in MOTION:
+            return self.motion_value(found)
+        where = self.c.records.changed(found)
+        if where is not None:
+            raise Unresolvable(f"'{found.name}' is changed by the programs ({where})")
+        value = self.c.records.initial(found)
+        self.c.saved_value(found, value)
+        return value
+
+    def motion_value(self, found: Field) -> Any:
+        """A speed or zone field: the value no program changes, or the one every write gives it."""
+        if self.c.records.changed(found) is None:
+            value = self.c.records.initial(found)
+            self.c.saved_value(found, value)
+            return value
+        same = self.c.records.same_value(found)
+        if isinstance(same, str):
+            raise Unresolvable(f"{found.name}: {same}: a speed or zone field is converted when every write gives"
+                               " it the same value")  # fmt: skip
+        value, writes = same
+        before = self.c.records.read_before(found, writes)
+        try:
+            initial = self.c.records.initial(found)
+        except Unresolvable:
+            initial = None
+        if before is not None or initial != value:
+            self.c.warn_once(
+                f"field:{found.name.upper()}", "", None,
+                f"{found.name} is set at {', '.join(writes)} and written as that value in the moves"
+                + (f": it is read at {before} before it is set, where the ABB robot still has its"
+                   f" {'declared' if found.root.init is not None else 'zero'} value" if before else
+                   ": right once that routine has run"),
+                Blocker.RECORD_VALUE,
+            )  # fmt: skip
+        return value
+
+    def record_assign(self, a: n.Assign, found: Field) -> None:
+        """An assignment to a record data, a record in it or one of its fields: one line per field kept."""
+        if found.indexed:
+            raise Untranslatable(f"{format_expr(a.target)}: an array of records is not converted", Blocker.RECORD)
+        program = self.record_owner(found)
+        leaves = self.c.records.leaves(found)
+        sources = [a.value] if leaves == [found] else self.record_sources(a.value, found, leaves)
+        written = len(self.lines)
+        for leaf, source in zip(leaves, sources, strict=True):
+            self.field_assign(leaf, source, program)
+        if len(self.lines) == written:  # only speeds and zones, written as their value in the moves
+            self.emit(("!" + ascii_text(f"l.{a.span.line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip())
+        try:
+            name, value = self.c.computer.assigned(a)
+            self.known[name] = value
+        except Unresolvable:
+            self.known[found.key[0]] = Unknown(f"is set at l.{a.span.line} from a value only known at run time")
+
+    def set_flag(self, target: Callable[[], str], value: n.Expr) -> None:
+        """A flag set to a bool value: `F[n]=(ON)` for one known at conversion time (a CONST, a field no program
+        changes), `F[n]=(F[m])` for another flag, `F[n]=(R[1]<5 AND DI[2]=ON)` for a condition, as TP's mixed
+        logic writes it (ROBOGUIDE: NOT, AND, OR, nested parentheses, outputs, registers, flags load and give the
+        condition's value). A comparison of texts, which TP makes in a jump only: OFF, then ON past the jump.
+        `target` numbers the flag set, once what it is set from is numbered."""
+        source = self.fold_texts(self.simplify(value))
+        if isinstance(source, n.Bool):
+            self.emit(f"{target()}=({'ON' if source.value else 'OFF'})")
+        elif (other := self.bool_flag(source)) is not None:
+            self.emit(f"{target()}=({other})")
+        elif self.has_text(source):
+            flag = target()
+            done = self.label()
+            self.emit(f"{flag}=(OFF)")
+            self.jump_if(source, done, False)
+            self.emit(f"{flag}=(ON)")
+            self.emit(f"LBL[{done}]")
+        else:
+            condition = self.condition(source)
+            self.emit(f"{target()}=({condition})")
+
+    def bool_flag(self, expr: n.Expr) -> str | None:
+        """F[n:...] keeping a bool data or a bool field the programs change; None for anything else."""
+        if isinstance(expr, n.Name) and self.c.symbols.type_of(expr.name) == "bool":
+            return self.c.flag(expr.name)
+        if (element := self.flag_element(expr)) is not None:
+            return element
+        found = self.c.records.field(expr)
+        if found is not None and found.type == "bool" and not found.indexed and self.c.records.changed(found):
+            return self.c.field_number(found, True, self.record_owner(found))
+        return None
+
+    def record_sources(self, value: n.Expr, found: Field, leaves: list[Field]) -> list[n.Expr]:
+        """For a record set as a whole: the value of each of its fields, from a list of values or another record."""
+        other = self.c.records.field(value)
+        if other is not None and other.type == found.type and not other.indexed:
+            out = []
+            for leaf in leaves:
+                source: n.Expr = value
+                for name in leaf.path[len(found.path):]:
+                    source = n.Component(value.span, source, name)
+                out.append(source)
+            return out
+        if isinstance(value, n.Aggregate):
+            out = []
+            for leaf in leaves:
+                item: n.Expr = value
+                type_name = found.type
+                for name in leaf.path[len(found.path):]:
+                    index, type_name = self.c.computer.layouts.field(type_name, name)
+                    if not isinstance(item, n.Aggregate) or index >= len(item.items):
+                        raise Untranslatable(f"{format_expr(value)}: not a {found.type}", Blocker.RECORD)
+                    item = item.items[index]
+                out.append(item)
+            return out
+        raise Untranslatable(f"{found.name} set to {format_expr(value)}: a whole record is converted from another"
+                             " record or a list of values", Blocker.RECORD)  # fmt: skip
+
+    def field_assign(self, leaf: Field, value: n.Expr, program: str | None) -> None:
+        if leaf.within is not None:
+            raise Untranslatable(f"{leaf.name}: a component of a speed or zone field is not converted", Blocker.RECORD)
+        if leaf.type == "num":
+            self.emit(f"{self.c.field_number(leaf, False, program)}={self.arithmetic(value)}")
+        elif leaf.type == "bool":
+            self.set_flag(lambda: self.c.field_number(leaf, True, program), value)
+        elif leaf.type in MOTION:
+            try:
+                self.motion_value(leaf)
+            except Unresolvable as exc:
+                raise Untranslatable(str(exc), Blocker.RECORD) from exc
+        elif leaf.type == "string":
+            raise Untranslatable(f"string field {leaf.name}: a string of a record is not kept in a string register", Blocker.VALUE)
+        else:
+            blocker = _type_blocker(leaf.type) if leaf.type in _FRAME_TYPES | _POSITION_TYPES else Blocker.RECORD
+            raise Untranslatable(f"{leaf.type} field {leaf.name}: not converted", blocker)
 
     def computed(self, a: n.Assign, root_type: str) -> None:
         """A frame or a position the routine computes: worked out now if every input is fixed
@@ -3302,9 +4559,12 @@ class _RoutineTranslator:
         """Right-hand side of R[n]=...: a value or ONE arithmetic operation, as TP allows; what a larger
         calculation needs before it is worked out in scratch registers first (single())."""
         try:
-            return operand(fmt_number(self.c.evaluator.constant_number(expr)))
+            return decimal(operand(register_value(self.c.evaluator.constant_number(expr))))
         except Unresolvable:
             pass
+        if isinstance(expr, n.FuncCall) and expr.name.upper() == "STRLEN" and expr.name.upper() not in self.c.computer.functions:
+            fixed = self.fixed_text(self.text_arg(expr, 0))
+            return str(len(fixed)) if fixed is not None else f"STRLEN {self.text_source(self.text_arg(expr, 0), (1, 2))}"
         if isinstance(expr, n.BinaryOp) and expr.op in _ARITHMETIC:
             left, right = self.single(expr.left, 1), self.single(expr.right, 2)
             op = f" {expr.op} " if expr.op in ("DIV", "MOD") else expr.op
@@ -3317,8 +4577,18 @@ class _RoutineTranslator:
         calculation going on after parentheses. The left side is worked out in the slot, the right one in
         the next slots, which never overwrite it. `bare`: a negative constant without its parentheses, as
         conditions take it."""
+        if (isinstance(expr, n.FuncCall) and expr.name.upper() in ("STRLEN", "STRMATCH")
+                and expr.name.upper() not in self.c.computer.functions):  # fmt: skip
+            try:
+                return decimal(operand(register_value(self.c.evaluator.constant_number(expr))))
+            except Unresolvable:
+                pass
+            if self.stepless:
+                raise Untranslatable(f"{expr.name} in a condition read again and again: TP works it out on a line"
+                                     " of its own", Blocker.CONDITION)  # fmt: skip
+            return self.text_number(expr, slot)
         try:
-            return self.numeric(expr) if bare else operand(self.numeric(expr))
+            return decimal(self.numeric(expr) if bare else operand(self.numeric(expr)))
         except Untranslatable:
             if self.stepless or not isinstance(expr, n.BinaryOp | n.UnaryOp):
                 raise
@@ -3364,8 +4634,11 @@ class _RoutineTranslator:
             return axis
         if (field := self.component(expr)) and self.args.kind(field) == "num":  # type: ignore[union-attr]
             return self.args.register(field)  # type: ignore[union-attr, return-value]
+        found = self.c.records.field(expr)
+        if found is not None and found.type == "num" and not found.indexed and found.within is None                 and self.c.records.changed(found):  # fmt: skip
+            return self.c.field_number(found, False, self.record_owner(found))
         try:
-            return fmt_number(self.c.evaluator.constant_number(expr))
+            return register_value(self.c.evaluator.constant_number(expr))
         except Unresolvable as exc:
             if isinstance(expr, n.Component):  # a record's number no program changes: pdHousing.passes
                 try:
@@ -3373,7 +4646,7 @@ class _RoutineTranslator:
                 except Unresolvable:
                     found = None
                 if isinstance(found, int | float) and not isinstance(found, bool):
-                    return fmt_number(float(found))
+                    return register_value(float(found))
             raise Untranslatable(f"'{format_expr(expr)}' is not a simple numeric value ({exc})", Blocker.VALUE) from exc
 
     def interrupt_value(self, expr: n.Name) -> str | None:
@@ -3407,7 +4680,7 @@ class _RoutineTranslator:
         live: list[n.IfBranch] = []
         for branch in branches:
             written = branch.condition
-            test = self.simplify(written)
+            test = self.fold_texts(self.simplify(written))
             if not isinstance(test, n.Bool):
                 live.append(n.IfBranch(test, branch.body))
             elif test.value:  # IF TRUE: it always runs, the branches after it never do
@@ -3419,10 +4692,35 @@ class _RoutineTranslator:
                 self.emit(f"!l.{written.span.line} IF FALSE: never runs")
             else:
                 self.emit(f"!l.{written.span.line} IF never TRUE: left out")
-        if live:
+        if live and any(self.has_text(b.condition) for b in live):
+            self._jump_chain(tuple(live), else_body)
+        elif live:
             self._if_chain(tuple(live), else_body)
         else:
             self.block(else_body)
+
+    def _jump_chain(self, branches: tuple[n.IfBranch, ...], else_body: tuple[n.Stmt, ...]) -> None:
+        """IF/ELSEIF/ELSE comparing texts, with jumps: TP compares string registers only in `IF SR[a]=SR[b],JMP`,
+        never inside `IF (...) THEN`. Each branch is skipped when its condition is false, and ends with a jump
+        past the others."""
+        end = self.label()
+        known = dict(self.known)
+        states = []
+        for i, branch in enumerate(branches):
+            last = i == len(branches) - 1 and not else_body
+            skip = end if last else self.label()
+            self.jump_if(branch.condition, skip, False)
+            self.block(branch.body)
+            states.append(self.known)
+            self.known = dict(known)
+            if not last:
+                self.emit(f"JMP LBL[{end}]")
+                self.emit(f"LBL[{skip}]")
+        if else_body:
+            self.block(else_body)
+        states.append(self.known)
+        self.emit(f"LBL[{end}]")
+        self.merge(branches[0].condition.span.line, *states)
 
     def _if_chain(self, branches: tuple[n.IfBranch, ...], else_body: tuple[n.Stmt, ...]) -> None:
         """Each branch starts from the frames selected before the IF; after it, only what every path agrees on
@@ -3470,7 +4768,7 @@ class _RoutineTranslator:
         self.forget(loop.body, changes)
 
     def while_stmt(self, loop: n.While) -> None:
-        loop = n.While(loop.span, self.simplify(loop.condition), loop.body)
+        loop = n.While(loop.span, self.fold_texts(self.simplify(loop.condition)), loop.body)
         if isinstance(loop.condition, n.Bool) and not loop.condition.value:
             self.emit(f"!l.{loop.span.line} WHILE FALSE: never runs")
             return
@@ -3485,9 +4783,12 @@ class _RoutineTranslator:
             return
         exit_label = self.label()
         self.emit(f"LBL[{top}]")
-        self.emit(f"IF ({self.condition(loop.condition, negate=True)}) THEN")
-        self.emit(f"JMP LBL[{exit_label}]")
-        self.emit("ENDIF")
+        if self.has_text(loop.condition):  # texts are compared in IF ...,JMP only
+            self.jump_if(loop.condition, exit_label, False)
+        else:
+            self.emit(f"IF ({self.condition(loop.condition, negate=True)}) THEN")
+            self.emit(f"JMP LBL[{exit_label}]")
+            self.emit("ENDIF")
         self.block(loop.body)
         self.emit(f"JMP LBL[{top}]")
         self.emit(f"LBL[{exit_label}]")
@@ -3573,7 +4874,7 @@ class _RoutineTranslator:
         if isinstance(expr, n.Name) and (number := self.interrupt_value(expr)) is not None:
             return number  # CASE iStop: the interrupt's number
         try:
-            return decimal(operand(fmt_number(self.c.evaluator.constant_number(expr))))
+            return decimal(operand(register_value(self.c.evaluator.constant_number(expr))))
         except Unresolvable as exc:
             raise Untranslatable(f"CASE value '{format_expr(expr)}' is not known at conversion time: TP SELECT "
                                  "compares with constants", Blocker.VALUE) from exc  # fmt: skip
@@ -3644,11 +4945,89 @@ class _RoutineTranslator:
                 return f"{self.args.register(name)}={0 if negate else 1}"
             case n.Name(name=name) if self.c.symbols.type_of(name) == "bool":
                 return f"{self.c.flag(name)}={'OFF' if negate else 'ON'}"
+            case n.Index() if (element := self.flag_element(expr)) is not None:
+                return f"{element}={'OFF' if negate else 'ON'}"
+            case n.Component() if (found := self.c.records.field(expr)) is not None and found.type == "bool" \
+                    and not found.indexed and self.c.records.changed(found):  # fmt: skip
+                return f"{self.c.field_number(found, True, self.record_owner(found))}={'OFF' if negate else 'ON'}"
             case n.Name() | n.FuncCall():
                 signal = self.c.signal(expr, self.name, expr.span.line)
                 if signal is not None:
                     return f"{signal}={'OFF' if negate else 'ON'}"
         raise Untranslatable(f"condition not convertible: {format_expr(expr)}", Blocker.CONDITION)
+
+
+# RAPID instructions, functions and data types TP has nothing for, by family: a statement using one is a TODO
+# under Blocker.NO_TP_EQUIVALENT with why, rather than a call or a value CrossArm could not work out.
+_NO_TP_FAMILIES = {
+    "files and serial channels: TP reads and writes no file": (
+        "OPEN", "CLOSE", "WRITE", "WRITEBIN", "WRITEANYBIN", "WRITESTRBIN", "WRITERAWBYTES", "READANYBIN",
+        "READRAWBYTES", "REWIND", "CLEARIOBUFF", "MAKEDIR", "REMOVEDIR", "REMOVEFILE", "RENAMEFILE",
+        "COPYFILE", "OPENDIR", "CLOSEDIR", "READNUM", "READSTR", "READBIN", "READSTRBIN", "READDIR", "ISFILE",
+        "FILESIZE", "FSSIZE", "IODEV", "DIR",
+    ),
+    "sockets: TP has no network messaging": (
+        "SOCKETCREATE", "SOCKETCONNECT", "SOCKETSEND", "SOCKETRECEIVE", "SOCKETCLOSE", "SOCKETBIND",
+        "SOCKETLISTEN", "SOCKETACCEPT", "SOCKETSENDTO", "SOCKETRECEIVEFROM", "SOCKETGETSTATUS", "SOCKETPEEK",
+        "SOCKETDEV", "SOCKETSTATUS",
+    ),
+    "raw byte buffers: TP has none": (
+        "PACKRAWBYTES", "UNPACKRAWBYTES", "CLEARRAWBYTES", "COPYRAWBYTES", "RAWBYTESLEN", "PACKDNHEADER",
+        "RAWBYTES",
+    ),
+    "operator dialog waiting for an answer: TP shows a message, it does not ask the operator one": (
+        "TPREADFK", "TPREADNUM", "TPREADDNUM", "UIMSGBOX", "UIMESSAGEBOX", "UINUMENTRY", "UINUMTUNE",
+        "UIALPHAENTRY", "UILISTVIEW", "BTNRES",
+    ),
+    "a screen or an application of the ABB pendant: TP has none": ("TPSHOW", "UISHOW"),
+    "the ABB event log and its error numbers: TP has none": ("ERRLOG", "BOOKERRNO", "ERRRAISE", "ERRWRITE"),
+    "ABB system instruction (program modules, system data, mechanical units): TP has none": (
+        "GETSYSDATA", "SETSYSDATA", "SAVE", "LOAD", "UNLOAD", "STARTLOAD", "WAITLOAD", "ERASEMODULE",
+        "ACTUNIT", "DEACTUNIT",
+    ),
+    "world zone: the FANUC sets zones up in its DCS or interference check menus, not in TP": (
+        "WZBOXDEF", "WZCYLDEF", "WZSPHDEF", "WZHOMEJOINTDEF", "WZLIMJOINTDEF", "WZLIMSUP", "WZDOSET",
+        "WZENABLE", "WZDISABLE", "WZFREE", "WZSTATIONARY", "WZTEMPORARY", "SHAPEDATA",
+    ),
+}  # fmt: skip
+_NO_TP = {name: why for why, names in _NO_TP_FAMILIES.items() for name in names}
+
+
+def _no_tp_equivalent(stmt: n.Stmt, routines: Iterable[str], type_of) -> str | None:
+    """'Write: files and serial channels: ...' when the statement calls an instruction or a function of RAPID
+    TP has nothing for, or sets or declares data of such a type; None otherwise. The backup's own routines of
+    the same name are not RAPID's."""
+    names: list[str] = [stmt.name] if isinstance(stmt, n.ProcCall) else []
+    names += [node.name for node in nodes(stmt) if isinstance(node, n.FuncCall)]
+    for name in names:
+        if name.upper() in _NO_TP and name.upper() not in routines:
+            return f"{name}: {_NO_TP[name.upper()]}"
+    typed = stmt.type_name if isinstance(stmt, n.DataDecl) else None
+    if isinstance(stmt, n.Assign) and (root := path_of(stmt.target)):
+        typed = type_of(root[0])
+    if typed is not None and typed.upper() in _NO_TP:
+        return f"{typed} data: {_NO_TP[typed.upper()]}"
+    return None
+
+
+# RAPID text functions TP does otherwise, measured (ROBOGUIDE string probe, RobotStudio): a statement using one
+# stays TODO with why, rather than as a value CrossArm could not work out.
+_TEXT_TODO = {
+    "STRTOVAL": "StrToVal: TP reads a text as a number (R[n]=SR[m]) but gives 0 for one that is not a number and"
+                " its first digits for '12AB', where RAPID returns FALSE and leaves the number as it was",
+    "STRFIND": "StrFind: it looks for a character of a set; FINDSTR looks for a whole text (StrMatch)",
+    "STRMEMB": "StrMemb: TP has no test of a character against a set",
+    "STRORDER": "StrOrder: TP compares texts for equality only",
+    "STRMAP": "StrMap: TP has no character mapping",
+}  # fmt: skip
+
+
+def _text_todo(stmt: n.Stmt, routines: Iterable[str]) -> str | None:
+    """Why a statement using a RAPID text function TP does otherwise stays TODO; None for any other."""
+    for node in nodes(stmt):
+        if isinstance(node, n.FuncCall) and node.name.upper() in _TEXT_TODO and node.name.upper() not in routines:
+            return _TEXT_TODO[node.name.upper()]
+    return None
 
 
 # Functions whose value is only known at run time: the robot's position, inputs

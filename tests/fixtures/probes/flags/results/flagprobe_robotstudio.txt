@@ -1,0 +1,6 @@
+fpN1 1
+fpN2 0
+fpN3 0
+fpN4 1
+fpN5 1
+fpTurns 4

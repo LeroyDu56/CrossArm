@@ -1,0 +1,110 @@
+/PROG  STRPROBE
+/ATTR
+OWNER		= MNEDITOR;
+COMMENT		= "StrProbe";
+PROG_SIZE	= 0;
+CREATE		= DATE 26-01-01  TIME 00:00:00;
+MODIFIED	= DATE 26-01-01  TIME 00:00:00;
+FILE_NAME	= ;
+VERSION		= 0;
+LINE_COUNT	= 87;
+MEMORY_SIZE	= 0;
+PROTECT		= READ_WRITE;
+TCD:  STACK_SIZE	= 0,
+      TASK_PRIORITY	= 50,
+      TIME_SLICE	= 0,
+      BUSY_LAMP_OFF	= 0,
+      ABORT_REQUEST	= 0,
+      PAUSE_REQUEST	= 0;
+DEFAULT_GROUP	= 1,*,*,*,*;
+CONTROL_CODE	= 00000000 00000000;
+/MN
+   1:  !RAPID StringProbe.StrProbe ;
+   2:  R[2:spA]=0    ;
+   3:  R[3:spO]=0    ;
+   4:  R[4:spSp]=0    ;
+   5:  R[5:spBang]=0    ;
+   6:  R[6:spOther]=0    ;
+   7:  R[7:spRuns]=0    ;
+   8:  R[8:spAt]=0    ;
+   9:  R[9:spMiss]=0    ;
+  10:  R[10:spNumLen]=0    ;
+  11:  R[11:spNumOk]=0    ;
+  12:  R[12:spLongLen]=0    ;
+  13:  R[13:spLongOk]=0    ;
+  14:  R[14:spSelf]=0    ;
+  15:  R[15:spEmpty]=0    ;
+  16:  R[16:spAposLen]=0    ;
+  17:  R[17:spApos]=0    ;
+  18:  R[18:spLocal]=0    ;
+  19:  R[19:spTakeLen]=0    ;
+  20:  R[20:spTake42]=0    ;
+  21:  R[21:spPart]=0    ;
+  22:  CALL CA_TEXT(3,'IDLE',0) ;
+  23:  CALL CA_TEXT(2,'LOAD. ROBOT!!',0) ;
+  24:  CALL STRCOUNT    ;
+  25:  LBL[1] ;
+  26:  CALL CA_TEXT(25,'DONE',0) ;
+  27:  IF SR[3]=SR[25],JMP LBL[2] ;
+  28:  CALL STRSTEP    ;
+  29:  JMP LBL[1] ;
+  30:  LBL[2] ;
+  31:  CALL CA_TEXT(25,'ROBOT',0) ;
+  32:  R[199:Calc1]=FINDSTR SR[2],SR[25]    ;
+  33:  IF R[199:Calc1]<>0,JMP LBL[3] ;
+  34:  R[199:Calc1]=STRLEN SR[2]    ;
+  35:  R[199:Calc1]=R[199:Calc1]+1    ;
+  36:  LBL[3] ;
+  37:  R[8:spAt]=R[199:Calc1]    ;
+  38:  CALL CA_TEXT(25,'XYZ',0) ;
+  39:  R[199:Calc1]=FINDSTR SR[2],SR[25]    ;
+  40:  IF R[199:Calc1]<>0,JMP LBL[4] ;
+  41:  R[199:Calc1]=STRLEN SR[2]    ;
+  42:  R[199:Calc1]=R[199:Calc1]+1    ;
+  43:  LBL[4] ;
+  44:  R[9:spMiss]=R[199:Calc1]    ;
+  45:  SR[5]=R[7:spRuns] ;
+  46:  CALL CA_TEXT(5,'-',1) ;
+  47:  SR[25]=R[2:spA] ;
+  48:  SR[5]=SR[5]+SR[25] ;
+  49:  R[10:spNumLen]=STRLEN SR[5]    ;
+  50:  CALL CA_TEXT(25,'3-1',0) ;
+  51:  IF SR[5]<>SR[25],JMP LBL[5] ;
+  52:  R[11:spNumOk]=1    ;
+  53:  LBL[5] ;
+  54:  CALL CA_TEXT(6,'THE-QUICK-BROWN-FOX-JUMPS-OVER-THE-LAZ',0) ;
+  55:  CALL CA_TEXT(6,'Y-DOG-0123456789-PACK-MY-BOX-WITH-FIVE',1) ;
+  56:  CALL CA_TEXT(6,'-JUG',1) ;
+  57:  R[12:spLongLen]=STRLEN SR[6]    ;
+  58:  CALL CA_TEXT(25,'THE-QUICK-BROWN-FOX-JUMPS-OVER-THE-LAZ',0) ;
+  59:  CALL CA_TEXT(25,'Y-DOG-0123456789-PACK-MY-BOX-WITH-FIVE',1) ;
+  60:  CALL CA_TEXT(25,'-JUG',1) ;
+  61:  IF SR[6]<>SR[25],JMP LBL[6] ;
+  62:  R[13:spLongOk]=1    ;
+  63:  LBL[6] ;
+  64:  CALL CA_TEXT(25,'<',0) ;
+  65:  SR[25]=SR[25]+SR[3] ;
+  66:  SR[3]=SR[25] ;
+  67:  CALL CA_TEXT(25,'<DONE',0) ;
+  68:  IF SR[3]<>SR[25],JMP LBL[7] ;
+  69:  R[14:spSelf]=1    ;
+  70:  LBL[7] ;
+  71:  CALL CA_TEXT(7,'x',0) ;
+  72:  SR[7]=SUBSTR SR[7],2,0 ;
+  73:  R[199:Calc1]=STRLEN SR[7]    ;
+  74:  R[15:spEmpty]=R[199:Calc1]+10    ;
+  75:  CALL CA_TEXT(8,'it`s',0) ;
+  76:  R[16:spAposLen]=STRLEN SR[8]    ;
+  77:  CALL CA_TEXT(25,'it`s',0) ;
+  78:  IF SR[8]<>SR[25],JMP LBL[8] ;
+  79:  R[17:spApos]=1    ;
+  80:  LBL[8] ;
+  81:  CALL STRLOCAL    ;
+  82:  CALL STRLOCAL    ;
+  83:  CALL STRTAKE(SR[5]) ;
+  84:  CALL STRTAKE('42') ;
+  85:  CALL STRTAKE(SR[3]) ;
+  86:  SR[25]=SUBSTR SR[2],7,5 ;
+  87:  R[21:spPart]=STRLEN SR[25]    ;
+/POS
+/END

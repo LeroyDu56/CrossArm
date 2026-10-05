@@ -34,7 +34,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from crossarm.convert.handlers import body as handler_body
-from crossarm.convert.values import Symbols, Unresolvable
+from crossarm.convert.values import (
+    PREDEFINED_SPEEDS,
+    PREDEFINED_ZONES,
+    Symbols,
+    Unresolvable,
+    predefined_value,
+    unit_quaternion,
+)
 from crossarm.geometry import Pose, mat_mul, matrix_to_quat, matrix_to_wpr, quat_to_matrix, rot_x, rot_y, rot_z
 from crossarm.rapid import nodes as n
 from crossarm.rapid.walk import walk_statements
@@ -51,6 +58,9 @@ LAYOUTS: dict[str, tuple[tuple[str, str], ...]] = {
     "orient": (("q1", "num"), ("q2", "num"), ("q3", "num"), ("q4", "num")),
     "pose": (("trans", "pos"), ("rot", "orient")),
     "confdata": (("cf1", "num"), ("cf4", "num"), ("cf6", "num"), ("cfx", "num")),
+    "speeddata": (("v_tcp", "num"), ("v_ori", "num"), ("v_leax", "num"), ("v_reax", "num")),
+    "zonedata": (("finep", "bool"), ("pzone_tcp", "num"), ("pzone_ori", "num"), ("pzone_eax", "num"),
+                 ("zone_ori", "num"), ("zone_leax", "num"), ("zone_reax", "num")),
     "robjoint": tuple((f"rax_{i}", "num") for i in range(1, 7)),
     "extjoint": tuple((f"eax_{c}", "num") for c in "abcdef"),
     "robtarget": (("trans", "pos"), ("rot", "orient"), ("robconf", "confdata"), ("extax", "extjoint")),
@@ -432,6 +442,8 @@ PREDEFINED = {
     "WOBJ0": Typed([False, True, "", [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]], [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]],
                    "wobjdata"),
     "LOAD0": Typed([0.001, [0.0, 0.0, 0.001], [1.0, 0.0, 0.0, 0.0], 0.0, 0.0, 0.0], "loaddata"),
+    **{name: Typed(predefined_value(name), "speeddata") for name in PREDEFINED_SPEEDS},
+    **{name: Typed(predefined_value(name), "zonedata") for name in (*PREDEFINED_ZONES, "FINE")},
 }  # fmt: skip
 
 
@@ -439,12 +451,10 @@ def to_pose(value: Any) -> Pose:
     """A RAPID pose ([[x, y, z], [q1, q2, q3, q4]]) as a Pose; an orientation that is not a unit quaternion is refused."""
     try:
         (x, y, z), q = value
-        q = tuple(float(c) for c in q)
+        q = unit_quaternion(q, "a pose")
     except (TypeError, ValueError) as exc:
         raise Unresolvable("not a pose") from exc
     norm = math.sqrt(sum(c * c for c in q))
-    if abs(norm - 1) > 0.01:  # RAPID refuses a move to such an orientation too
-        raise Unresolvable(f"orientation {list(q)} is not a unit quaternion")
     return Pose((float(x), float(y), float(z)), tuple(c / norm for c in q))  # type: ignore[arg-type]
 
 

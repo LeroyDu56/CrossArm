@@ -260,6 +260,8 @@ def run(
 
         what = "ABB backup" if source.kind == "backup" else "RAPID files"
         log(f"{what} '{source.name}': {len(source.tasks)} task(s)")
+        if source.kind == "files" and len(source.tasks) > 1:
+            log("  modules of the same name in several folders: each folder converted as a task of its own")
         if eio_path:
             log(f"I/O signal types from {eio_path.name} ({len(signals or {})} signals)")
         # One controller: its registers, flags and I/O are shared by every task converted here.
@@ -270,7 +272,7 @@ def run(
         shared.written = Written.of(p.module for modules, _ in parsed for p in modules if p.module is not None)
         tasks = []
         for task, parsed_task in zip(source.tasks, parsed, strict=True):
-            task_folder = folder / task.name if source.kind == "backup" else folder
+            task_folder = folder / task.name if source.kind == "backup" or len(source.tasks) > 1 else folder
             others = [name for name in names if name != task.name]
             tasks.append(_convert_task(task, parsed_task, task_folder, config, signals, routines, source, log, shared,
                                        others, licence))  # fmt: skip

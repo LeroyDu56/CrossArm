@@ -175,3 +175,11 @@ def test_precedence_tree_shape():
     assert value.op == "OR" and value.right.op == "AND"
     value = parse_stmt("x:=NOT a = b;").value
     assert value.op == "NOT" and value.operand.op == "="
+
+
+@pytest.mark.parametrize(("literal", "value"), [("0xFF00", 65280), ("0x0000", 0), ("0xE0", 224), ("0o17", 15),
+                                               ("0b101", 5)])  # fmt: skip
+def test_integer_literals_in_another_base_have_their_value(literal, value):
+    stmt = parse_stmt(f"IF a<>{literal} AND a<>0x0000 THEN\nENDIF")
+    number = stmt.branches[0].condition.left.right
+    assert (number.value, number.text) == (value, literal)

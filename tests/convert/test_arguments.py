@@ -58,7 +58,7 @@ def test_parameters_map_to_ar_in_order_switches_last():
 
 
 @pytest.mark.parametrize(("params", "reason"), [
-    ("INOUT bool on", "bool parameter on is passed by reference (INOUT): only a num is copied back"),
+    ("INOUT bool on", "bool parameter on is passed by reference (INOUT): only a num or a point is read back"),
     ("speeddata v", "speeddata parameter v"),
     ("INOUT tooldata t", "tooldata parameter t is passed by reference (INOUT)"),
     ("\\num speed", "optional num parameter speed"),
@@ -151,11 +151,12 @@ def test_a_string_parameter_is_passed_as_text_written_in_the_call():
     assert any("cut to 38 characters" in n.message for n in result.notes if n.kind == "WARNING")
 
 
-def test_a_string_known_only_at_run_time_stays_todo_and_so_does_showing_it():
-    """A TP program keeps a string argument but cannot show it: MESSAGE takes fixed text."""
+def test_a_string_worked_out_at_run_time_is_passed_in_a_string_register_but_not_shown():
+    """A TP program keeps a string argument but cannot show it: MESSAGE takes fixed text. The text is worked
+    out in a scratch string register, which the CALL copies (ROBOGUIDE)."""
     procs = "PROC Fault(string sText)\n  Set doFault;\n  TPWrite sText;\nENDPROC"
-    assert todos(run('Fault "Part "+NumToStr(n,0);', "VAR num n;", extra_procs=procs))[0].startswith(
-        "argument sText: '\"Part \" + NumToStr(n, 0)' is only known at run time")
+    assert tp_lines(run('Fault "Part "+NumToStr(n,0);', "VAR num n;", extra_procs=procs)) == [
+        "CALL CA_TEXT(25,'Part ',0)", "SR[24]=R[200]", "SR[25]=SR[25]+SR[24]", "CALL FAULT(SR[25])"]
     source = f"MODULE M\nPROC main()\nFault \"Stop\";\nENDPROC\n{procs}\nENDMODULE\n"
     result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
     fault = next(p for p in result.programs if p.program.name == "FAULT").program
@@ -335,3 +336,38 @@ def test_moveabsj_with_a_tool_the_routine_is_given_stays_todo():
     source = f"MODULE M\n{POINTS}\n{joint}\nPROC main()\n  Home tGrip;\nENDPROC\n{procs}\nENDMODULE\n"
     result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
     assert any("INTP-253" in n.message for n in result.notes if n.kind == "TODO")
+
+
+SHIFT = """PROC Shift(VAR robtarget pAt)
+  pAt:=Offs(pAt,0,50,0);
+  MoveL pAt,v400,fine,tGrip;
+ENDPROC
+PROC Lift(INOUT robtarget pAt,num nUp)
+  pAt.trans.z:=pAt.trans.z-nUp;
+  Shift pAt;
+ENDPROC"""
+
+
+def test_a_point_a_routine_changes_comes_back_to_the_caller():
+    """VAR / INOUT robtarget: the routine works on the position register it is passed in, the caller reads it
+    back after the CALL; the caller's point is then kept in a register too."""
+    data = POINTS + "VAR robtarget pCur;\nVAR num nY;"
+    body = "pCur:=pA;\nShift pCur;\nLift pCur,100;\nnY:=pCur.trans.y;"
+    assert program(body, data, SHIFT, "MAIN") == [
+        "PR[99]=P[1]", "PR[98]=PR[99]", "CALL SHIFT", "PR[99]=PR[98]", "PR[97]=PR[99]", "CALL LIFT(100)",
+        "PR[99]=PR[97]", "R[1:nY]=PR[99,2]"]  # fmt: skip
+    assert program(body, data, SHIFT, "SHIFT")[:1] == ["PR[98,2]=PR[98,2]+50"]  # in its own register: no copy
+    assert program(body, data, SHIFT, "LIFT") == ["PR[97,3]=PR[97,3]-AR[1]", "PR[98]=PR[97]", "CALL SHIFT",
+                                                   "PR[97]=PR[98]"]  # fmt: skip
+
+
+def test_a_point_passed_back_must_be_a_point_of_the_program():
+    result = run("Shift Offs(pA,0,0,10);", POINTS, extra_procs=SHIFT)
+    assert "is changed by the routine: it must be a robtarget of the program" in todos(result)[0]
+
+
+def test_a_routine_calling_itself_back_with_points_stays_todo():
+    """Each call would write the position registers the calls under way read: Hanoi's towers in RAPID."""
+    procs = "PROC Tower(num n,robtarget pFrom)\n  IF n>0 Tower n-1,pFrom;\n  MoveL pFrom,v100,fine,tGrip;\nENDPROC"
+    result = run("Tower 3,pA;", POINTS, extra_procs=procs)
+    assert "calls itself back and is given points" in todos(result)[0]

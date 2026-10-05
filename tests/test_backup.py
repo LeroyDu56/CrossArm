@@ -3,12 +3,16 @@
 
 """Backup detection, zip handling and the full pipeline, on a synthetic two-robot backup."""
 
+import json
+import shutil
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from crossarm.backup import find_backup_root, open_source
+from crossarm.convert import ConversionConfig
 from crossarm.convert.html import markdown_to_html
 from crossarm.pipeline import run, unique_folder
 
@@ -289,3 +293,133 @@ def test_routines_that_are_not_written_claim_no_name(tmp_path):
     )
     result = run([backup], log=lambda _: None)
     assert (result.folder / "T_ROB2" / "UTIL.LS").exists()
+
+
+# ---------------------------------------------------------------------------
+# Loose files holding several tasks or versions
+# ---------------------------------------------------------------------------
+
+
+def variants(root: Path) -> Path:
+    """A project with a folder per robot task, in two versions, and a module they all use."""
+    for version in ("Version_1", "Version_2"):
+        for task in ("T_ROB_L", "T_ROB_R"):
+            folder = root / "RAPID" / version / task
+            folder.mkdir(parents=True)
+            (folder / "Module1.mod").write_text(program("Module1", "gripClose"))
+    (root / "RAPID" / "Common.sys").write_text(DATA_MODULE)  # in each task: data only
+    return root
+
+
+def test_modules_of_one_name_in_several_folders_make_a_task_per_folder(tmp_path):
+    with open_source([variants(tmp_path / "project")]) as source:
+        tasks = {t.name: sorted(p.name for p in t.program_files) for t in source.tasks}
+    assert tasks == {f"{v}/{t}": ["Common.sys", "Module1.mod"] for v in ("Version_1", "Version_2")
+                     for t in ("T_ROB_L", "T_ROB_R")}  # fmt: skip
+
+
+def test_the_split_looks_through_a_folder_all_the_modules_are_in(tmp_path):
+    """Cell_A/Programs/ holds both controllers: a task per controller folder, each named as far down as it takes."""
+    for folder in ("Cell_A/Programs/Robot1/T_ROB1", "Cell_A/Programs/Robot2/T_ROB1", "Cell_B/Programs/T_ROB1"):
+        (tmp_path / folder).mkdir(parents=True)
+        (tmp_path / folder / "Module1.mod").write_text(program("Module1", "doA"))
+    with open_source([tmp_path]) as source:
+        assert [t.name for t in source.tasks] == ["Cell_A/Programs/Robot1", "Cell_A/Programs/Robot2",
+                                                  "Cell_B"]  # fmt: skip
+
+
+def test_modules_spread_over_folders_with_distinct_names_stay_one_task(tmp_path):
+    for folder, module in (("server", "Server"), ("client", "Client")):
+        (tmp_path / "lib" / folder).mkdir(parents=True)
+        (tmp_path / "lib" / folder / f"{module}.mod").write_text(program(module, "doA"))
+    with open_source([tmp_path / "lib"]) as source:
+        assert [(t.name, len(t.files)) for t in source.tasks] == [("files", 2)]
+
+
+def test_every_program_of_every_folder_is_written(tmp_path):
+    """Before, the four MAIN programs were written over one another: four announced, one file."""
+    result = run([variants(tmp_path / "project")], log=lambda _: None)
+    written = sorted(p.relative_to(result.folder).as_posix() for p in result.folder.rglob("*.LS"))
+    assert result.programs == 4
+    assert [w for w in written if "SETUP" not in w] == [
+        "Version_1/T_ROB_L/MAIN.LS", "Version_1/T_ROB_R/MAIN_2.LS", "Version_2/T_ROB_L/MAIN_3.LS",
+        "Version_2/T_ROB_R/MAIN_4.LS"]  # fmt: skip
+
+
+def test_a_routine_name_two_modules_declare_is_written_once(tmp_path):
+    """The one converted is the first by path, whatever the order the files are given in."""
+    for module in ("First", "Second"):
+        (tmp_path / f"{module}.mod").write_text(
+            f"MODULE {module}\n  LOCAL PROC main()\n    Stop;\n  ENDPROC\nENDMODULE\n")
+    result = run([tmp_path / "Second.mod", tmp_path / "First.mod"], log=lambda _: None)
+    assert [p.name for p in result.folder.glob("*.LS")] == ["MAIN.LS"]
+    assert result.tasks[0].result.skipped_routines == [
+        ("Second", "main", ("First has a routine of the same name, converted: routines of one name in several "
+                            "modules are not"))]  # fmt: skip
+
+
+# ---------------------------------------------------------------------------
+# What 1.x keeps: a loose folder of distinct modules converts as 1.2 did
+# ---------------------------------------------------------------------------
+
+LOOSE_1_2 = Path(__file__).parent / "fixtures" / "rapid" / "loose_project_1_2"  # written by CrossArm 1.2.0
+
+
+def loose_project(root: Path, fixtures_dir: Path) -> Path:
+    """Three modules of distinct names in subfolders: the case most loose folders are."""
+    for name, folder in (("pick_and_place.mod", "cell"), ("logic_and_io.mod", "cell/logic"),
+                         ("hmi_and_groups.mod", "hmi")):  # fmt: skip
+        (root / folder).mkdir(parents=True, exist_ok=True)
+        shutil.copy(fixtures_dir / "rapid" / name, root / folder / name)
+    return root
+
+
+@pytest.fixture
+def evaluation(tmp_path, monkeypatch):
+    """No licence: 1.2.0 wrote these programs as an evaluation copy."""
+    monkeypatch.setenv("CROSSARM_LICENCE", str(tmp_path / "no.licence"))
+
+
+def programs(folder: Path) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in folder.glob("*.LS")}
+
+
+def numbers(folder: Path) -> dict[str, dict[str, int]]:
+    """Each table of the mapping file, by RAPID name: 1.3 names a routine's counter Routine.k, 1.2 named it k.
+    Not the names of the programs (programs), which 1.3 adds: those of the files written."""
+    data = json.loads((folder / "crossarm_mapping.json").read_text(encoding="utf-8"))
+    if "programs" in data:
+        assert {f"{name}.LS" for name in data.pop("programs").values()} <= set(programs(folder))
+    return {table: {key.split(".")[-1].upper(): n for key, n in values.items()}
+            for table, values in data.items() if isinstance(values, dict)}  # fmt: skip
+
+
+def test_a_loose_folder_of_distinct_modules_converts_as_1_2_did(tmp_path, fixtures_dir, evaluation):
+    """One task, programs in the output folder itself, the same programs and numbers as 1.2.0 wrote."""
+    project = loose_project(tmp_path / "project", fixtures_dir)
+    result = run([project], config=ConversionConfig(timestamp=datetime(2026, 1, 1)), log=lambda _: None)
+    assert ([t.task for t in result.tasks], result.folder) == (["files"], tmp_path / "crossarm_project")
+    assert programs(result.folder) == programs(LOOSE_1_2)
+    assert numbers(result.folder) == numbers(LOOSE_1_2)
+
+
+def test_the_mapping_1_2_wrote_given_back_gives_the_same_numbers(tmp_path, fixtures_dir, evaluation):
+    project = loose_project(tmp_path / "project", fixtures_dir)
+    config = ConversionConfig.from_mapping_file(LOOSE_1_2 / "crossarm_mapping.json", timestamp=datetime(2026, 1, 1))
+    result = run([project], config=config, log=lambda _: None)
+    # 1.2.0 itself did not: the FOR counters and CrossArm's own registers it named by their RAPID name
+    # only were numbered again, past every number of the file.
+    assert programs(result.folder) == programs(LOOSE_1_2)
+    assert numbers(result.folder) == numbers(LOOSE_1_2)
+
+
+def test_the_mapping_written_now_given_back_gives_the_same_files(tmp_path, fixtures_dir, evaluation):
+    project = loose_project(tmp_path / "project", fixtures_dir)
+    first = run([project], config=ConversionConfig(timestamp=datetime(2026, 1, 1)), log=lambda _: None)
+    mapping = json.loads((first.folder / "crossarm_mapping.json").read_text(encoding="utf-8"))
+    assert (mapping["registers"]["COUNTDOWN.k"], mapping["registers"]["CROSSARM.NUMBERINDEX"]) == (5, 10)
+    config = ConversionConfig.from_mapping_file(first.folder / "crossarm_mapping.json",
+                                                timestamp=datetime(2026, 1, 1))  # fmt: skip
+    second = run([project], config=config, log=lambda _: None)
+    assert programs(second.folder) == programs(first.folder)
+    assert (second.folder / "crossarm_mapping.json").read_bytes() == (first.folder / "crossarm_mapping.json").read_bytes()

@@ -69,6 +69,9 @@ class Signature:
     routine: str = ""  # its name, as declared
     # robtarget parameter (upper case) -> the tool and work object of the first move the routine makes to it
     point_frames: tuple[tuple[str, n.Expr | None, n.Expr | None], ...] = ()
+    # upper-case robtarget parameters the routine changes, in their position register: passed by reference
+    # (VAR, INOUT), the caller reads the point back after the CALL
+    points_changed: frozenset[str] = frozenset()
 
     @property
     def arguments(self) -> tuple[Slot, ...]:
@@ -130,8 +133,8 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
             frame = type_name.lower() in ("tooldata", "wobjdata")
             if mode in ("VAR", "INOUT") and frame:
                 return f"{type_name} parameter {name} is passed by reference ({mode}): a frame is passed by its number"
-            if mode and not frame and (type_name.lower() != "num" or dims or optional):
-                return f"{type_name} parameter {name} is passed by reference ({mode}): only a num is copied back"
+            if mode and not frame and (type_name.lower() not in ("num", "robtarget") or dims or optional):
+                return f"{type_name} parameter {name} is passed by reference ({mode}): only a num or a point is read back"
             if dims:
                 return f"parameter {name} is an array: TP arguments are single values"
             if frame and (reason := _frame_uses(routine, name)):
@@ -160,6 +163,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
         return f"{len(arguments)} parameters: a TP CALL takes at most {MAX_ARGS} arguments"
     kinds = {s.key: s.kind for s in slots}
     copied: set[str] = set()
+    points_changed: set[str] = set()  # robtarget parameters it changes: in their position register
     by_reference = {s.key for s in slots if s.by_reference}
     for stmt in walk_statements(routine.body):
         changed = _changed_by_call(stmt)
@@ -167,12 +171,15 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
             # passed on to a routine that may change it (its own INOUT): the caller reads back what comes back
             for arg in stmt.args:
                 if isinstance(arg.value, n.Name) and arg.value.name.upper() in by_reference:
-                    copied.add(arg.value.name.upper())
+                    key = arg.value.name.upper()
+                    (points_changed if kinds[key] == "robtarget" else copied).add(key)
         if changed and changed.upper() in kinds:
             if kinds[changed.upper()] != "num":
                 return f"it changes its parameter {changed}: only a whole num parameter can be copied to a register"
             copied.add(changed.upper())
-        if isinstance(stmt, n.Assign) and (target := base_name(stmt.target)) and target.upper() in kinds:
+        if isinstance(stmt, n.Assign) and (target := base_name(stmt.target)) and kinds.get(target.upper()) == "robtarget":
+            points_changed.add(target.upper())  # worked out in its position register, as a point of the program
+        elif isinstance(stmt, n.Assign) and (target := base_name(stmt.target)) and target.upper() in kinds:
             if kinds[target.upper()] != "num" or not isinstance(stmt.target, n.Name):
                 return f"it changes its parameter {target}: only a whole num parameter can be copied to a register"
             copied.add(target.upper())
@@ -192,7 +199,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                 if isinstance(base, n.Name) and base.name.upper() in points:
                     frames.setdefault(base.name.upper(), (fixed(stmt.tool), fixed(stmt.wobj)))
     return Signature(slots, frozenset(copied), routine.name,
-                     tuple((key, tool, wobj) for key, (tool, wobj) in frames.items()))  # fmt: skip
+                     tuple((key, tool, wobj) for key, (tool, wobj) in frames.items()), frozenset(points_changed))  # fmt: skip
 
 
 _CHANGING = frozenset({"INCR", "DECR", "ADD", "CLEAR"})  # instructions that change their first argument

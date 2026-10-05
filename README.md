@@ -98,7 +98,9 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
   num, bool, string, point (robtarget), record, tool, work object and switch arguments, nums passed by
   reference, the integrator's own move routines;
   interrupts (`ISignalDI`, `ISignalDO`, `IPers`) as FANUC condition monitors calling the `TRAP`.
-- **Data**: `num` and `bool` to registers and flags, calculations of any length; points worked out at run
+- **Data**: `num` and `bool` to registers and flags, data of the backup's own `RECORD` types field by field
+  (a state machine's state in a register named by its path), strings in string registers (texts compared,
+  measured, cut and passed on), calculations of any length; points worked out at run
   time (palletizing: `Offs()` of loop counters, `RelTool()`, `CRobT()`) in position registers; operator
   messages; comments.
 
@@ -110,6 +112,13 @@ error handlers beyond wait timeouts, timer interrupts and a `TRAP` that moves th
 and a few ABB-specific instructions. The full table is in the [user guide](docs/guide.md#what-is-converted).
 
 ## What to expect
+
+**About 60 % of the instructions, on real programs.** On public open-source RAPID programs of widely
+mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
+depending on the program; programs built around files, sockets, operator dialogs or error handlers
+convert least. On our own test corpus, written for testing, it converts 86 % to 93 %: that figure is
+higher because we wrote the programs. Converted means written in TP and loaded by the controller
+without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
 
 **The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
 files in ROBOGUIDE or on the controller, set the payloads, check reachability, and work through
@@ -139,8 +148,11 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 
 | What | Result |
 |---|---|
-| Every program converted from the test corpus, loaded on a FANUC controller | 128 of 128 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (220 forms) |
+| RAPID instructions converted, public open-source programs (indicative, [why not all](#why-not-100-)) | about 60 %, from about 15 % to all of it per project |
+| RAPID instructions converted, our test corpus, written for testing | 86 % to 93 % |
+| Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
+| Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
+| The controller probes, run again on both simulators for this version | 26 of 26 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -173,6 +185,18 @@ byte for byte.
 No, and CrossArm says so on every report. They are a starting point for commissioning: set the tool
 payloads, check tool and user frames, check reachability on the new robot model, work through every
 TODO, and touch up the points. ROBOGUIDE is the right place to do that before the real robot.
+
+### Why not 100 %?
+Three reasons, and the report gives each `!TODO` its cause.
+- **What TP cannot do** without KAREL or a robot option: files, sockets and raw byte buffers; an
+  operator dialog that waits for an answer; more than 25 string registers; an event log;
+  trigonometric functions; setting some outputs in the middle of a corner path; turning positions
+  the robot measures (a calibration, a search on either edge of an input) into a frame.
+- **What CrossArm does not convert yet:** error handlers (`ERROR`, `RETRY`, `RAISE`); data the
+  programs work out other than as constants; routines taking parameters of other types (optional
+  numbers and texts, speeds); some conditions; arrays of strings.
+- **Programs that are not complete:** a library using data or routines declared in another project
+  cannot be resolved, by CrossArm or by RobotStudio.
 
 ### How close to the ABB is the converted program?
 The points are exactly the ABB's: the FANUC flange lands within 0.004 mm and 0.001° of where the ABB
@@ -214,16 +238,17 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 
 ## Roadmap
 
-Progress is measured as the share of RAPID instructions written as TP, on the three RobotWare
+Progress is measured as the share of RAPID instructions written as TP: on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)): 84 %, 93 % and 85 %. What is left
-gives the order of the next steps:
+controllers ([validation](docs/validation.md#1-the-test-corpus)), 86 %, 93 % and 87 %; on public
+open-source programs, about 60 %. What is left gives the order of the next steps:
 
-1. Arrays the programs change at run time; moves that set outputs on the way (`MoveLDO`, `TriggL`).
-2. Operator dialogs and system functions (`UIMessageBox`, `OpMode()`), values only known at run time.
-3. Error handlers for errors the backup raises itself (part not found, measure out of range).
-4. Frames and positions measured on the robot (calibration, search): TP cannot compute a frame, so
-   this needs KAREL. Those computed from fixed values are converted.
+1. Error handlers (`ERROR`, `RETRY`, `RAISE`), for errors the program raises itself (part not found,
+   measure out of range) and those of the instructions it calls.
+2. Routines taking optional parameters and speeds; values only known at run time.
+3. Operator dialogs and system functions (`UIMessageBox`, `OpMode()`), as far as TP allows.
+4. Frames and positions measured on the robot (calibration): TP cannot compute a frame, so this needs
+   KAREL. Those computed from fixed values, and searches on one edge of an input, are converted.
 
 Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
 
@@ -253,8 +278,8 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.2.0 and v1.1.0 on
-2030-09-29, v1.0.0 on 2030-09-26.
+Each released version becomes Apache 2.0 four years after it is published: v1.3.0 on 2030-10-05,
+v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 

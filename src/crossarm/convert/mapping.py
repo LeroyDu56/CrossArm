@@ -21,8 +21,22 @@ from crossarm.convert.translate import ConversionResult
 README = (
     "Numbers CrossArm allocated automatically, in order of first use. "
     "Change them to the ones the controller already uses, then convert again with "
-    "--map on this file. Names match the RAPID data, case-insensitively. "
+    "--map on this file. Names match the RAPID data, case-insensitively; a routine's FOR counters and "
+    "the copies of its parameters are named Routine.name, the registers CrossArm uses itself CROSSARM.name. "
     "Keys starting with _ are ignored."
+)
+STRING_REGISTERS_README = (
+    "String registers SR[n] keeping the strings the programs change (a routine's own named Routine.name). "
+    "CROSSARM.TEXT and CROSSARM.TEXT2, taken from the top, are scratch registers: a text written in the "
+    "program is loaded into one just before it is compared or passed on, never kept from one instruction to "
+    "the next; CROSSARM.TRAPTEXT and CROSSARM.TRAPTEXT2 are those of what a TRAP runs. The controller has 25 "
+    "(limits.SR). Change a number to a register the robot does not use."
+)
+PROGRAMS_README = (
+    "TP program names of the programs written that other programs call or arm: a routine by its name, an "
+    "interrupt's condition program by the interrupt's (its relay INTERRUPT.relay), CROSSARM.TEXT the program "
+    "loading texts. Given back, a conversion keeps them, even when the FANUC robot has a program of that name "
+    "by then (said in the report): the programs already loaded call these names."
 )
 MOVE_ROUTINES_README = (
     "Routines of the backup that make one move and also do something else (see the report, "
@@ -43,6 +57,10 @@ ANALOG_SCALES_README = (
 NUMBER_ARRAYS_README = (
     "Arrays of numbers the programs index at run time (nTorque{i}): SETUP_FRAMES keeps each in consecutive "
     "registers from the one given here, read as R[R[n]]. Change it to the first of a free run."
+)
+FLAG_ARRAYS_README = (
+    "Arrays of bools the programs change or index at run time (bSlotFull{i}): SETUP_FRAMES sets each in "
+    "consecutive flags from the one given here, read and set as F[R[n]]. Change it to the first of a free run."
 )
 POINT_ARRAYS_README = (
     "Arrays of points the programs index at run time (pSlot{i}): SETUP_FRAMES keeps each in consecutive "
@@ -70,6 +88,7 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     tables = [
         ("registers", result.registers),
         ("flags", result.flags),
+        ("string_registers", result.string_registers),
         ("digital_outputs", result.digital_outputs),
         ("digital_inputs", result.digital_inputs),
         ("group_outputs", result.group_outputs),
@@ -82,7 +101,12 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     data: dict[str, object] = {"_README": README}
     for key, allocations in tables:
         if allocations:  # an empty table would only be noise
-            data[key] = {a.rapid_name: a.number for a in allocations}
+            if key == "string_registers":
+                data["_string_registers"] = STRING_REGISTERS_README
+            data[key] = {getattr(a, "key", "") or a.rapid_name: a.number for a in allocations}  # frames: no key
+    if result.program_keys:
+        data["_programs"] = PROGRAMS_README
+        data["programs"] = dict(result.program_keys)
     if any(f.frame is not None and f.frame.robhold and f.number for f in result.utools):
         data["_tool_pin"] = TOOL_PIN_README
         data["tool_pin"] = config.tool_pin
@@ -91,6 +115,8 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
         data["analog_scales"] = {a.rapid_name: config.analog_scales.get(a.rapid_name.upper())
                                  for a in result.analog_outputs}  # fmt: skip
     data["limits"] = dict(config.limits)
+    if not result.string_registers and config.limits.get("SR") == ConversionConfig().limits["SR"]:
+        del data["limits"]["SR"]  # no string register used: the file stays as before strings were converted
     wrappers = [use for use in result.move_routines if not use.pure]
     if wrappers:
         data["_move_routines"] = MOVE_ROUTINES_README
@@ -99,6 +125,10 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     if numbers:
         data["_number_arrays"] = NUMBER_ARRAYS_README
         data["number_arrays"] = {a.name: a.base for a in numbers}
+    flags = [a for a in result.flag_arrays if a.base is not None]
+    if flags:
+        data["_flag_arrays"] = FLAG_ARRAYS_README
+        data["flag_arrays"] = {a.name: a.base for a in flags}
     arrays = [a for a in result.point_arrays if a.base is not None]
     if arrays:
         data["_point_arrays"] = POINT_ARRAYS_README

@@ -1,0 +1,5 @@
+prY1 150
+prY2 200
+prZ 900
+prX 1100
+prSteps 3
