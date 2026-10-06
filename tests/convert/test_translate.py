@@ -196,7 +196,7 @@ def test_speed_heuristic_is_configurable():
 
 
 def test_target_set_at_run_time_becomes_todo_without_orphan_point():
-    result = run("pTmp:=CRobT();\nMoveL pTmp,v100,fine,tool0;", HOME + "VAR robtarget pTmp;")
+    result = run("pTmp:=CRobT(\\TaskName:=\"T_ROB2\");\nMoveL pTmp,v100,fine,tool0;", HOME + "VAR robtarget pTmp;")
     assert result.programs[0].program.positions == []
     assert [line.startswith("!TODO l.") for line in tp_lines(result)] == [True, True]
     assert "measured on the robot at l.4" in todos(result)[1]
@@ -813,6 +813,21 @@ def test_crobt_is_lpos_in_the_frames_it_names():
     assert lines[:4] == ["UFRAME_NUM=1", "UTOOL_NUM=1", "PR[99]=LPOS", "PR[99,3]=PR[99,3]+50"]
 
 
+def test_crobt_without_frames_is_lpos_in_the_frames_selected_when_it_runs():
+    """RAPID reads in the active tool and work object, those of the last move, as LPOS does on the FANUC."""
+    result = run("pTmp:=CRobT();\nMoveL pTmp,v100,fine,tool0;", HOME + "VAR robtarget pTmp;")
+    assert tp_lines(result) == ["PR[99]=LPOS", "UFRAME_NUM=0", "UTOOL_NUM=1", "L PR[99] 100mm/sec FINE"]
+    assert todos(result) == []
+
+
+def test_a_position_read_on_the_robot_says_what_tp_reads_not_that_it_cannot_compute_a_frame():
+    result = run("jNow:=CJointT();\nMoveAbsJ jNow,v100,fine,tool0;", "VAR jointtarget jNow;")
+    assert "jNow measured on the robot when the program runs: CJointT() reads the robot's position when the" \
+           " program runs. TP reads the joints (PR[n]=JPOS), but CrossArm keeps robtargets in position registers," \
+           " not a jointtarget" in todos(result)[0]  # fmt: skip
+    assert "frame" not in todos(result)[0] and "'jNow' is measured on the robot at l.4" in todos(result)[1]
+
+
 def test_a_point_whose_assignment_is_left_todo_is_never_moved_to():
     """Its register was not set: the moves to it stay TODO, with why, not moves to whatever it holds."""
     body = "pPlace:=Offs(pHome,GInput(giX)*Abs(nCol),0,0);\nMoveL pPlace,v100,fine,tGrip;"
@@ -958,6 +973,24 @@ def test_a_call_to_a_routine_of_the_backup_using_files_or_sockets_is_said_so(bod
     found = [n for n in result.notes if n.kind == "TODO" and n.program == result.programs[0].program.name]
     assert [(n.category, n.message.split(" — ")[0]) for n in found] == [(Blocker.NO_TP_EQUIVALENT, message)]
 
+
+def test_a_position_a_camera_gives_over_a_socket_is_said_so_not_a_calibration():
+    """The camera is sent the robot's position (CRobT) and answers the part's: the socket is why."""
+    procs = SOCKETS + """
+FUNC robtarget Detect()
+  VAR robtarget pSeen;
+  pSeen:=CRobT(\\Tool:=tool0\\WObj:=wobj0);
+  SendLine "detect";
+  pSeen.trans.x:=pSeen.trans.x+10;
+  RETURN pSeen;
+ENDFUNC"""
+    result = run("pPart:=Detect();\nMoveL pPart,v100,fine,tool0;", "VAR socketdev sCam;\nVAR robtarget pPart;",
+                 extra_procs=procs)  # fmt: skip
+    found = [n for n in result.notes if n.kind == "TODO" and n.program == result.programs[0].program.name]
+    assert [(n.category, n.message.split(" — ")[0]) for n in found] == [
+        (Blocker.NO_TP_EQUIVALENT, "Detect, through SendLine, calls SocketSend: sockets: TP has no network messaging"),
+        (Blocker.VALUE, "'pPart' is set at l.5 (left TODO)"),
+    ]  # fmt: skip
 
 
 def test_a_call_to_a_routine_using_sockets_is_said_so_before_its_parameters():

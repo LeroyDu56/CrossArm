@@ -17,6 +17,8 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   as a CALL takes no negative number. Measured: the corner is rounded across those lines, same time as constants.
 - A `byte` is kept in a register as a `num` is (`IF nType=3`, `nType:=nType+1`), and a `WaitTime` of a calculation
   (`WaitTime PERIOD-tSpent`) works it out in a register first, then `WAIT R[n]`.
+- `CRobT()` without `\Tool` and `\WObj` in a routine whose moves have not selected frames yet: `PR[k]=LPOS` in the
+  frames selected when it runs, as RAPID reads in the active tool and work object, those of the last move.
 
 ### Report
 - A call to a routine, or a use of data, that no module of the backup declares (a system module, an option, another
@@ -35,6 +37,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - The ERROR handler of such a routine is "RAPID instruction without a TP equivalent" too, saying which
   (`ERROR handler of a routine using SocketSend`), when it tests no error but those of files and sockets
   (`ERR_SOCK_TIMEOUT`, `ERR_FILEOPEN`) and the backup's own errors raised only where files or sockets are used.
+- A position read on the robot that is not kept in a position register (`jNow:=CJointT()`, a `pos` from `CPos()`)
+  says what TP reads and why it stays TODO, instead of a frame TP cannot compute; a position a function of the
+  backup gets over a socket (`pPart:=Detect()`, a camera) is "RAPID instruction without a TP equivalent"; a frame
+  computed from a point read with `CRobT()` is a calibration.
 
 ## 1.3.0 — 2026-10-05
 

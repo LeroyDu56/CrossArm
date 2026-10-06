@@ -2295,7 +2295,7 @@ class _RoutineTranslator:
                     self.todo(stmt, text, Blocker.VALUE)
                 elif (name := self.not_declared(exc)) is not None:
                     self.todo(stmt, str(self.not_in_backup(name, "data")), Blocker.MISSING)
-                elif (getattr(exc, "category", measured) is Blocker.VALUE
+                elif (getattr(exc, "category", measured) in (Blocker.VALUE, Blocker.CALIBRATION)
                       and (through := self.c.routine_use.of(stmt)) is not None):  # fmt: skip
                     self.todo(stmt, through, Blocker.NO_TP_EQUIVALENT)  # the value is a file's or a socket's
                 else:
@@ -2691,7 +2691,9 @@ class _RoutineTranslator:
 
     def robot_position(self, call: n.FuncCall) -> None:
         """CRobT() as LPOS: the TCP in the frames selected, the ones \\Tool and \\WObj name selected first (a
-        selection does not move the robot), else those selected, the tool and work object RAPID reads in."""
+        selection does not move the robot). Without them RAPID reads in the active tool and work object, those
+        of the last move made, whatever the program: the frames that move selected on the FANUC, and still
+        selected when LPOS reads (a selection lasts until another one)."""
         wanted = {"UF": self.active_uf, "UT": self.active_ut}
         for arg in call.args:
             kind = {"TOOL": "UT", "WOBJ": "UF"}.get((arg.name or "").upper())
@@ -2699,11 +2701,8 @@ class _RoutineTranslator:
                 raise Untranslatable(f"CRobT option \\{arg.name}: LPOS reads the TCP in the frames selected",
                                      Blocker.CALIBRATION)  # fmt: skip
             wanted[kind] = self.c.selection(kind, self.c.frame_number(kind, arg.value, self.name, call.span.line))
-        if wanted["UF"] is None or wanted["UT"] is None:
-            raise Untranslatable("CRobT where no move of this program says which frames are selected: give it \\Tool"
-                                 " and \\WObj", Blocker.CALIBRATION)  # fmt: skip
         for kind, name, active in (("UF", "UFRAME", self.active_uf), ("UT", "UTOOL", self.active_ut)):
-            if wanted[kind] != active:
+            if wanted[kind] is not None and wanted[kind] != active:
                 number, bank = wanted[kind]  # type: ignore[misc]
                 if bank is not None:
                     self.emit(f"{name}[{number}]=PR[{bank}]")
@@ -4669,12 +4668,10 @@ class _RoutineTranslator:
         try:
             root, new = self.c.computer.assigned(a)
         except MeasuredAtRunTime as exc:
-            raise Untranslatable(
-                f"{what} measured on the robot when the program runs (a calibration): {exc}. TP reads the position"
-                " (PR[n]=LPOS) but cannot compute a frame from it (no pose product, inverse or angle function):"
-                " set this frame with the FANUC frame setup, or in KAREL", Blocker.CALIBRATION,
-            ) from exc  # fmt: skip
+            raise Untranslatable(self.measured_why(a, root_type, what, exc), Blocker.CALIBRATION) from exc
         except Unresolvable as exc:
+            if is_frame and (measured := self.measured_point(a.value)) is not None:  # a point set to CRobT()
+                raise Untranslatable(self.measured_why(a, root_type, what, measured), Blocker.CALIBRATION) from exc
             raise Untranslatable(f"{what} computed from data only known at run time: {exc}", category) from exc
         line = a.span.line
         remark = ("!" + ascii_text(f"l.{line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip()
@@ -4695,6 +4692,31 @@ class _RoutineTranslator:
                 return
         self.emit(remark)
         self.known[root] = new
+
+    def measured_point(self, value: n.Expr) -> MeasuredAtRunTime | None:
+        """"'pMeas' is measured on the robot at l.4" when the value reads a point kept in a position register
+        that was read on the robot (CRobT, as LPOS), or derives from one; None otherwise."""
+        for node in _nodes(value):
+            if isinstance(node, n.Name) and self.runtime_key(node.name) is not None:
+                turn = self.known.get(f"{node.name.upper()}#ROT")
+                if isinstance(turn, Unknown) and turn.measured:
+                    return MeasuredAtRunTime(f"'{node.name}' {turn.reason}")
+        return None
+
+    def measured_why(self, a: n.Assign, root_type: str, what: str, exc: MeasuredAtRunTime) -> str:
+        """Why a frame or a position read on the robot (computed() of it) stays TODO."""
+        if root_type in _FRAME_TYPES:
+            return (f"{what} measured on the robot when the program runs (a calibration): {exc}. TP reads the position"
+                    " (PR[n]=LPOS) but cannot compute a frame from it (no pose product, inverse or angle function):"
+                    " set this frame with the FANUC frame setup, or in KAREL")  # fmt: skip
+        if not self.c.computer.robot_reads(a.value):  # what derives from a reading left TODO: that one says why
+            return f"{what} measured on the robot when the program runs: {exc}"
+        if root_type == "robtarget":  # a FUNC of the backup reads it, or a component of the point is set
+            kept = "a point is kept in a position register when it is set to CRobT() itself, as a whole"
+        else:
+            kept = f"CrossArm keeps robtargets in position registers, not a {root_type}"
+        reading = "the joints (PR[n]=JPOS)" if root_type in ("jointtarget", "robjoint") else "the TCP (PR[n]=LPOS)"
+        return f"{what} measured on the robot when the program runs: {exc}. TP reads {reading}, but {kept}"
 
     def _fanuc_frame(self, kind: str, new: Typed, target: str) -> Pose:
         """A computed tooldata / wobjdata as the FANUC frame: the tool on the faceplate, uframe x oframe."""
