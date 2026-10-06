@@ -1,0 +1,14 @@
+robot Robot_1
+load MTPROBE.TP loaded
+load MTCOUNT.TP loaded
+load MTTEACH.TP loaded
+load SETUP_FRAMES.TP loaded
+run SETUP_FRAMES done
+run MTPROBE done
+total mtSum 30
+total mtCalls 5
+total mtFlag 100
+printtp MTPROBE done
+printtp MTCOUNT done
+printtp MTTEACH done
+printtp SETUP_FRAMES done

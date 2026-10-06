@@ -15,8 +15,10 @@ Output layout, created next to the input unless an output folder is given:
       <task>/                   one folder per task of a backup (T_ROB1, T_ROB2...)
         *.LS
         crossarm_report.md / .html
+      TP/                       when asked: the .TP of every task, made by FANUC MakeTP (fanuc/maketp.py)
 """
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -30,6 +32,8 @@ from crossarm.convert.motion import M20ID_25, profile_for
 from crossarm.convert.setup import SETUP_NAME, SETUP_NAME_SHORT, build_setup
 from crossarm.convert.translate import ControllerScope, remark_lines
 from crossarm.fanuc.ls_writer import write_ls
+from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
+from crossarm.fanuc.maketp import TpExport, TpRequest, make_tp, report_section
 from crossarm.fanuc.tp import Instruction, Program
 from crossarm.fanuc.usage import RESOURCES, ControllerUsage, is_fanuc_input, read_controller
 from crossarm.licence import LicenceStatus
@@ -51,6 +55,7 @@ class TaskOutput:
     syntax_errors: list[str] = field(default_factory=list)
     report_html: Path | None = None
     result: ConversionResult | None = None  # the full detail, for a summary on screen
+    tp: TpExport | None = None  # the .TP files, when asked for
 
 
 @dataclass
@@ -161,7 +166,8 @@ def _parse_task(task: TaskSource) -> tuple[list[ParseResult], list[str]]:
 
 def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[str]], folder: Path,
                   config: ConversionConfig, signals, routines, source: Source, log: Log, numbers: ControllerScope,
-                  other_tasks: list[str], licence: LicenceStatus) -> TaskOutput:  # fmt: skip
+                  other_tasks: list[str], licence: LicenceStatus,
+                  tp: tuple[TpRequest, Path] | None = None) -> TaskOutput:  # fmt: skip
     out = TaskOutput(task.name, folder)
     parsed, out.syntax_errors = parsed_task
     modules = [p.module for p in parsed if p.module is not None]
@@ -183,7 +189,14 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         numbers.program_names.add(result.setup.program.name)
         (folder / f"{result.setup.program.name}.LS").write_text(write_ls(_marked(result.setup.program, licence)),
                                                              encoding="ascii", newline="")  # fmt: skip
+    if tp is not None:  # binary copies of the programs just written, for a robot that cannot load .LS
+        written = [info.program.name for info in result.programs]
+        if result.setup.program is not None:
+            written.append(result.setup.program.name)
+        out.tp = make_tp([folder / f"{name}.LS" for name in written], tp[1], tp[0], log)
     report = build_report(result, config, [Path(p.path).name for p in parsed], licence)
+    if out.tp is not None:
+        report += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
     if out.syntax_errors:
         report += "\n## Syntax errors (statements skipped by the parser)\n\n"
         report += "\n".join(f"- `{e}`" for e in out.syntax_errors) + "\n"
@@ -201,6 +214,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         + (f", {len(out.syntax_errors)} syntax errors" if out.syntax_errors else "")
         + (f", {fmt_percent(result.coverage.percent)} of {result.coverage.total} instructions converted"
            if result.coverage.total else ""))  # fmt: skip
+    if out.tp is not None:
+        log(f"  {task.name}: {out.tp.summary()}")
     return out
 
 
@@ -212,7 +227,9 @@ def run(
     eio: Path | None = None,
     log: Log = print,
     fanuc: list[Path] | None = None,
+    tp: TpRequest | None = None,
 ) -> RunOutput:
+    """Convert; with `tp`, also write the programs as .TP with FANUC MakeTP (fanuc/maketp.py), in TP/."""
     given, lines = list(paths), []
     user_log = log
 
@@ -271,11 +288,14 @@ def run(
         # A PERS is shared by the tasks: what one task changes, a frame another computes from is not fixed.
         shared.written = Written.of(p.module for modules, _ in parsed for p in modules if p.module is not None)
         tasks = []
+        if tp is not None:
+            log("Binary .TP programs: made by FANUC MakeTP, which loads each program into the robot's virtual "
+                "controller (a cell open in ROBOGUIDE loses its programs of the same names)")  # fmt: skip
         for task, parsed_task in zip(source.tasks, parsed, strict=True):
             task_folder = folder / task.name if source.kind == "backup" or len(source.tasks) > 1 else folder
             others = [name for name in names if name != task.name]
             tasks.append(_convert_task(task, parsed_task, task_folder, config, signals, routines, source, log, shared,
-                                       others, licence))  # fmt: skip
+                                       others, licence, (tp, folder / TP_FOLDER) if tp else None))  # fmt: skip
         log(f"Output: {folder}")
         # What a user can send when a result looks wrong: stays next to the report.
         (folder / "crossarm_log.txt").write_text(log_text(given, fanuc, lines), encoding="utf-8")

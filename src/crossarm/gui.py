@@ -8,6 +8,7 @@ Written for someone who has never seen CrossArm and will not read a log:
   1. ABB program to convert       required: each choice says what CrossArm found in it
   2. FANUC robot it will run on   optional: its numbers already in use are left free
   3. Your numbering               optional: a mapping file edited from a previous run
+  4. Binary .TP programs           optional: FANUC MakeTP (with ROBOGUIDE) writes them for a USB stick
   -> Convert                      nothing starts before the user asks
 
 The right-hand panel first explains what the conversion produces, then shows the
@@ -35,6 +36,7 @@ from crossarm import __version__, pipeline
 from crossarm._icon import PNG as ICON_PNG
 from crossarm.convert import ConversionConfig
 from crossarm.convert.coverage import fmt_percent
+from crossarm.fanuc.maketp import TpRequest, check_robot, find_maketp
 from crossarm.fanuc.usage import is_fanuc_input, read_controller
 from crossarm.licence import LICENCE_FILE, LicenceStatus, licence_folder, read_licence
 from crossarm.licence import current as current_licence
@@ -78,6 +80,13 @@ Getting the numbers right
 The first run numbers everything from 1. To match your cell: give the backup of the FANUC \
 robot in step 2 (its numbers already in use are left free), or edit crossarm_mapping.json, \
 choose it in step 3 and convert again.
+
+A robot that cannot load .LS programs
+Without the ASCII Upload option, a FANUC controller loads only binary .TP programs. If \
+ROBOGUIDE is installed, step 4 has FANUC MakeTP write them too, in a TP folder to copy to \
+a USB stick: choose the ROBOGUIDE robot folder (...\\Robot_1) of a robot like yours, of the \
+same software version. MakeTP loads each program into that robot's virtual controller: \
+with its cell open in ROBOGUIDE it is quicker, but a program of the same name there is removed.
 
 Moves inside routines
 Many backups move through the integrator's own routines (a "MoveL" that also picks a station, \
@@ -165,13 +174,14 @@ class App(tk.Tk):
         self._icons = [tk.PhotoImage(data=ICON_PNG[s]) for s in (64, 32, 16)]  # kept alive
         self.iconphoto(True, *self._icons)
         scale = self.winfo_fpixels("1i") / 96  # 1.25 / 1.5 on scaled Windows displays
-        self.geometry(f"{int(900 * scale)}x{int(640 * scale)}")
-        self.minsize(int(820 * scale), int(600 * scale))
+        self.geometry(f"{int(900 * scale)}x{int(720 * scale)}")
+        self.minsize(int(820 * scale), int(680 * scale))
         self.configure(bg=BODY_BG)
 
         self.source: list[Path] | None = None  # RAPID inputs, FANUC ones set aside
         self.target: list[Path] | None = None  # the FANUC robot the programs will run on
         self.mapping: Path | None = None
+        self.tp_robot: Path | None = None  # .TP files too, made by FANUC MakeTP for this robot
         # Routines making a move and something else: convert their calls as the move? Ticked in the
         # window after a first conversion; overrides the mapping file for this input.
         self.move_choices: dict[str, bool] = {}
@@ -244,6 +254,14 @@ class App(tk.Tk):
         )  # fmt: skip
         self.inputs.append(self.step_mapping.button("Mapping file...", self.pick_mapping))
         self.clear_mapping = self.step_mapping.link("Clear", self.forget_mapping)
+        self.step_tp = Step(
+            left, 4, "Binary .TP programs", "optional",
+            "For a robot without the ASCII Upload option: FANUC MakeTP (installed with ROBOGUIDE) also writes "
+            "the programs as .TP, to load from a USB stick. Choose the ROBOGUIDE robot they are made on.",
+        )  # fmt: skip
+        self.inputs.append(self.step_tp.button("ROBOGUIDE robot folder...", self.pick_tp_robot))
+        self.inputs.append(self.step_tp.button("robot.ini...", self.pick_tp_ini))
+        self.clear_tp = self.step_tp.link("Clear", self.forget_tp_robot)
 
         action = tk.Frame(left, bg=BODY_BG)
         action.pack(fill="x", pady=(4, 0))
@@ -364,7 +382,8 @@ class App(tk.Tk):
                                    text="Convert again" if self.last else "Convert")  # fmt: skip
         for widget in self.inputs:
             widget.config(state="disabled" if self.busy else "normal")
-        for link, value in ((self.clear_target, self.target), (self.clear_mapping, self.mapping)):
+        for link, value in ((self.clear_target, self.target), (self.clear_mapping, self.mapping),
+                            (self.clear_tp, self.tp_robot)):
             if value and not self.busy:
                 link.pack(side="left", padx=(4, 0))
             else:
@@ -382,6 +401,8 @@ class App(tk.Tk):
             self.step_target.show("Not set: numbering starts at 1.")
         if self.mapping is None:
             self.step_mapping.show("Not set: numbers are allocated automatically.")
+        if self.tp_robot is None:
+            self.step_tp.show("Not set: only .LS programs are written.")
 
     def _set_busy(self, text: str) -> None:
         self.busy = True
@@ -486,6 +507,34 @@ class App(tk.Tk):
         self.mapping = None
         self._refresh()
 
+    # -- step 4: binary .TP programs ----------------------------------------------
+
+    def pick_tp_robot(self) -> None:
+        folder = filedialog.askdirectory(title="ROBOGUIDE robot folder (...\\Robot_1)")
+        if folder:
+            self.set_tp_robot(Path(folder))
+
+    def pick_tp_ini(self) -> None:
+        path = filedialog.askopenfilename(title="Robot configuration made by FANUC Setrobot",
+                                          filetypes=[("Robot configuration", "*.ini")])  # fmt: skip
+        if path:
+            self.set_tp_robot(Path(path))
+
+    def set_tp_robot(self, robot: Path) -> None:
+        maketp = find_maketp()
+        problem = "FANUC MakeTP not found (installed with ROBOGUIDE)" if maketp is None else check_robot(robot)
+        if problem:
+            self.step_tp.show(f"Not usable: {problem}.", "fail")
+            return
+        self.tp_robot = robot
+        self.step_tp.show(f"{robot.name}: .TP files written to a TP folder, about 20 s a program "
+                          "(at once while its cell is open in ROBOGUIDE).", "ok")  # fmt: skip
+        self._refresh()
+
+    def forget_tp_robot(self) -> None:
+        self.tp_robot = None
+        self._refresh()
+
     # -- conversion (background thread) -------------------------------------------
 
     def convert(self) -> None:
@@ -494,6 +543,7 @@ class App(tk.Tk):
         self.log_lines.clear()
         self._set_busy("Converting...")
         source, target, mapping = self.source, self.target, self.mapping
+        tp = TpRequest(self.tp_robot) if self.tp_robot else None
         choices = dict(self.move_choices)
 
         def log(line: str) -> None:
@@ -502,7 +552,8 @@ class App(tk.Tk):
         def work():
             config = ConversionConfig.from_mapping_file(mapping) if mapping else ConversionConfig()
             config.move_routines.update(choices)
-            return "done", pipeline.run(source, config=config, log=log, fanuc=list(target) if target else None)
+            return "done", pipeline.run(source, config=config, log=log, fanuc=list(target) if target else None,
+                                        tp=tp)  # fmt: skip
 
         self._run(work, "convert")
 

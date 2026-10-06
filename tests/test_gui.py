@@ -56,7 +56,7 @@ def app(window, monkeypatch):
     for child in window.winfo_children():
         if isinstance(child, tk.Toplevel):
             child.destroy()
-    window.source = window.target = window.mapping = window.last = window.log_window = None
+    window.source = window.target = window.mapping = window.last = window.log_window = window.tp_robot = None
     window.move_choices = {}
     window.busy = window.convert_after_inspection = False
     window.step_source.status.config(text="")
@@ -282,3 +282,23 @@ def test_a_licence_file_is_installed_from_the_window(app, tmp_path, monkeypatch)
     assert any(t.startswith("Installed in") for t in texts(app.licence_dialog))
     app.licence = lic.LicenceStatus(None)  # the window is shared by the module's tests
     app._show_licence_status()
+
+
+def test_the_tp_step_says_at_once_when_maketp_or_the_robot_is_missing(app, tmp_path, monkeypatch):
+    from crossarm import gui
+    from crossarm.fanuc import maketp
+
+    assert app.step_tp.status.cget("text") == "○  Not set: only .LS programs are written."
+    monkeypatch.setattr(gui, "find_maketp", lambda: None)
+    app.set_tp_robot(tmp_path)
+    assert app.tp_robot is None and app.step_tp.status.cget("text").startswith("✖  Not usable: FANUC MakeTP not found")
+    monkeypatch.setattr(gui, "find_maketp", lambda: tmp_path / "maketp.exe")
+    app.set_tp_robot(tmp_path)
+    assert app.tp_robot is None and "nor a robot.ini" in app.step_tp.status.cget("text")
+    (tmp_path / "Robot_1").mkdir()
+    (tmp_path / "Robot_1" / "frvirt.dat").write_text("V10.10270\n", encoding="ascii")
+    app.set_tp_robot(tmp_path / "Robot_1")
+    assert app.tp_robot == tmp_path / "Robot_1" and app.step_tp.status.cget("text").startswith("✔  Robot_1: .TP files")
+    assert maketp.check_robot(tmp_path) == ""
+    app.forget_tp_robot()
+    assert app.tp_robot is None

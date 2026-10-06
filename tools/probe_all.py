@@ -46,6 +46,8 @@ probe, everything else in local/logs/probe_all.log):
     pallet       points worked out at run time (Offs of loop counters, RelTool, CRobT): the poses of the moves written out
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
+    maketp       the .LS made binary .TP by FANUC MakeTP (SETUP_FRAMES too): loaded, run, registers as RAPID
+                 computes them, decoded back by PrintTP to the lines of the .LS (skipped without MakeTP)
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool and user frames 1 to 3 and 9, and
@@ -75,6 +77,7 @@ import make_flag_array_probe
 import make_flag_probe
 import make_interrupt_probe
 import make_io_probe
+import make_maketp_probe
 import make_move_do_probe
 import make_pallet_probe
 import make_param_probe
@@ -228,6 +231,11 @@ def probe_abb() -> str:
         if written != stored.read_text(encoding="utf-8", errors="replace").split():
             return f"FAIL {output} is not {stored.name}"
     return f"{len(ABB_PROBES)} modules write what RobotStudio measured, number for number"
+
+
+def probe_maketp() -> str:
+    verdict = make_maketp_probe.run()
+    return verdict or f"{len(make_maketp_probe.programs())} .TP made by MakeTP: loaded, run, decoded to their .LS lines"
 
 
 def probe_banks() -> str:
@@ -437,7 +445,7 @@ def main() -> int:
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
               "interrupts": probe_interrupts, "params": probe_params, "records": probe_records, "strings": probe_strings,
               "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
-              "pallet": probe_pallet,
+              "pallet": probe_pallet, "maketp": probe_maketp,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     summary = "--summary" in sys.argv

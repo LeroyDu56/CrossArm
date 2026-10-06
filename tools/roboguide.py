@@ -87,6 +87,15 @@ def release(name: str) -> None:
                    check=False)  # fmt: skip
 
 
+def select(name: str = NEUTRAL) -> None:
+    """Select a program on the pendant: the one run last stays selected, and cannot be deleted (MEMO-068), even
+    when Programs.Selected reads empty."""
+    script = (f'$r = New-Object -ComObject FRRobot.FRCRobot\n$r.ConnectEx("{HOST}", $false, 10, 1)\n'
+              f'$r.Programs.Selected = "{name.upper()}"\n"selected"\n')  # fmt: skip
+    subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=60,
+                   check=False)  # fmt: skip
+
+
 def same_as_loaded(path: Path) -> bool:
     """Whether the robot holds this program already, instruction for instruction."""
     try:

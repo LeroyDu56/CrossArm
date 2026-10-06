@@ -3,6 +3,14 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+### Writes
+- Binary `.TP` programs too, for a robot without the ASCII Upload option (`crossarm convert --tp`, `--tp-robot`;
+  step 4 of the window): FANUC MakeTP, installed with ROBOGUIDE, makes them for a ROBOGUIDE robot (or a Setrobot
+  `robot.ini`) into a `TP` folder to copy to a USB stick. Without MakeTP, the report says so and nothing else changes.
+  Measured on ROBOGUIDE: the .TP load and run, and decode back to the lines of their .LS (MakeTP probe).
+
 ## 1.4.0 — 2026-10-06
 
 Routines given their speed and zone, converted, and what is left told apart by cause. A routine taking

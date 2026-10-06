@@ -6,6 +6,7 @@
     crossarm parse FILE [--format pseudo|json] [-o OUT]
     crossarm stats PATH [PATH ...]
     crossarm convert BACKUP|FILES [-o OUTDIR] [--map mapping.json] [--routine NAME ...] [--fanuc TARGET]
+                     [--tp] [--tp-robot ROBOT]
 
 `stats` parses every RAPID file under the given paths and reports what the V1
 parser recognises versus what it leaves as Unsupported — the tool used to decide
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from crossarm import __version__, pipeline
 from crossarm.convert import ConversionConfig
+from crossarm.fanuc.maketp import TpRequest
 from crossarm.rapid import RAPID_SUFFIXES, parse_file
 from crossarm.rapid import nodes as n
 from crossarm.rapid.to_json import dumps, result_to_data
@@ -72,6 +74,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="the target controller's existing programs (backup folder, .zip or .LS files, repeatable): "
              "the frame, register and I/O numbers they use are left free. Also detected when simply "
              "given among the paths",
+    )  # fmt: skip
+    p_conv.add_argument(
+        "--tp", action="store_true",
+        help="also write the programs as binary .TP (folder TP), for a robot without the ASCII Upload option: "
+             "made by FANUC MakeTP (maketp.exe, installed with ROBOGUIDE), when it is there",
+    )  # fmt: skip
+    p_conv.add_argument(
+        "--tp-robot", type=Path, metavar="ROBOT",
+        help="the robot MakeTP makes the .TP for (implies --tp): a ROBOGUIDE robot folder (...\\Robot_1) "
+             "or a robot.ini made by FANUC Setrobot; default: robot.ini in the current folder",
     )  # fmt: skip
     p_conv.set_defaults(handler=_cmd_convert)
     return parser
@@ -145,7 +157,8 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         print(f"CrossArm: invalid mapping file {args.map}: {exc}", file=sys.stderr)
         return 2
     try:
-        output = pipeline.run(args.paths, args.output, config, args.routine, args.eio, fanuc=args.fanuc)
+        tp = TpRequest(args.tp_robot) if args.tp or args.tp_robot else None
+        output = pipeline.run(args.paths, args.output, config, args.routine, args.eio, fanuc=args.fanuc, tp=tp)
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         print(f"CrossArm: {exc}", file=sys.stderr)
         return 2

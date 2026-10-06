@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from crossarm.convert.translate import Blocker
+from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
 from crossarm.fanuc.usage import ControllerUsage
 from crossarm.pipeline import Inspection, RunOutput
 
@@ -188,6 +189,18 @@ def summarize(run: RunOutput) -> Summary:
         attention.append((GOOD, f"Numbers already used on the FANUC robot were left free ({run.controller.summary()})."))
     elif run.programs:
         attention.append((INFO, "No FANUC backup was given: numbering starts at 1 and may clash with the robot's own."))
+    # 6. The binary .TP copies, when asked for.
+    exports = [t.tp for t in run.tasks if t.tp is not None]
+    problem = next((e.problem for e in exports if e.problem), "")
+    refused = sum(len(e.refused) for e in exports)
+    made = sum(len(e.made) for e in exports)
+    if problem:
+        attention.append((WARN, f"No .TP written: {problem}. The .LS programs are written as usual."))
+    elif refused:
+        attention.append((WARN, f"MakeTP refused {plural(refused, 'program')}: see the report; load their .LS instead."))
+    if made:
+        text = f"{plural(made, 'program')} also written as .TP in the {TP_FOLDER} folder, ready to copy to a USB stick."
+        attention.append((GOOD, text))
     return summary
 
 
