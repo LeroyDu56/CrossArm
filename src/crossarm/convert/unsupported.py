@@ -94,7 +94,7 @@ RAPID_DATA = frozenset({"ERRNO", "INTNO", "ROB_ID", "PI"})
 
 def no_tp_equivalent(stmt: n.Stmt, routines: Iterable[str], type_of) -> str | None:
     """'Write: files and serial channels: ...' when the statement calls an instruction or a function of RAPID
-    TP has nothing for, or sets or declares data of such a type; None otherwise. The backup's own routines of
+    TP has nothing for, or sets, declares or reads data of such a type; None otherwise. The backup's own routines of
     the same name are not RAPID's."""
     names: list[str] = [stmt.name] if isinstance(stmt, n.ProcCall) else []
     names += [node.name for node in nodes(stmt) if isinstance(node, n.FuncCall)]
@@ -106,6 +106,9 @@ def no_tp_equivalent(stmt: n.Stmt, routines: Iterable[str], type_of) -> str | No
         typed = type_of(root[0])
     if typed is not None and typed.upper() in NO_TP:
         return f"{typed} data: {NO_TP[typed.upper()]}"
+    for node in nodes(stmt):  # IF answer=resCancel: what a UIMessageBox or SocketGetStatus gave
+        if isinstance(node, n.Name) and (typed := type_of(node.name)) is not None and typed.upper() in NO_TP:
+            return f"{node.name} ({typed} data): {NO_TP[typed.upper()]}"
     return None
 
 

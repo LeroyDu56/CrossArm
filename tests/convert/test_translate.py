@@ -249,6 +249,25 @@ def test_waittime_on_a_variable_uses_the_register():
     assert tp_lines(run("WaitTime tDelay;", "PERS num tDelay:=2;")) == ["WAIT R[1]"]
 
 
+def test_waittime_on_a_calculation_works_it_out_first():
+    lines = tp_lines(run("WaitTime PERIOD-tSpent;", "CONST num PERIOD:=0.5;\nVAR num tSpent;"))
+    assert lines == ["R[1:Calc1]=.5-R[2]", "WAIT R[1:Calc1]"]
+
+
+def test_a_byte_is_kept_in_a_register_as_a_num():
+    result = run("nType:=nType+1;\nIF nType=3 Stop;", "VAR byte nType:=2;")
+    assert tp_lines(result) == ["R[1:nType]=R[1:nType]+1", "IF (R[1:nType]=3) THEN", "PAUSE", "ENDIF"]
+    assert todos(result) == []
+
+
+def test_a_position_compared_as_a_whole_is_a_condition_todo():
+    empty = "[[0,0,0],[1,0,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]]"
+    result = run("IF pPick=pEmpty Stop;", f"VAR robtarget pPick;\nCONST robtarget pEmpty:={empty};")
+    found = [n for n in result.notes if n.kind == "TODO"]
+    assert [n.category for n in found] == [Blocker.CONDITION]
+    assert found[0].message.startswith("'pPick' is a robtarget: TP compares and calculates numbers")
+
+
 def test_calls_stop_return_exit():
     result = run("Sub;\nStop;\nRETURN;\nEXIT;", extra_procs="PROC Sub()\nENDPROC")
     assert tp_lines(result) == ["CALL SUB", "PAUSE", "END", "ABORT"]
@@ -896,6 +915,8 @@ def test_a_constant_below_one_is_assigned_without_its_zero():
     ("BookErrNo ERR_GRIP;", "VAR errnum ERR_GRIP:=-1;", "BookErrNo: the ABB event log"),
     ('ErrWrite\\W,"Gripper","Part lost";', "", "ErrWrite: the ABB event log"),
     ("WZLimSup\\Temp,wzZone,shVolume;", "VAR wztemporary wzZone;\nVAR shapedata shVolume;", "WZLimSup: world zone"),
+    ("IF sState=SOCKET_CONNECTED nOk:=1;", "VAR socketstatus sState;\nVAR num nOk;", "sState (socketstatus data): sockets"),
+    ("WHILE answer<>4 DO\nStop;\nENDWHILE", "VAR btnres answer:=-1;", "answer (btnres data): operator dialog"),
 ])  # fmt: skip
 def test_rapid_instructions_without_a_tp_equivalent_are_said_so(body, data, start):
     result = run(body, data)

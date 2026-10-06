@@ -123,6 +123,8 @@ NO_LOAD_KG = 0.001  # RAPID's load0 / tool0 placeholder mass: no real payload de
 
 _NEGATED = {"=": "<>", "<>": "=", "<": ">=", ">=": "<", ">": "<=", "<=": ">"}
 _ARITHMETIC = {"+", "-", "*", "/", "DIV", "MOD"}
+# The data kept in a register: a byte is a whole number from 0 to 255, which R[n] holds as it holds a num.
+_NUMBERS = ("num", "byte")
 _SIGNAL_PREFIX = re.compile(r"^[dD][iIoO](?=[_0-9A-Z])")
 
 
@@ -2361,7 +2363,7 @@ class _RoutineTranslator:
                 if options:
                     self.warn(s, f"WaitTime options ignored: {' '.join(a.name or '' for a in options)}",
                               Blocker.OPTIONS_IGNORED)
-                value = self.numeric(seconds)
+                value = self.single(seconds, bare=True)
                 self.emit(f"WAIT {value}" if value.startswith(("R[", "AR[")) else f"WAIT {fmt_seconds(float(value))}(sec)")
             case n.ProcCall():
                 self.call(s)
@@ -2420,7 +2422,7 @@ class _RoutineTranslator:
         if (key := self.runtime_key(decl.name)) is not None:  # set when the routine starts, as RAPID does
             self.runtime_assign(n.Assign(decl.span, n.Name(decl.span, decl.name), decl.init), key, (key,))
             return
-        if decl.type_name.lower() == "num":
+        if decl.type_name.lower() in _NUMBERS:
             self.emit(f"{self.c.written_register(decl.name)}={operand(self.numeric(decl.init))}")
         elif decl.type_name.lower() == "bool":
             self.set_flag(lambda: self.c.flag(decl.name), decl.init)
@@ -3716,7 +3718,7 @@ class _RoutineTranslator:
             if key in self.copies:
                 return self.copies[key]
             decl = self.c.symbols.get(expr.name)
-            if key not in self.c.parameters and decl is not None and decl.type_name.lower() == "num" \
+            if key not in self.c.parameters and decl is not None and decl.type_name.lower() in _NUMBERS \
                     and decl.storage != "CONST" and not decl.dims:
                 return self.c.written_register(expr.name)
         raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' is passed by reference"
@@ -4062,7 +4064,7 @@ class _RoutineTranslator:
         type_name = self.c.symbols.type_of(a.target.name)
         if a.target.name.upper() in self.loop_vars:
             raise Untranslatable("assignment to a FOR loop variable", Blocker.VALUE)
-        if type_name == "num":
+        if type_name in _NUMBERS:
             self.emit(f"{self.c.written_register(a.target.name)}={self.arithmetic(a.value)}")
         elif type_name == "string" and (register := self.text_register(a.target)) is not None:
             self.load_text(a.value, register, (1, 2))
@@ -4402,7 +4404,7 @@ class _RoutineTranslator:
                 if not whole or any(a.name is not None for a in call.args):
                     raise Untranslatable(f"{call.name} with decimals: TP writes a number held as a real with six"
                                          " decimals, whatever RAPID asks for", Blocker.VALUE)  # fmt: skip
-            elif isinstance(value, n.Name) and (kind := self.c.symbols.type_of(value.name)) not in (None, "num"):
+            elif isinstance(value, n.Name) and (kind := self.c.symbols.type_of(value.name)) not in (None, *_NUMBERS):
                 raise Untranslatable(f"{call.name} of a {kind}: TP writes numbers only", Blocker.VALUE)
             try:
                 whole_value = self.c.evaluator.constant_number(value)
@@ -4765,7 +4767,7 @@ class _RoutineTranslator:
             if self.args and self.args.kind(key) == "num":
                 return self.args.register(key)  # type: ignore[return-value]
             decl = self.c.symbols.get(expr.name)
-            if decl is not None and decl.type_name.lower() == "num" and decl.storage != "CONST":
+            if decl is not None and decl.type_name.lower() in _NUMBERS and decl.storage != "CONST":
                 return self.c.register(expr.name)
             # A group input read by its name, as RAPID allows: IF giCode>0 is IF GInput(giCode)>0.
             eio = self.c.eio.get(key)
@@ -4788,6 +4790,10 @@ class _RoutineTranslator:
                     found = None
                 if isinstance(found, int | float) and not isinstance(found, bool):
                     return register_value(float(found))
+            kind = self.c.symbols.type_of(expr.name) if isinstance(expr, n.Name) else None
+            if kind in _POSITION_TYPES | _FRAME_TYPES or self.c.records.is_record(kind):
+                raise Untranslatable(f"'{expr.name}' is a {kind}: TP compares and calculates numbers, not a"  # type: ignore[union-attr]
+                                     f" whole {kind}", Blocker.CONDITION) from exc  # fmt: skip
             raise Untranslatable(f"'{format_expr(expr)}' is not a simple numeric value ({exc})", Blocker.VALUE) from exc
 
     def interrupt_value(self, expr: n.Name) -> str | None:

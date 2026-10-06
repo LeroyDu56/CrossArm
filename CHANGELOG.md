@@ -15,11 +15,16 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - `fine` given for such a zone: when every call gives it, the routine's moves through the zone are FINE; when only
   some do, each is written both ways (`IF R[3]>100,JMP LBL[1]`, CNT, else FINE) and the call passes 101 for fine,
   as a CALL takes no negative number. Measured: the corner is rounded across those lines, same time as constants.
+- A `byte` is kept in a register as a `num` is (`IF nType=3`, `nType:=nType+1`), and a `WaitTime` of a calculation
+  (`WaitTime PERIOD-tSpent`) works it out in a register first, then `WAIT R[n]`.
 
 ### Report
 - A call to a routine, or a use of data, that no module of the backup declares (a system module, an option, another
   task) is a cause of its own, "routine or data not in the backup", saying what to add, instead of a routine call
   or a value CrossArm could not convert. RAPID's own instructions and data, and a routine's parameters, are not.
+- A statement reading what an operator dialog or a socket gave (`IF answer=resCancel`, `IF status=SOCKET_CONNECTED`)
+  is "RAPID instruction without a TP equivalent", with why, instead of a value CrossArm could not work out; a
+  position or a record compared as a whole (`IF pPick=pEmpty`) is a condition TP cannot test.
 
 ## 1.3.0 — 2026-10-05
 

@@ -263,11 +263,11 @@ class Strings:
         table: dict[str, bool] = {}
         for module in self.modules:
             for decl in module.declarations:
-                if decl.type_name.lower() == "num" and not decl.dims:
+                if decl.type_name.lower() in ("num", "byte") and not decl.dims:
                     table[decl.name.upper()] = self._initial_integral(decl)
             for routine in module.routines:
                 for stmt in routine.body:
-                    if isinstance(stmt, n.DataDecl) and stmt.type_name.lower() == "num" and not stmt.dims:
+                    if isinstance(stmt, n.DataDecl) and stmt.type_name.lower() in ("num", "byte") and not stmt.dims:
                         table[f"{routine.name.upper()}.{stmt.name.upper()}"] = self._initial_integral(stmt)
         for key in other:
             table[key] = False
