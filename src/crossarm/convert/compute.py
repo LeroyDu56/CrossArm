@@ -37,6 +37,7 @@ from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.values import (
     PREDEFINED_SPEEDS,
     PREDEFINED_ZONES,
+    NotInBackup,
     Symbols,
     Unresolvable,
     predefined_value,
@@ -597,7 +598,7 @@ class Computer:
         if decl is None:
             if key in PREDEFINED:
                 return PREDEFINED[key]
-            raise Unresolvable(f"'{name}' is not declared in the converted modules")
+            raise NotInBackup(name)
         if decl.storage != "CONST":
             where = self.written.where(chain, decl.type_name.lower())
             if where is not None:
@@ -858,7 +859,7 @@ class Computer:
         if isinstance(known, Unknown) and len(chain) > 1:  # the rest of it is not known either
             raise known.error(root_expr.name)
         if decl is None and not isinstance(known, Typed):
-            raise Unresolvable(f"'{root_expr.name}' is not declared in the converted modules")
+            raise NotInBackup(root_expr.name)
         new = self.value(assign.value)
         if len(chain) == 1:
             type_name = decl.type_name.lower() if decl else known.type  # type: ignore[union-attr]

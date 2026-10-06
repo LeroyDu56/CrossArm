@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, fine_given, signature
 from crossarm.convert.compute import (
     LAYOUTS,
+    PREDEFINED,
     Computer,
     Effects,
     MeasuredAtRunTime,
@@ -76,6 +77,7 @@ from crossarm.convert.values import (
     Frame,
     JointTarget,
     Load,
+    NotInBackup,
     RobTarget,
     Symbols,
     Unresolvable,
@@ -132,6 +134,7 @@ class Blocker:
     """
 
     CALL_ARGS = "routine call with arguments"
+    MISSING = "routine or data not in the backup"
     MOVE_ROUTINE = "move made inside a routine of the backup"
     MOVE_ROUTINE_ASSUMED = "routine converted as the move it makes"
     SAVED_FRAME = "frame value as saved in the backup"
@@ -2279,6 +2282,8 @@ class _RoutineTranslator:
                     self.todo(stmt, none, Blocker.NO_TP_EQUIVALENT)
                 elif text is not None:
                     self.todo(stmt, text, Blocker.VALUE)
+                elif (name := self.not_declared(exc)) is not None:
+                    self.todo(stmt, str(self.not_in_backup(name, "data")), Blocker.MISSING)
                 else:
                     self.todo(stmt, str(exc), getattr(exc, "category", measured))
             except Exception as exc:  # noqa: BLE001 - one statement must never cost the whole backup
@@ -2292,6 +2297,42 @@ class _RoutineTranslator:
             finally:
                 self.c.deferring(deferred)
                 self.current = outer
+
+    def not_declared(self, exc: BaseException) -> str | None:
+        """The data a statement failed on because no module of the backup declares it, if that is why: the
+        lookup that failed may be what the error was raised from (a value given up on for that reason)."""
+        seen: BaseException | None = exc
+        for _ in range(8):
+            if seen is None:
+                return None
+            if isinstance(seen, NotInBackup) and self.absent(seen.name):
+                return seen.name
+            seen = seen.__cause__ or seen.__context__
+        return None
+
+    def absent(self, name: str) -> bool:
+        """No module of the backup declares this data, and it is neither the routine's own, nor RAPID's, nor a
+        signal CrossArm knows of."""
+        key = name.upper()
+        params = parse_params(self.routine.params)
+        if params is None and self.routine.params.strip():
+            return False  # its parameters cannot be read: it may be one
+        if self.c.symbols.get(name) is not None or key in self.local_names or key in self.loop_vars:
+            return False
+        if any(p.name.upper() == key for group in params or [] for p in group):
+            return False
+        c = self.c
+        return not (key in PREDEFINED or key in _RAPID_DATA or key.startswith("ERR_") or key in c.eio
+                    or key in c.config.digital_inputs or key in c.config.digital_outputs or key in c.di_names
+                    or key in c.do_names or _SIGNAL_PREFIX.match(name) or key in c.procs
+                    or key in c.computer.functions)  # fmt: skip
+
+    def not_in_backup(self, name: str, what: str) -> "Untranslatable":
+        """What to add to the backup for a routine or data none of its modules declares."""
+        text = f"{what} '{name}' is not in the backup: add the module that declares it (system module, option, other task)"
+        if what == "data" and not self.c.eio:
+            text += ", or EIO.cfg if it is a signal"
+        return Untranslatable(text, Blocker.MISSING)
 
     def _rollback(self, checkpoint: tuple) -> None:
         """Drop what a statement emitted before failing: its lines, the P[n] it created, the frames it selected."""
@@ -3245,6 +3286,8 @@ class _RoutineTranslator:
             self.call_with_args(call, self.c.signatures[name])  # type: ignore[arg-type]
         elif isinstance(self.c.signatures.get(name), str):
             raise Untranslatable(f"{call.name} is not converted: {self.c.signatures[name]}", Blocker.CALL_ARGS)
+        elif name not in self.c.procs and name not in self.c.computer.functions and name not in _RAPID_INSTRUCTIONS:
+            raise self.not_in_backup(call.name, "routine")
         elif call.args:
             raise Untranslatable(f"call to {call.name} with arguments has no mapping", Blocker.CALL_ARGS)
         elif name in self.c.program_names:
@@ -4025,6 +4068,8 @@ class _RoutineTranslator:
             return
         elif type_name == "bool":
             self.set_flag(lambda: self.c.flag(a.target.name), a.value)  # type: ignore[union-attr]
+        elif type_name is None and self.absent(a.target.name):
+            raise self.not_in_backup(a.target.name, "data")
         else:
             raise Untranslatable(f"assignment of {type_name or 'undeclared data'} '{a.target.name}'",
                                  _type_blocker(type_name))  # fmt: skip
@@ -5086,6 +5131,52 @@ _NO_TP_FAMILIES = {
     ),
 }  # fmt: skip
 _NO_TP = {name: why for why, names in _NO_TP_FAMILIES.items() for name in names}
+
+# RAPID's own instructions (RobotWare 6 instruction reference): one the backup does not declare is not missing from
+# it, CrossArm does not convert it. Any other routine nobody declares comes from a module or an option the backup
+# does not hold.
+_RAPID_INSTRUCTIONS = frozenset({
+    "ACCSET", "ACTEVENTBUFFER", "ACTUNIT", "ADD", "ALIASCAMERA", "ALIASIO", "ALIASIORESET", "BITCLEAR", "BITSET",
+    "BOOKERRNO", "BREAK", "CALLBYVAR", "CAMFLUSH", "CAMGETPARAMETER", "CAMGETRESULT", "CAMLOADJOB", "CAMREQIMAGE",
+    "CAMSETEXPOSURE", "CAMSETPARAMETER", "CAMSETPROGRAMMODE", "CAMSETRUNMODE", "CAMSTARTLOADJOB", "CAMWAITLOADJOB",
+    "CANCELLOAD", "CHECKPROGREF", "CIRPATHMODE", "CLEAR", "CLEARIOBUFF", "CLEARPATH", "CLEARRAWBYTES", "CLKRESET",
+    "CLKSTART", "CLKSTOP", "CLOSE", "CLOSEDIR", "CONFJ", "CONFL", "CONNECT", "COPYFILE", "COPYRAWBYTES", "CORRCLEAR",
+    "CORRCON", "CORRDISCON", "CORRWRITE", "DEACTEVENTBUFFER", "DEACTUNIT", "DECR", "DITHERACT", "DITHERDEACT",
+    "DROPSENSOR", "DROPWOBJ", "EGMACTJOINT", "EGMACTMOVE", "EGMACTPOSE", "EGMGETID", "EGMMOVEC", "EGMMOVEL",
+    "EGMRESET", "EGMRUNJOINT", "EGMRUNPOSE", "EGMSETUPAI", "EGMSETUPAO", "EGMSETUPGI", "EGMSETUPLTAPP", "EGMSETUPUC",
+    "EGMSTOP", "EGMSTREAMSTART", "EGMSTREAMSTOP", "EOFFSOFF", "EOFFSON", "EOFFSSET", "ERASEMODULE", "ERRLOG",
+    "ERRRAISE", "ERRWRITE", "EXIT", "EXITCYCLE", "FRICIDEVALUATE", "FRICIDINIT", "FRICIDSETFRICLEVELS", "GETDATAVAL",
+    "GETJOINTDATA", "GETSYSDATA", "GETTRAPDATA", "GRIPLOAD", "HOLLOWWRISTRESET", "IDELETE", "IDISABLE", "IENABLE",
+    "IERROR", "INCR", "INDAMOVE", "INDCMOVE", "INDDMOVE", "INDRESET", "INDRMOVE", "INVERTDO", "IOBUSSTART",
+    "IOBUSSTATE", "IODISABLE", "IOENABLE", "IPERS", "IRMQMESSAGE", "ISIGNALAI", "ISIGNALAO", "ISIGNALDI", "ISIGNALDO",
+    "ISIGNALGI", "ISIGNALGO", "ISLEEP", "ITIMER", "IVARVALUE", "IWATCH", "LOAD", "LOADID", "MAKEDIR", "MANLOADIDPROC",
+    "MECHUNITLOAD", "MOTIONPROCESSMODESET", "MOTIONSUP", "MOVEABSJ", "MOVEC", "MOVECDO", "MOVECSYNC", "MOVEEXTJ",
+    "MOVEJ", "MOVEJDO", "MOVEJSYNC", "MOVEL", "MOVELDO", "MOVELSYNC", "MTOOLROTCALIB", "MTOOLTCPCALIB", "OPEN",
+    "OPENDIR", "PACKDNHEADER", "PACKRAWBYTES", "PATHACCLIM", "PATHRECMOVEBWD", "PATHRECMOVEFWD", "PATHRECSTART",
+    "PATHRECSTOP", "PATHRESOL", "PDISPOFF", "PDISPON", "PDISPSET", "PROCERRRECOVERY", "PULSEDO", "RAISETOUSER",
+    "READANYBIN", "READBLOCK", "READCFGDATA", "READERRDATA", "READRAWBYTES", "REMOVEALLCYCLICBOOL",
+    "REMOVECYCLICBOOL", "REMOVEDIR", "REMOVEFILE", "RENAMEFILE", "RESET", "RESETPPMOVED", "RESETRETRYCOUNT",
+    "RESTOPATH", "REWIND", "RMQEMPTYQUEUE", "RMQFINDSLOT", "RMQGETMESSAGE", "RMQGETMSGDATA", "RMQGETMSGHEADER",
+    "RMQREADWAIT", "RMQSENDMESSAGE", "RMQSENDWAIT", "SAVE", "SAVECFGDATA", "SCWRITE", "SEARCHC", "SEARCHEXTJ",
+    "SEARCHJ", "SEARCHL", "SENDEVICE", "SET", "SETAO", "SETALLDATAVAL", "SETDATASEARCH", "SETDATAVAL", "SETDO",
+    "SETGO", "SETLEADTHROUGH", "SETSYSDATA", "SINGAREA", "SKIPWARN", "SOCKETACCEPT", "SOCKETBIND", "SOCKETCLOSE",
+    "SOCKETCONNECT", "SOCKETCREATE", "SOCKETLISTEN", "SOCKETRECEIVE", "SOCKETRECEIVEFROM", "SOCKETSEND",
+    "SOCKETSENDTO", "SOFTACT", "SOFTDEACT", "SPEEDLIMAXIS", "SPEEDLIMCHECKPOINT", "SPEEDREFRESH", "SPYSTART",
+    "SPYSTOP", "STARTLOAD", "STARTMOVE", "STARTMOVERETRY", "STCALIB", "STCLOSE", "STEPBWDPATH", "STINDGUN",
+    "STINDGUNRESET", "STOOLROTCALIB", "STOOLTCPCALIB", "STOP", "STOPEN", "STOPMOVE", "STOPMOVERESET", "STOREPATH",
+    "STTUNE", "STTUNERESET", "SUPSYNCSENSOROFF", "SUPSYNCSENSORON", "SYNCMOVEOFF", "SYNCMOVEON", "SYNCMOVERESUME",
+    "SYNCMOVESUSPEND", "SYNCMOVEUNDO", "SYNCTOSENSOR", "SYSTEMSTOPACTION", "TESTSIGNDEFINE", "TESTSIGNRESET",
+    "TEXTTABINSTALL", "TPERASE", "TPREADDNUM", "TPREADFK", "TPREADNUM", "TPSHOW", "TPWRITE", "TRIGGC", "TRIGGCHECKIO",
+    "TRIGGDATACOPY", "TRIGGDATARESET", "TRIGGEQUIP", "TRIGGINT", "TRIGGIO", "TRIGGJ", "TRIGGJIOS", "TRIGGL",
+    "TRIGGLIOS", "TRIGGRAMPAO", "TRIGGSPEED", "TRIGGSTOPPROC", "TRYINT", "TUNERESET", "TUNESERVO", "UIMSGBOX",
+    "UISHOW", "UNLOAD", "UNPACKRAWBYTES", "VELSET", "WAITAI", "WAITAO", "WAITDI", "WAITDO", "WAITGI", "WAITGO",
+    "WAITLOAD", "WAITROB", "WAITSENSOR", "WAITSYNCTASK", "WAITTESTANDSET", "WAITTIME", "WAITUNTIL", "WAITWOBJ",
+    "WARMSTART", "WORLDACCLIM", "WRITE", "WRITEANYBIN", "WRITEBIN", "WRITEBLOCK", "WRITECFGDATA", "WRITERAWBYTES",
+    "WRITESTRBIN", "WRITEVAR", "WZBOXDEF", "WZCYLDEF", "WZDISABLE", "WZDOSET", "WZENABLE", "WZFREE", "WZHOMEJOINTDEF",
+    "WZLIMJOINTDEF", "WZLIMSUP", "WZSPHDEF",
+}) | _NO_TP.keys()  # fmt: skip
+# RAPID's own data (with the ERR_ error numbers): no module declares it, it is not missing from the backup.
+_RAPID_DATA = frozenset({"ERRNO", "INTNO", "ROB_ID", "PI"})
 
 
 def _no_tp_equivalent(stmt: n.Stmt, routines: Iterable[str], type_of) -> str | None:

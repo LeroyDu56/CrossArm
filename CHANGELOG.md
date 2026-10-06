@@ -16,6 +16,11 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   some do, each is written both ways (`IF R[3]>100,JMP LBL[1]`, CNT, else FINE) and the call passes 101 for fine,
   as a CALL takes no negative number. Measured: the corner is rounded across those lines, same time as constants.
 
+### Report
+- A call to a routine, or a use of data, that no module of the backup declares (a system module, an option, another
+  task) is a cause of its own, "routine or data not in the backup", saying what to add, instead of a routine call
+  or a value CrossArm could not convert. RAPID's own instructions and data, and a routine's parameters, are not.
+
 ## 1.3.0 — 2026-10-05
 
 More of the RAPID that cells keep their state in, converted: records, strings, arrays the programs

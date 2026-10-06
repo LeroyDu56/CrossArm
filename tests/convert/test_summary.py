@@ -28,7 +28,8 @@ def config(**kwargs) -> ConversionConfig:
 
 
 def test_todos_of_the_same_cause_are_grouped_under_one_blocker():
-    result = run("Access_A 1;\nAccess_B 2;\nAccess_C 3;\nGOTO done;", extra_procs="PROC Access_A(dnum x)\nENDPROC")
+    procs = "\n".join(f"PROC Access_{c}(dnum x)\nENDPROC" for c in "ABC")
+    result = run("Access_A 1;\nAccess_B 2;\nAccess_C 3;\nGOTO done;", extra_procs=procs)
     assert result.todo_count == 4
     categories = {category: count for category, count, _ in result.grouped("TODO")}
     assert categories[Blocker.CALL_ARGS] == 3
@@ -38,8 +39,8 @@ def test_todos_of_the_same_cause_are_grouped_under_one_blocker():
 def test_blockers_are_ranked_and_carry_their_most_common_case():
     result = run("Access_A 1;\nAccess_A 2;\nGOTO done;")
     category, count, example = result.grouped("TODO")[0]
-    assert (category, count) == (Blocker.CALL_ARGS, 2)
-    assert example == "call to Access_A with arguments has no mapping"
+    assert (category, count) == (Blocker.MISSING, 2)
+    assert example.startswith("routine 'Access_A' is not in the backup: add the module that declares it")
     assert "`" not in example  # the quoted RAPID line is stripped: it differs on every line
 
 
@@ -153,7 +154,7 @@ def test_the_summary_ranks_blockers_by_share():
     text = build_report(result, config(), ["m.mod"])
     table = text[text.index("### What is blocking") : text.index("## Programs")]
     rows = [line for line in table.splitlines() if line.startswith("| ")][1:]  # [0] is the header
-    assert rows[0].startswith(f"| {Blocker.CALL_ARGS} | 3 | 75 % |")
+    assert rows[0].startswith(f"| {Blocker.MISSING} | 3 | 75 % |")
     assert rows[1].startswith(f"| {Blocker.rapid('GOTO')} | 1 | 25 % |")
 
 

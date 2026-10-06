@@ -23,6 +23,15 @@ class Unresolvable(Exception):
     """The value is not known at conversion time."""
 
 
+class NotInBackup(Unresolvable):
+    """No module of the backup declares this data: a system module, an option or another task does, or it is
+    not data at all (a signal, a name of RAPID). The translator tells which (Converter: not_declared)."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"'{name}' is not declared in the converted modules")
+        self.name = name
+
+
 def unit_quaternion(q: Any, what: str) -> tuple[float, float, float, float]:
     """An orientation a move or a frame can use: a unit quaternion (Pose normalises the rounding of a backup).
 
@@ -247,7 +256,7 @@ class Evaluator:
     def _initial_value(self, name: str) -> n.Expr:
         decl = self.symbols.get(name)
         if decl is None:
-            raise Unresolvable(f"'{name}' is not declared in the converted modules")
+            raise NotInBackup(name)
         if self._constants_only and decl.storage != "CONST":
             raise Unresolvable(f"'{name}' is a {decl.storage}, not a constant")
         if decl.init is None:

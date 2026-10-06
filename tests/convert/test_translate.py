@@ -255,9 +255,34 @@ def test_calls_stop_return_exit():
 
 
 def test_call_with_arguments_is_a_todo():
-    result = run("Grip 3;")
-    assert tp_lines(result) == ["!TODO l.4 Grip 3"]
+    result = run("SpeedRefresh 50;")  # RAPID's own, not converted
+    assert tp_lines(result) == ["!TODO l.4 SpeedRefresh 50"]
     assert "with arguments" in todos(result)[0]
+    assert [note.category for note in result.notes if note.kind == "TODO"] == [Blocker.CALL_ARGS]
+
+
+def test_a_routine_or_data_the_backup_does_not_declare_says_what_to_add():
+    result = run("Grip 3;\nOpenGripper;\nnCount:=nMissing+1;\nbDone:=TRUE;", data="VAR num nCount;")
+    assert tp_lines(result) == ["!TODO l.4 Grip 3", "!TODO l.5 OpenGripper", "!TODO l.6 nCount:=nMissing+1",
+                                "!TODO l.7 bDone:=TRUE"]  # fmt: skip
+    assert [note.category for note in result.notes if note.kind == "TODO"] == [Blocker.MISSING] * 4
+    add = "is not in the backup: add the module that declares it (system module, option, other task)"
+    assert [message.split(" — ")[0] for message in todos(result)] == [
+        f"routine 'Grip' {add}",
+        f"routine 'OpenGripper' {add}",
+        f"data 'nMissing' {add}, or EIO.cfg if it is a signal",  # no EIO.cfg in the backup: it may be one
+        f"data 'bDone' {add}, or EIO.cfg if it is a signal",
+    ]
+
+
+def test_a_parameter_or_rapid_data_is_not_missing_from_the_backup():
+    source = ("MODULE M\nVAR num nCount;\nPROC main()\n  Sub 2;\nENDPROC\nPROC Sub(num pTime)\n"
+              "  IF ERRNO=ERR_WAIT_MAXTIME nCount:=0;\n  PulseDO \\PLength:=pTime, do1;\n  nCount:=nGone;\n"
+              "ENDPROC\nENDMODULE\n")  # fmt: skip
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    categories = [note.category for note in result.notes if note.kind == "TODO"]
+    # ERRNO is RAPID's, pTime the routine's own: what CrossArm cannot do yet; nGone is nobody's.
+    assert categories == [Blocker.VALUE, Blocker.VALUE, Blocker.MISSING]
 
 
 def test_tpwrite_fixed_text_becomes_message():

@@ -170,7 +170,7 @@ def test_the_window_says_how_many_moves_wait_on_one_decision(tmp_path):
     assert (INFO, texts[0]) in attention
     assert texts[0].startswith("3 moves are made inside routines that also do something else (MoveLSide), so")
     # The remaining work is named without counting those moves twice.
-    assert "Most items to review come from: routine call with arguments (25 %)." in texts
+    assert "Most items to review come from: routine or data not in the backup (25 %)." in texts
 
 
 # ---------------------------------------------------------------------------

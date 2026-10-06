@@ -134,7 +134,7 @@ def test_the_main_source_of_manual_work_is_named(tmp_path):
     source = tmp_path / "calls.mod"
     source.write_text("MODULE M\nPROC main()\n  Lift 1;\n  Lift 2;\n  GOTO x;\nENDPROC\nENDMODULE\n", encoding="utf-8")
     texts = [text for _, text in summarize(pipeline.run([source], log=quiet)).attention]
-    assert "Most items to review come from: routine call with arguments (66 %)." in texts
+    assert "Most items to review come from: routine or data not in the backup (66 %)." in texts
 
 
 def test_several_tasks_say_which_one(tmp_path):
