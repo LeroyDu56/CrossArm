@@ -25,6 +25,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - A statement reading what an operator dialog or a socket gave (`IF answer=resCancel`, `IF status=SOCKET_CONNECTED`)
   is "RAPID instruction without a TP equivalent", with why, instead of a value CrossArm could not work out; a
   position or a record compared as a whole (`IF pPick=pEmpty`) is a condition TP cannot test.
+- A call that does not convert to a routine of the backup that writes files, uses sockets or byte buffers, itself
+  or through the routines it calls, is "RAPID instruction without a TP equivalent", saying which
+  (`LogLine calls Open`, `Ask, through SendLine, calls SocketSend`). A text a function of the backup gives, or an
+  element of an array of texts, says so instead of "only known at run time".
 
 ## 1.3.0 — 2026-10-05
 

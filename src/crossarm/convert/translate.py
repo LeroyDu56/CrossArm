@@ -72,7 +72,7 @@ from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
-from crossarm.convert.unsupported import RAPID_DATA, RAPID_INSTRUCTIONS, no_tp_equivalent, text_todo
+from crossarm.convert.unsupported import RAPID_DATA, RAPID_INSTRUCTIONS, RoutineUse, no_tp_equivalent, text_todo
 from crossarm.convert.values import (
     Evaluator,
     Frame,
@@ -876,6 +876,7 @@ class Converter:
             routine = next(r for m in modules for r in m.routines if r.kind == "PROC" and r.name.upper() == name)
             self.signatures[name] = signature(routine, records, fine)
         self.procs = {r.name.upper(): r for m in modules for r in m.routines if r.kind == "PROC"}
+        self.routine_use = RoutineUse(self.procs | self.computer.functions)
         self.move_routine_calls: Counter[str] = Counter()
         # Interrupts (crossarm.convert.interrupts): upper-case intnum -> what the programs do with it, set by
         # convert(); the WHEN conditions each is armed on; the data a TRAP changes, never taken as known.
@@ -2287,6 +2288,9 @@ class _RoutineTranslator:
                     self.todo(stmt, text, Blocker.VALUE)
                 elif (name := self.not_declared(exc)) is not None:
                     self.todo(stmt, str(self.not_in_backup(name, "data")), Blocker.MISSING)
+                elif (getattr(exc, "category", measured) is Blocker.VALUE
+                      and (through := self.c.routine_use.of(stmt)) is not None):  # fmt: skip
+                    self.todo(stmt, through, Blocker.NO_TP_EQUIVALENT)  # the value is a file's or a socket's
                 else:
                     self.todo(stmt, str(exc), getattr(exc, "category", measured))
             except Exception as exc:  # noqa: BLE001 - one statement must never cost the whole backup
@@ -4342,6 +4346,13 @@ class _RoutineTranslator:
             case n.FuncCall(name=fn) if fn.upper() not in self.c.computer.functions:
                 self.text_function(expr, into, free)  # type: ignore[arg-type]
                 return
+            case n.FuncCall(name=fn):
+                raise Untranslatable(f"text '{format_expr(expr)}' is given by {fn}, a function of the backup: a TP"
+                                     " program returns no value, the function's text is written only when it is"
+                                     " known at conversion time", Blocker.VALUE)  # fmt: skip
+            case n.Index(base=n.Name(name=name)) if self.c.symbols.type_of(name) == "string":
+                raise Untranslatable(f"text '{format_expr(expr)}': an element of an array of texts, where CrossArm"
+                                     " keeps texts one by one in string registers", Blocker.TEXT)  # fmt: skip
         raise Untranslatable(f"text '{format_expr(expr)}' is only known at run time", Blocker.VALUE)
 
     def _text_parts(self, expr: n.Expr) -> list[n.Expr]:

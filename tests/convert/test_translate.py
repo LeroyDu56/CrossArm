@@ -925,6 +925,59 @@ def test_rapid_instructions_without_a_tp_equivalent_are_said_so(body, data, star
     assert found[0].message.startswith(start)
 
 
+SOCKETS = """PROC SendLine(string sLine)
+  SocketSend sCam\\Str:=sLine;
+ENDPROC
+FUNC string Ask(string sQuestion)
+  VAR string sReply;
+  SendLine sQuestion;
+  SocketReceive sCam\\Str:=sReply;
+  RETURN sReply;
+ENDFUNC
+PROC LogLine(string sLine)
+  VAR iodev fLog;
+  Open "HOME:"\\File:="log.txt",fLog\\Append;
+  Write fLog,sLine;
+  Close fLog;
+ENDPROC
+FUNC string Label(num nKind)
+  TEST nKind
+  CASE 1:
+    RETURN "BOX";
+  ENDTEST
+  RETURN "NONE";
+ENDFUNC"""
+
+
+@pytest.mark.parametrize(("body", "message"), [
+    ('sAnswer:=Ask("state");', "Ask, through SendLine, calls SocketSend: sockets: TP has no network messaging"),
+    ('LogLine "part "+Ask("id");', "LogLine calls Open: files and serial channels: TP reads and writes no file"),
+])  # fmt: skip
+def test_a_call_to_a_routine_of_the_backup_using_files_or_sockets_is_said_so(body, message):
+    result = run(body, "VAR socketdev sCam;\nVAR string sAnswer;", extra_procs=SOCKETS)
+    found = [n for n in result.notes if n.kind == "TODO" and n.program == result.programs[0].program.name]
+    assert [(n.category, n.message.split(" — ")[0]) for n in found] == [(Blocker.NO_TP_EQUIVALENT, message)]
+
+
+def test_a_text_a_function_of_the_backup_gives_is_said_so():
+    result = run("sName:=Label(nKind);", "VAR string sName;\nVAR num nKind;", extra_procs=SOCKETS)
+    found = [n for n in result.notes if n.kind == "TODO"]
+    assert [n.category for n in found] == [Blocker.VALUE]
+    assert "is given by Label, a function of the backup: a TP program returns no value" in found[0].message
+
+
+def test_an_element_of_an_array_of_texts_is_said_so():
+    result = run('sPath:=sPath+sParts{k}+"/";', 'VAR string sPath;\nVAR string sParts{3};\nVAR num k:=1;')
+    found = [n for n in result.notes if n.kind == "TODO"]
+    assert [n.category for n in found] == [Blocker.TEXT]
+    assert "an element of an array of texts" in found[0].message
+
+
+def test_a_call_to_a_routine_of_the_backup_writing_a_file_that_converts_stays_a_call():
+    result = run('LogLine "cycle";', extra_procs=SOCKETS)
+    assert tp_lines(result) == ["CALL LOGLINE('cycle')"]
+
+
 def test_a_routine_of_the_backup_named_like_a_rapid_instruction_is_not_one():
     result = run("Write 3;", "", extra_procs="PROC Write(num n)\n  nLast:=n;\nENDPROC\nVAR num nLast;")
     assert {n.category for n in result.notes if n.kind == "TODO"} <= {Blocker.CALL_ARGS}

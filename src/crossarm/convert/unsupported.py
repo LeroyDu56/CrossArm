@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: BUSL-1.1
 
 """What TP has nothing for, or does otherwise: RAPID instructions, functions and data types a statement
-using one stays TODO for, with why; and RAPID's own instructions and data, which a backup never declares."""
+using one stays TODO for, with why, as does a call to a routine of the backup using files or sockets; and RAPID's
+own instructions and data, which a backup never declares."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from crossarm.convert.compute import path_of
 from crossarm.convert.records import nodes
 from crossarm.rapid import nodes as n
+from crossarm.rapid.walk import walk_statements
 
 # RAPID instructions, functions and data types TP has nothing for, by family: a statement using one is a TODO
 # under Blocker.NO_TP_EQUIVALENT with why, rather than a call or a value CrossArm could not work out.
@@ -110,6 +112,49 @@ def no_tp_equivalent(stmt: n.Stmt, routines: Iterable[str], type_of) -> str | No
         if isinstance(node, n.Name) and (typed := type_of(node.name)) is not None and typed.upper() in NO_TP:
             return f"{node.name} ({typed} data): {NO_TP[typed.upper()]}"
     return None
+
+
+# What a routine of the backup is for when it uses one of these, itself or in a routine it calls: a call to it
+# that does not convert stays TODO for that (MbWriteLog writes a file), not for the text it was given.
+_PASSED_ON = frozenset(why for why in NO_TP_FAMILIES if why.startswith(("files", "sockets", "raw byte")))
+
+
+def _called(stmt: n.Stmt) -> list[str]:
+    names = [stmt.name] if isinstance(stmt, n.ProcCall) else []
+    return names + [node.name for node in nodes(stmt) if isinstance(node, n.FuncCall)]
+
+
+class RoutineUse:
+    """The files, sockets and byte buffers the backup's routines use, themselves or through the ones they call."""
+
+    def __init__(self, routines: Mapping[str, n.Routine]) -> None:
+        self.routines = routines  # upper-case name -> PROC or FUNC of the backup
+        self._found: dict[str, tuple[tuple[str, ...], str] | None] = {}
+
+    def of(self, stmt: n.Stmt) -> str | None:
+        """'MbWriteLog calls Open: files and serial channels: ...' when the statement calls a routine of the backup
+        using what TP has nothing for; 'A, through B, calls SocketSend: ...' when it is B that does; else None."""
+        for name in _called(stmt):
+            if (found := self._uses(name.upper())) is not None:
+                through, what = found
+                return f"{name}, through {', '.join(through)}, calls {what}" if through else f"{name} calls {what}"
+        return None
+
+    def _uses(self, key: str) -> tuple[tuple[str, ...], str] | None:
+        """(the routines in between, 'Open: why') for the routine `key`; None if it uses none."""
+        if key in self._found or key not in self.routines:
+            return self._found.get(key)
+        self._found[key] = None  # a routine calling itself back adds nothing
+        for stmt in walk_statements(self.routines[key].body):
+            for name in _called(stmt):
+                upper = name.upper()
+                if upper not in self.routines and NO_TP.get(upper) in _PASSED_ON:
+                    self._found[key] = ((), f"{name}: {NO_TP[upper]}")
+                    return self._found[key]
+                if (inner := self._uses(upper)) is not None:
+                    self._found[key] = ((self.routines[upper].name, *inner[0]), inner[1])
+                    return self._found[key]
+        return None
 
 
 # RAPID text functions TP does otherwise, measured (ROBOGUIDE string probe, RobotStudio): a statement using one
