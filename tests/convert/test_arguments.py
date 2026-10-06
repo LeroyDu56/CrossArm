@@ -107,12 +107,13 @@ def test_every_argument_is_passed_switches_as_1_or_0():
 
 
 def test_negative_constants_are_written_as_the_controller_accepts_them():
-    """Parentheses in assignments, calculations and FOR bounds; bare in conditions (ROBOGUIDE)."""
+    """Parentheses in assignments, calculations, FOR bounds and conditions: a bare one in a condition loads,
+    but stops the program when it runs (INTP-202, ROBOGUIDE)."""
     body = "n:=-2;\nn:=n*-3;\nFOR i FROM -2 TO 2 DO\n  n:=0;\nENDFOR\nIF n<-2.5 n:=1;"
     assert tp_lines(run(body, "VAR num n;")) == [
         "R[1:n]=(-2)", "R[1:n]=R[1:n]*(-3)",
         "FOR R[2:i]=(-2) TO 2", "R[1:n]=0", "ENDFOR",
-        "IF (R[1:n]<-2.5) THEN", "R[1:n]=1", "ENDIF",
+        "IF (R[1:n]<(-2.5)) THEN", "R[1:n]=1", "ENDIF",
     ]  # fmt: skip
 
 

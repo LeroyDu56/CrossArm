@@ -1183,7 +1183,7 @@ def test_an_array_no_run_of_registers_holds_is_not_counted_as_converted():
     ("bOk:=nCount>2 AND NOT bBusy;", "F[2]=(R[1]>2 AND F[1]=OFF)"),
     ("bOk:=bBusy;", "F[2]=(F[1])"),
     ("bOk:=NOT bOk;", "F[1]=(F[1]=OFF)"),
-    ("bOk:=nCount<-1 OR nCount=3;", "F[1]=(R[1]<-1 OR R[1]=3)"),
+    ("bOk:=nCount<-1 OR nCount=3;", "F[1]=(R[1]<(-1) OR R[1]=3)"),
 ])  # fmt: skip
 def test_a_bool_set_to_a_condition_is_a_flag_set_to_it(body, line):
     """ROBOGUIDE: F[n]=(R[1]<5 AND R[2]>8), F[n]=(F[m]=OFF), F[n]=(F[m]) load and give the condition's value."""

@@ -717,9 +717,10 @@ def fmt_seconds(value: float) -> str:
 
 
 def operand(text: str) -> str:
-    """A negative constant in parentheses, as the controller writes it in an assignment, a calculation or
-    a CALL argument: `R[1]=(-2.5)`, `CALL P((-2.5))`. ROBOGUIDE refuses `CALL P(-2.5)`, and rewrites
-    `R[1]=-2.5` with the parentheses. Conditions keep the bare form: it writes `IF (R[1]<-2.5)`."""
+    """A negative constant in parentheses, as the controller writes it in an assignment, a calculation, a
+    CALL argument or a condition: `R[1]=(-2.5)`, `CALL P((-2.5))`, `IF (R[1]<(-2.5))`. ROBOGUIDE refuses
+    `CALL P(-2.5)` and rewrites `R[1]=-2.5` with the parentheses; it loads `IF (R[1]<-2.5)` and `WAIT
+    (R[1]<-2.5)` as written, but stops on them when they run (INTP-202 syntax error, joints probe)."""
     return f"({text})" if text.startswith("-") else text
 
 
@@ -5138,7 +5139,7 @@ class _RoutineTranslator:
                     if op == "<>":
                         state = "OFF" if state == "ON" else "ON"
                     return f"{signal}={state}"
-                return f"{decimal(self.single(left, 1, bare=True))}{op}{decimal(self.single(right, 2, bare=True))}"
+                return f"{decimal(self.single(left, 1))}{op}{decimal(self.single(right, 2))}"  # (-2.5): operand()
             case n.Name(name=name) if self.args and self.args.kind(name) in ("bool", "switch"):
                 return f"{self.args.register(name)}={0 if negate else 1}"
             case n.Component() if (field := self.component(expr)) and self.args.kind(field) == "bool":  # type: ignore[union-attr]

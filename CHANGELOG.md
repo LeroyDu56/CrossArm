@@ -11,6 +11,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `robot.ini`) into a `TP` folder to copy to a USB stick. Without MakeTP, the report says so and nothing else changes.
   Measured on ROBOGUIDE: the .TP load and run, and decode back to the lines of their .LS (MakeTP probe).
 
+### Fixes
+- A negative constant in a condition is written in parentheses (`IF (R[1]<(-2.5))`, `WAIT`, a flag set to a
+  condition): ROBOGUIDE loads the bare form but stops on it when it runs (INTP-202 syntax error).
+
 ## 1.4.0 — 2026-10-06
 
 Routines given their speed and zone, converted, and what is left told apart by cause. A routine taking
