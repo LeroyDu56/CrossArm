@@ -72,7 +72,14 @@ from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
-from crossarm.convert.unsupported import RAPID_DATA, RAPID_INSTRUCTIONS, RoutineUse, no_tp_equivalent, text_todo
+from crossarm.convert.unsupported import (
+    RAPID_DATA,
+    RAPID_INSTRUCTIONS,
+    RoutineUse,
+    handles_files_or_sockets,
+    no_tp_equivalent,
+    text_todo,
+)
 from crossarm.convert.values import (
     Evaluator,
     Frame,
@@ -3602,6 +3609,10 @@ class _RoutineTranslator:
             if self.timed_waits:
                 self.todo(handler, "ERROR handler: its timeout part is written at the waits, the rest is not converted",
                           Blocker.rapid(handler.kind))  # fmt: skip
+                return
+            why = self.c.routine_use.inside(self.routine.name) if stmts is not None else None
+            if why is not None and handles_files_or_sockets(stmts, self.c.symbols.type_of, self.c.routine_use):
+                self.todo(handler, f"ERROR handler of a routine using {why}", Blocker.NO_TP_EQUIVALENT)
                 return
         self.todo(handler, handler.reason, Blocker.rapid(handler.kind))
 

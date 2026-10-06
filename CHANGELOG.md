@@ -32,6 +32,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - The same holds for a call to such a routine whose parameters TP cannot take (`ToFile \Text:=...`): files or
   sockets are why it stays TODO. An array parameter passed by reference (`INOUT num regs{*}`) is said to be an
   array, and an optional one (`\INOUT num count`) optional, instead of "only a num or a point is read back".
+- The ERROR handler of such a routine is "RAPID instruction without a TP equivalent" too, saying which
+  (`ERROR handler of a routine using SocketSend`), when it tests no error but those of files and sockets
+  (`ERR_SOCK_TIMEOUT`, `ERR_FILEOPEN`) and the backup's own errors raised only where files or sockets are used.
 
 ## 1.3.0 — 2026-10-05
 

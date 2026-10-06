@@ -970,6 +970,47 @@ def test_a_call_to_a_routine_using_sockets_is_said_so_before_its_parameters():
     ]  # fmt: skip
 
 
+RAISING_DATA = "VAR socketdev sCam;\nVAR string sAnswer;\nVAR errnum ERR_LINK:=-1;\nVAR errnum ERR_PART:=-1;"
+RAISING = SOCKETS + """
+PROC CheckLink()
+  SocketSend sCam\\Str:="?";
+  RAISE ERR_LINK;
+ENDPROC
+PROC CheckPart()
+  RAISE ERR_PART;
+ENDPROC"""
+
+
+@pytest.mark.parametrize(("body", "message"), [
+    ('SocketSend sCam\\Str:="go";\nERROR\n  IF ERRNO=ERR_SOCK_TIMEOUT THEN\n    RETRY;\n  ENDIF',
+     "ERROR handler of a routine using SocketSend: sockets: TP has no network messaging"),
+    ('LogLine "cycle";\nERROR\n  TEST ERRNO\n  CASE ERR_FILEOPEN, ERR_LINK:\n    TRYNEXT;\n  ENDTEST',
+     ("ERROR handler of a routine using Open, called through LogLine: files and serial channels: TP reads and writes"
+      " no file")),
+    ('sAnswer:=Ask("state");\nERROR\n  TPWrite "lost";\n  RETURN;',
+     ("ERROR handler of a routine using SocketSend, called through Ask, SendLine: sockets: TP has no network"
+      " messaging")),
+])  # fmt: skip
+def test_the_error_handler_of_a_routine_using_files_or_sockets_is_said_so(body, message):
+    """What it handles comes from the files or the sockets, which TP has nothing for: RAPID's errors of files and
+    sockets, and the backup's own errors raised only where they are used."""
+    result = run(body, RAISING_DATA, extra_procs=RAISING)
+    found = [n for n in result.notes if n.kind == "TODO" and n.message.startswith("ERROR")]
+    assert [(n.category, n.message.split(" — ")[0]) for n in found] == [(Blocker.NO_TP_EQUIVALENT, message)]
+
+
+@pytest.mark.parametrize("body", [
+    'SocketSend sCam\\Str:="go";\nMoveL p10,v100,fine,tool0;\nERROR\n  IF ERRNO=ERR_ROBLIMIT THEN\n    TRYNEXT;\n  ENDIF',
+    'SocketSend sCam\\Str:="go";\nCheckPart;\nERROR\n  IF ERRNO=ERR_PART THEN\n    TRYNEXT;\n  ENDIF',
+    'WaitTime 1;\nERROR\n  IF ERRNO=ERR_SOCK_TIMEOUT THEN\n    RETRY;\n  ENDIF',
+])  # fmt: skip
+def test_an_error_handler_for_other_errors_or_in_a_routine_without_files_or_sockets_stays_an_error_handler(body):
+    data = RAISING_DATA + "\nCONST robtarget p10:=[[500,0,500],[0,0,1,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];"
+    result = run(body, data, extra_procs=RAISING)
+    found = [n for n in result.notes if n.kind == "TODO" and n.message.startswith("ERROR")]
+    assert [n.category for n in found] == ["RAPID error handler"]
+
+
 def test_a_text_a_function_of_the_backup_gives_is_said_so():
     result = run("sName:=Label(nKind);", "VAR string sName;\nVAR num nKind;", extra_procs=SOCKETS)
     found = [n for n in result.notes if n.kind == "TODO"]

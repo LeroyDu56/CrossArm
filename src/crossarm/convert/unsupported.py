@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: BUSL-1.1
 
 """What TP has nothing for, or does otherwise: RAPID instructions, functions and data types a statement
-using one stays TODO for, with why, as does a call to a routine of the backup using files or sockets; and RAPID's
-own instructions and data, which a backup never declares."""
+using one stays TODO for, with why, as does a call to a routine of the backup using files or sockets, and the ERROR
+handler of such a routine; and RAPID's own instructions and data, which a backup never declares."""
 
+import re
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
 from crossarm.convert.compute import path_of
+from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.records import nodes
 from crossarm.rapid import nodes as n
 from crossarm.rapid.walk import walk_statements
@@ -46,6 +49,13 @@ NO_TP_FAMILIES = {
     ),
 }  # fmt: skip
 NO_TP = {name: why for why, names in NO_TP_FAMILIES.items() for name in names}
+
+# RAPID's error numbers for files, serial channels and sockets (any ERR_SOCK_... too): an ERROR handler testing only
+# these, or errors of the backup raised only where files or sockets are used, handles what TP has nothing for.
+FILE_SOCKET_ERRORS = frozenset({
+    "ERR_FILEACC", "ERR_FILEEXIST", "ERR_FILEOPEN", "ERR_FILNOTFND", "ERR_DEV_MAXTIME", "ERR_RANYBIN_CHK",
+    "ERR_RANYBIN_EOF", "ERR_RCVDATA",
+})  # fmt: skip
 
 # RAPID's own instructions (RobotWare 6 instruction reference): one the backup does not declare is not missing from
 # it, CrossArm does not convert it. Any other routine nobody declares comes from a module or an option the backup
@@ -130,6 +140,27 @@ class RoutineUse:
     def __init__(self, routines: Mapping[str, n.Routine]) -> None:
         self.routines = routines  # upper-case name -> PROC or FUNC of the backup
         self._found: dict[str, tuple[tuple[str, ...], str] | None] = {}
+        self._raised: dict[str, set[str]] | None = None  # error -> the routines raising it
+
+    def raised_there(self, error: str) -> bool:
+        """Whether the backup raises its error `error` (`RAISE ERR_X;`, `ErrRaise "ERR_X",...`), and does so only in
+        routines using files, sockets or byte buffers, themselves or through the ones they call."""
+        if self._raised is None:
+            self._raised = defaultdict(set)
+            for key, routine in self.routines.items():
+                stmts = list(walk_statements(routine.body))
+                for handler in routine.handlers:
+                    if handler.kind == "ERROR_HANDLER" and (inner := handler_body(handler)) is not None:
+                        stmts += walk_statements(inner)
+                for stmt in stmts:
+                    if isinstance(stmt, n.Unsupported) and stmt.kind == "RAISE":
+                        if found := re.match(r"\s*RAISE\s+(\w+)", stmt.raw, re.IGNORECASE):
+                            self._raised[found[1].upper()].add(key)
+                    elif (isinstance(stmt, n.ProcCall) and stmt.name.upper() == "ERRRAISE" and stmt.args
+                          and isinstance(stmt.args[0].value, n.String)):  # fmt: skip
+                        self._raised[stmt.args[0].value.value.upper()].add(key)
+        sites = self._raised.get(error.upper())
+        return bool(sites) and all(self._uses(key) is not None for key in sites)
 
     def of(self, stmt: n.Stmt) -> str | None:
         """'MbWriteLog calls Open: files and serial channels: ...' when the statement calls a routine of the backup
@@ -139,6 +170,17 @@ class RoutineUse:
                 through, what = found
                 return f"{name}, through {', '.join(through)}, calls {what}" if through else f"{name} calls {what}"
         return None
+
+    def inside(self, name: str) -> str | None:
+        """'SocketSend: sockets: ...' when the routine `name` uses files, sockets or byte buffers itself;
+        'Open, called through HTML_create: files ...' when a routine it calls does; else None."""
+        if (found := self._uses(name.upper())) is None:
+            return None
+        through, what = found
+        if not through:
+            return what
+        called, why = what.split(": ", 1)
+        return f"{called}, called through {', '.join(through)}: {why}"
 
     def _uses(self, key: str) -> tuple[tuple[str, ...], str] | None:
         """(the routines in between, 'Open: why') for the routine `key`; None if it uses none."""
@@ -155,6 +197,32 @@ class RoutineUse:
                     self._found[key] = ((self.routines[upper].name, *inner[0]), inner[1])
                     return self._found[key]
         return None
+
+
+def _errno(expr: object) -> bool:
+    return isinstance(expr, n.Name) and expr.name.upper() == "ERRNO"
+
+
+def tested_errors(stmts: Iterable[n.Stmt]) -> set[str]:
+    """The error numbers an ERROR handler compares ERRNO with: `IF ERRNO=ERR_X`, `TEST ERRNO CASE ERR_X:`."""
+    found: set[str] = set()
+    for stmt in walk_statements(stmts):
+        if isinstance(stmt, n.Test) and _errno(stmt.subject):
+            found |= {v.name.upper() for case in stmt.cases for v in case.values if isinstance(v, n.Name)}
+        for node in nodes(stmt):
+            if isinstance(node, n.BinaryOp) and node.op in ("=", "<>"):
+                for side, other in ((node.left, node.right), (node.right, node.left)):
+                    if _errno(side) and isinstance(other, n.Name):
+                        found.add(other.name.upper())
+    return found
+
+
+def handles_files_or_sockets(stmts: Iterable[n.Stmt], type_of, use: RoutineUse) -> bool:
+    """Whether an ERROR handler tests ERRNO against no error but those of files and sockets, and the backup's own
+    (errnum data) raised only where files or sockets are used: in a routine using files or sockets, the errors it
+    handles come from them."""
+    return all(e in FILE_SOCKET_ERRORS or e.startswith("ERR_SOCK_") or (type_of(e) == "errnum" and use.raised_there(e))
+               for e in tested_errors(stmts))  # fmt: skip
 
 
 # RAPID text functions TP does otherwise, measured (ROBOGUIDE string probe, RobotStudio): a statement using one
