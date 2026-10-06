@@ -19,11 +19,15 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   (`WaitTime PERIOD-tSpent`) works it out in a register first, then `WAIT R[n]`.
 - `CRobT()` without `\Tool` and `\WObj` in a routine whose moves have not selected frames yet: `PR[k]=LPOS` in the
   frames selected when it runs, as RAPID reads in the active tool and work object, those of the last move.
+- A number calculated with RAPID's math functions (`Pow`, `Sqrt`, `Sin`...) from data no program changes
+  (`FOR i FROM 1 TO Pow(2, nRings) - 1`) is worked out once, as TP has no such function: a PERS read at its saved
+  value, with a warning. One that reads data the programs change stays TODO, saying where.
 
 ### Report
 - A call to a routine, or a use of data, that no module of the backup declares (a system module, an option, another
   task) is a cause of its own, "routine or data not in the backup", saying what to add, instead of a routine call
   or a value CrossArm could not convert. RAPID's own instructions and data, and a routine's parameters, are not.
+  A condition on such data (`IF bReady Grip;`) is too, instead of a condition not convertible.
 - A statement reading what an operator dialog or a socket gave (`IF answer=resCancel`, `IF status=SOCKET_CONNECTED`)
   is "RAPID instruction without a TP equivalent", with why, instead of a value CrossArm could not work out; a
   position or a record compared as a whole (`IF pPick=pEmpty`) is a condition TP cannot test.

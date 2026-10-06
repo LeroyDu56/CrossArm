@@ -294,6 +294,41 @@ def test_a_routine_or_data_the_backup_does_not_declare_says_what_to_add():
     ]
 
 
+def test_a_condition_on_data_the_backup_does_not_declare_says_what_to_add():
+    result = run("IF bReady Grip;\nIF NOT bGone nCount:=1;", data="VAR num nCount;")
+    assert [note.category for note in result.notes if note.kind == "TODO"] == [Blocker.MISSING] * 2
+    assert [message.split(" — ")[0] for message in todos(result)] == [
+        f"data '{name}' is not in the backup: add the module that declares it (system module, option, other task),"
+        " or EIO.cfg if it is a signal" for name in ("bReady", "bGone")]  # fmt: skip
+
+
+def test_a_math_function_of_data_no_program_changes_is_worked_out():
+    """TP has no power, root or angle function: Pow(2, nRings) of a PERS no program changes is its saved value's."""
+    data = "PERS num nRings:=3;\nCONST num nArea:=16;\nVAR num nCount;"
+    result = run("FOR i FROM 1 TO Pow(2, nRings) - 1 DO\n  nCount:=i;\nENDFOR\nnCount:=Sqrt(nArea);\n"
+                 "IF nCount<Pow(2, nRings) nCount:=0;", data)  # fmt: skip
+    assert todos(result) == []
+    lines = tp_lines(result)
+    assert lines[:5] == ["FOR R[1:i]=1 TO 7", "R[2:nCount]=R[1:i]", "ENDFOR", "R[2:nCount]=4",
+                         "IF (R[2:nCount]<8) THEN"]  # fmt: skip
+    saved = [message for category, message in warnings(result) if category == Blocker.SAVED_VALUE]
+    assert saved == [("nRings, a PERS no program changes, is read at its value saved in the backup (3) to work out"
+                      " Pow(2, nRings) - 1, which TP cannot calculate; a value set on the ABB controller since is not")]
+
+
+def test_a_math_function_of_data_a_program_changes_stays_todo_and_says_where():
+    result = run("nRings:=nRings+1;\nnCount:=Pow(2, nRings);", "PERS num nRings:=3;\nVAR num nCount;")
+    assert [message.split(" — ")[0] for message in todos(result)] == [
+        ("'Pow(2, nRings)' is not a simple numeric value ('nRings' is set at l.5 from a value only known at"
+         " run time)")]
+
+
+def test_a_math_function_of_a_value_the_routine_just_set_is_worked_out_without_warning():
+    result = run("nRings:=4;\nnCount:=Pow(2, nRings);", "PERS num nRings:=3;\nVAR num nCount;")
+    assert tp_lines(result) == ["R[1:nRings]=4", "R[2:nCount]=16"]
+    assert warnings(result) == []
+
+
 def test_a_parameter_or_rapid_data_is_not_missing_from_the_backup():
     source = ("MODULE M\nVAR num nCount;\nPROC main()\n  Sub 2;\nENDPROC\nPROC Sub(num pTime)\n"
               "  IF ERRNO=ERR_WAIT_MAXTIME nCount:=0;\n  PulseDO \\PLength:=pTime, do1;\n  nCount:=nGone;\n"
@@ -830,7 +865,7 @@ def test_a_position_read_on_the_robot_says_what_tp_reads_not_that_it_cannot_comp
 
 def test_a_point_whose_assignment_is_left_todo_is_never_moved_to():
     """Its register was not set: the moves to it stay TODO, with why, not moves to whatever it holds."""
-    body = "pPlace:=Offs(pHome,GInput(giX)*Abs(nCol),0,0);\nMoveL pPlace,v100,fine,tGrip;"
+    body = "pPlace:=Offs(pHome,GInput(giX)*Sqrt(GInput(giX)),0,0);\nMoveL pPlace,v100,fine,tGrip;"
     result = run(body, PALLET)
     assert [line.startswith("!TODO") for line in tp_lines(result)] == [True, True]
     assert "'pPlace' is set at l." in todos(result)[1]

@@ -915,6 +915,35 @@ class Computer:
         return self.read(expr).value
 
 
+# RAPID's math functions: TP has none of them (no power, no root, no angle function).
+_MATH = frozenset({"ABS", "SQRT", "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "ATAN2", "EXP", "POW", "ROUND",
+                   "TRUNC"})  # fmt: skip
+
+
+def fixed_math(computer: "Computer", expr: n.Expr) -> tuple[float, list[str]] | None:
+    """A number calculated with RAPID's math functions (Pow, Sqrt, Sin...) from data no program changes: its value,
+    worked out once as TP cannot, and the PERS it read at their saved value (to say so). None when the expression
+    calls another function, or none; Unresolvable, with why, when it reads something that can change."""
+    calls = _calls(expr)
+    if not calls or any(c.name.upper() not in _MATH or c.name.upper() in computer.functions for c in calls):
+        return None
+    value = computer.number(expr)
+    pers = [name for name in dict.fromkeys(_names(expr))  # not the routine's own value at this point: the saved one
+            if not isinstance(computer.scope(name.upper()), Typed)
+            and (decl := computer.symbols.get(name)) is not None and decl.storage == "PERS"]  # fmt: skip
+    return value, pers
+
+
+def _calls(expr: Any) -> list[n.FuncCall]:
+    """The function calls in an expression, outer ones first."""
+    found = [expr] if isinstance(expr, n.FuncCall) else []
+    if isinstance(expr, tuple):
+        return [call for item in expr for call in _calls(item)]
+    if hasattr(expr, "__slots__") and not isinstance(expr, n.Span | str):
+        found += [call for slot in expr.__slots__ for call in _calls(getattr(expr, slot, None))]
+    return found
+
+
 def _names(expr: Any) -> list[str]:
     """The data an expression reads, as written, in order."""
     if isinstance(expr, n.Name):
@@ -1041,6 +1070,7 @@ __all__ = [
     "Unknown",
     "Written",
     "def_frame",
+    "fixed_math",
     "from_pose",
     "measured_reason",
     "parse_params",

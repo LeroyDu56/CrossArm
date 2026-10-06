@@ -49,6 +49,7 @@ from crossarm.convert.compute import (
     Typed,
     Unknown,
     Written,
+    fixed_math,
     measured_reason,
     parse_params,
     path_of,
@@ -4828,11 +4829,29 @@ class _RoutineTranslator:
                     found = None
                 if isinstance(found, int | float) and not isinstance(found, bool):
                     return register_value(float(found))
+            try:
+                fixed = fixed_math(self.c.computer, expr)  # Pow(2, nRings): TP has no power
+            except Unresolvable as why:
+                raise Untranslatable(f"'{format_expr(expr)}' is not a simple numeric value ({why})",
+                                     Blocker.VALUE) from why  # fmt: skip
+            if fixed is not None:
+                self.saved_pers(fixed[1], expr)
+                return register_value(fixed[0])
             kind = self.c.symbols.type_of(expr.name) if isinstance(expr, n.Name) else None
             if kind in _POSITION_TYPES | _FRAME_TYPES or self.c.records.is_record(kind):
                 raise Untranslatable(f"'{expr.name}' is a {kind}: TP compares and calculates numbers, not a"  # type: ignore[union-attr]
                                      f" whole {kind}", Blocker.CONDITION) from exc  # fmt: skip
             raise Untranslatable(f"'{format_expr(expr)}' is not a simple numeric value ({exc})", Blocker.VALUE) from exc
+
+    def saved_pers(self, names: list[str], expr: n.Expr) -> None:
+        """A WARNING, once per data, for each PERS a value worked out at conversion time read as saved."""
+        for name in names:
+            decl = self.c.symbols.get(name)
+            shown = format_expr(decl.init) if decl is not None and decl.init is not None else "?"
+            self.c.warn_once(f"saved:{name.upper()}", self.name, expr.span.line,
+                             f"{name}, a PERS no program changes, is read at its value saved in the backup ({shown})"
+                             f" to work out {format_expr(expr)}, which TP cannot calculate; a value set on the ABB"
+                             " controller since is not", Blocker.SAVED_VALUE)  # fmt: skip
 
     def interrupt_value(self, expr: n.Name) -> str | None:
         """An intnum as a number (its interrupt's, interrupts.Interrupt.number), and INTNO in a TRAP: the register
@@ -5139,6 +5158,8 @@ class _RoutineTranslator:
                 signal = self.c.signal(expr, self.name, expr.span.line)
                 if signal is not None:
                     return f"{signal}={'OFF' if negate else 'ON'}"
+                if isinstance(expr, n.Name) and self.absent(expr.name):  # IF bReady ...: declared nowhere
+                    raise self.not_in_backup(expr.name, "data")
         raise Untranslatable(f"condition not convertible: {format_expr(expr)}", Blocker.CONDITION)
 
 
