@@ -413,6 +413,17 @@ def _summary(result: ConversionResult) -> list[str]:
 
 def build_report(result: ConversionResult, config: ConversionConfig, sources: list[str],
                  licence: "LicenceStatus | None" = None) -> str:  # fmt: skip
+    lines = [line for _, part in report_parts(result, config, sources, licence) for line in part]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def report_parts(result: ConversionResult, config: ConversionConfig, sources: list[str],
+                 licence: "LicenceStatus | None" = None) -> list[tuple[str, list[str]]]:  # fmt: skip
+    """The report's sections, in order, as Markdown lines: (key, lines).
+
+    Keys: head, summary, programs, frames, registers, motion, points, review. The Markdown report is
+    them all; the HTML report (crossarm.convert.html_report) shows some of them its own way."""
+    parts: list[tuple[str, list[str]]] = []
     lines = [
         "# CrossArm conversion report",
         "",
@@ -436,8 +447,8 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
         "> is within 10 mm of the ABB's (measured: within 4 mm, corners included).",
         "",
     ]
-    lines += _summary(result)
-    lines += ["## Programs", ""]
+    parts += [("head", lines), ("summary", _summary(result))]
+    lines = ["## Programs", ""]
     rows = []
     for info in result.programs:
         todo = sum(1 for x in result.notes if x.program == info.program.name and x.kind == "TODO")
@@ -459,8 +470,9 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
     if result.skipped_routines:
         lines += ["### Routines not converted", ""]
         lines += _table(["RAPID routine", "Reason"], [[f"{m}.{r}", why] for m, r, why in result.skipped_routines])
+    parts.append(("programs", lines))
 
-    lines += [
+    lines = [
         "## Frames to set up on the controller",
         "",
         "Values are the RAPID frames converted to FANUC X, Y, Z (mm) and W, P, R (deg).",
@@ -475,8 +487,9 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
     lines += _setup_section(result)
     lines += _computed_section(result)
     lines += _payload_section(result, config)
+    parts.append(("frames", lines))
 
-    lines += ["## Registers, flags and I/O", ""]
+    lines = ["## Registers, flags and I/O", ""]
     lines += [
         (
             "Automatic numbers start at 1: pin them with a mapping file (`--map`) to avoid clashing with"
@@ -539,10 +552,9 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
         ]
         lines += _table(["Record", "Registers", "Flags"],
                         [[name, str(r), str(f)] for name, (r, f) in result.records.items()])  # fmt: skip
+    parts += [("registers", lines), ("motion", _motion_section(result, config))]
 
-    lines += _motion_section(result, config)
-
-    lines += ["## Points", ""]
+    lines = ["## Points", ""]
     for info in result.programs:
         if not info.points:
             continue
@@ -556,11 +568,13 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
                 value = "J " + " ".join(f"{j:.3f}" for j in p.value.joints)
             rows.append([f"P[{p.number}]", f"`{p.source}`", str(p.rapid_line), f"{p.uf}/{p.ut}", value])
         lines += _table(["P", "RAPID target", "RAPID line", "UF/UT", "Value"], rows)
+    parts.append(("points", lines))
 
-    lines += ["## Items to review", ""]
+    lines = ["## Items to review", ""]
     rows = [
         [x.program or "—", str(x.rapid_line) if x.rapid_line else "—", x.kind, x.message]
         for x in sorted(result.notes, key=lambda x: (x.program, x.rapid_line or 0))
     ]
     lines += _table(["Program", "RAPID line", "Kind", "Detail"], rows)
-    return "\n".join(lines).rstrip() + "\n"
+    parts.append(("review", lines))
+    return parts

@@ -10,7 +10,7 @@ bullet lists, block quotes, tables, `code` and **bold**. Everything is escaped.
 import html
 import re
 
-_CSS = """
+CSS = """
 :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --head: #f6f8fa;
         --code: #eff1f3; --todo: #b35900; --warn: #7d4e00; --accent: #0969da; }
 @media (prefers-color-scheme: dark) {
@@ -39,7 +39,7 @@ td.kind-WARNING { color: var(--warn); font-weight: 600; }
 """
 
 
-def _inline(text: str) -> str:
+def inline(text: str) -> str:
     out = []
     for i, part in enumerate(re.split(r"`([^`]*)`", text)):  # odd indices are code spans
         if i % 2:
@@ -57,6 +57,16 @@ def _cells(row: str) -> list[str]:
 
 
 def markdown_to_html(markdown: str, title: str) -> str:
+    return (
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>{html.escape(title)}</title>\n<style>{CSS}</style>\n</head>\n"
+        "<body><main>\n" + markdown_body(markdown) + "\n</main></body>\n</html>\n"
+    )
+
+
+def markdown_body(markdown: str) -> str:
+    """The HTML of the Markdown subset, without the page around it."""
     lines = markdown.splitlines()
     body: list[str] = []
     i = 0
@@ -66,7 +76,7 @@ def markdown_to_html(markdown: str, title: str) -> str:
             i += 1
         elif line.startswith("#"):
             level = len(line) - len(line.lstrip("#"))
-            body.append(f"<h{level}>{_inline(line[level:].strip())}</h{level}>")
+            body.append(f"<h{level}>{inline(line[level:].strip())}</h{level}>")
             i += 1
         elif line.startswith("|"):
             rows = []
@@ -75,24 +85,24 @@ def markdown_to_html(markdown: str, title: str) -> str:
                 i += 1
             header, data = rows[0], [r for r in rows[1:] if not all(set(c) <= {"-", ":"} for c in r)]
             kind_col = header.index("Kind") if "Kind" in header else -1
-            html_rows = ["<tr>" + "".join(f"<th>{_inline(c)}</th>" for c in header) + "</tr>"]
+            html_rows = ["<tr>" + "".join(f"<th>{inline(c)}</th>" for c in header) + "</tr>"]
             for row in data:
                 cells = []
                 for n, cell in enumerate(row):
                     css = f' class="kind-{html.escape(cell)}"' if n == kind_col else ""
-                    cells.append(f"<td{css}>{_inline(cell)}</td>")
+                    cells.append(f"<td{css}>{inline(cell)}</td>")
                 html_rows.append("<tr>" + "".join(cells) + "</tr>")
             body.append('<div class="table-wrap"><table>' + "".join(html_rows) + "</table></div>")
         elif line.startswith(">"):
             quote = []
             while i < len(lines) and lines[i].startswith(">"):
-                quote.append(_inline(lines[i].lstrip("> ").rstrip()))
+                quote.append(inline(lines[i].lstrip("> ").rstrip()))
                 i += 1
             body.append("<blockquote><p>" + " ".join(quote) + "</p></blockquote>")
         elif line.startswith("- "):
             items = []
             while i < len(lines) and lines[i].startswith("- "):
-                items.append(f"<li>{_inline(lines[i][2:])}</li>")
+                items.append(f"<li>{inline(lines[i][2:])}</li>")
                 i += 1
             body.append("<ul>" + "".join(items) + "</ul>")
         elif line.strip() == "_None._":
@@ -101,12 +111,7 @@ def markdown_to_html(markdown: str, title: str) -> str:
         else:
             para = []
             while i < len(lines) and lines[i].strip() and not lines[i].startswith(("#", "|", ">", "- ")):
-                para.append(_inline(lines[i]))
+                para.append(inline(lines[i]))
                 i += 1
             body.append("<p>" + " ".join(para) + "</p>")
-    return (
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
-        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>{html.escape(title)}</title>\n<style>{_CSS}</style>\n</head>\n"
-        "<body><main>\n" + "\n".join(body) + "\n</main></body>\n</html>\n"
-    )
+    return "\n".join(body)

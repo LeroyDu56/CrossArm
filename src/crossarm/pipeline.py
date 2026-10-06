@@ -27,7 +27,7 @@ from crossarm.backup import Source, TaskSource, open_source
 from crossarm.convert import ConversionConfig, ConversionResult, build_mapping, build_report, convert
 from crossarm.convert.compute import Written
 from crossarm.convert.coverage import Coverage, fmt_percent
-from crossarm.convert.html import markdown_to_html
+from crossarm.convert.html_report import build_html_report
 from crossarm.convert.motion import M20ID_25, profile_for
 from crossarm.convert.setup import SETUP_NAME, SETUP_NAME_SHORT, build_setup
 from crossarm.convert.translate import ControllerScope, remark_lines
@@ -146,8 +146,12 @@ def _marked(program: Program, licence: LicenceStatus) -> Program:
     The TRAP it calls carries the mark."""
     if program.condition:
         return program
-    mark =[Instruction(text) for line in licence.remarks() for text in remark_lines(line)]
-    return replace(program, lines=[*mark, *program.lines])
+    return replace(program, lines=[*map(Instruction, _mark(licence)), *program.lines])
+
+
+def _mark(licence: LicenceStatus) -> list[str]:
+    """The remark lines of the licence mark, as written first in each program."""
+    return [text for line in licence.remarks() for text in remark_lines(line)]
 
 
 def _parse_task(task: TaskSource) -> tuple[list[ParseResult], list[str]]:
@@ -194,15 +198,18 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         if result.setup.program is not None:
             written.append(result.setup.program.name)
         out.tp = make_tp([folder / f"{name}.LS" for name in written], tp[1], tp[0], log)
-    report = build_report(result, config, [Path(p.path).name for p in parsed], licence)
+    names = [Path(p.path).name for p in parsed]
+    extra = ""  # what this run adds to the report
     if out.tp is not None:
-        report += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
+        extra += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
     if out.syntax_errors:
-        report += "\n## Syntax errors (statements skipped by the parser)\n\n"
-        report += "\n".join(f"- `{e}`" for e in out.syntax_errors) + "\n"
-    (folder / "crossarm_report.md").write_text(report, encoding="utf-8")
+        extra += "\n## Syntax errors (statements skipped by the parser)\n\n"
+        extra += "\n".join(f"- `{e}`" for e in out.syntax_errors) + "\n"
+    (folder / "crossarm_report.md").write_text(build_report(result, config, names, licence) + extra, encoding="utf-8")
     out.report_html = folder / "crossarm_report.html"
-    out.report_html.write_text(markdown_to_html(report, f"CrossArm - {source.name} - {task.name}"), encoding="utf-8")
+    page = build_html_report(result, config, names, licence, title=f"CrossArm - {source.name} - {task.name}",
+                             extra=extra, lead=_mark(licence))  # fmt: skip
+    out.report_html.write_text(page, encoding="utf-8")
     # The numbering this run used, ready to edit and feed back with --map.
     (folder / "crossarm_mapping.json").write_text(build_mapping(result, config), encoding="utf-8")
 

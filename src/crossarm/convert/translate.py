@@ -74,6 +74,7 @@ from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
 from crossarm.convert.runtime_points import RuntimePoints, expr_nodes, find_runtime_points
+from crossarm.convert.source_map import SourceTags
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
 from crossarm.convert.tp_numbers import decimal, fmt_number, operand, register_value
 from crossarm.convert.unsupported import (
@@ -180,6 +181,10 @@ class ProgramInfo:
     module: str
     routine: str
     points: tuple[PointInfo, ...]
+    # The RAPID line each TP line was written from (crossarm.convert.source_map), None where no statement
+    # wrote it; empty for a program no routine was translated into. And the routine's first line.
+    sources: tuple[int | None, ...] = ()
+    routine_line: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +383,8 @@ class ConversionResult:
     # The TP name of each program written that other programs call or arm, by its key in the mapping file
     # (programs): a routine's name, an interrupt's (its relay INTERRUPT.relay), CROSSARM.TEXT.
     program_keys: dict[str, str] = field(default_factory=dict)
+    # The RAPID source of each module, by upper-case module name: the report shows it next to the TP.
+    rapid_sources: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def todo_count(self) -> int:
@@ -768,6 +775,7 @@ class Converter:
         self._banks = self._banks[1:]  # the first free one is SETUP_FRAMES' scratch register
         self.written_registers: set[int] = set()  # assigned or used as FOR variable
         self.result = ConversionResult()
+        self.result.rapid_sources = self.source_lines
         self._warned: set[str] = set()
         self.do_names, self.di_names = self._signals_by_usage()
         self.program_names: dict[str, str] = {}  # routine (upper) -> TP name, set by convert()
@@ -1902,6 +1910,7 @@ class _RoutineTranslator(RuntimePoints):
         self.routine = routine
         self.name = tp_name
         self.lines: list[Instruction | Motion] = []
+        self.tags = SourceTags()  # the RAPID line each of them comes from, for the report
         self.positions: list[Position] = []
         self.points: list[PointInfo] = []
         self._point_keys: dict[tuple, int] = {}
@@ -1974,13 +1983,16 @@ class _RoutineTranslator(RuntimePoints):
         for text in self.epilogue:
             self.emit(text)
         for handler in self.routine.handlers:
+            start = len(self.lines)
             self.handler(handler)
+            self.tags.tag(self.lines, start, handler.span.line)
         attrs = Attributes(comment=ascii_text(self.routine.name)[:16], created=self.c.config.timestamp)
         # A TRAP runs as a task of its own while the program it interrupted holds the robot (interrupts.called_by)
         if self.routine.kind == "TRAP" or self.routine.name.upper() in self.c.no_group:
             attrs.default_group = NO_GROUP
         program = Program(self.name, self.lines, self.positions, attrs)
-        return ProgramInfo(program, self.module.name, self.routine.name, tuple(self.points))
+        return ProgramInfo(program, self.module.name, self.routine.name, tuple(self.points),
+                           self.tags.of(self.lines), self.routine.span.line)  # fmt: skip
 
     def _trap_prologue(self, interrupt: Interrupt) -> None:
         """An IPers TRAP first notes the value that fired it; every TRAP but a \\Single one arms its
@@ -2145,6 +2157,7 @@ class _RoutineTranslator(RuntimePoints):
             finally:
                 self.c.deferring(deferred)
                 self.current = outer
+            self.tags.tag(self.lines, checkpoint[0], stmt.span.line)
 
     def not_declared(self, exc: BaseException) -> str | None:
         """The data a statement failed on because no module of the backup declares it, if that is why: the

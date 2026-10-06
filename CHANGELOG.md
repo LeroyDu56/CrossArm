@@ -10,6 +10,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   step 4 of the window): FANUC MakeTP, installed with ROBOGUIDE, makes them for a ROBOGUIDE robot (or a Setrobot
   `robot.ini`) into a `TP` folder to copy to a USB stick. Without MakeTP, the report says so and nothing else changes.
   Measured on ROBOGUIDE: the .TP load and run, and decode back to the lines of their .LS (MakeTP probe).
+- An interactive `crossarm_report.html`: each program's RAPID routine and TP side by side, line by line, TODO
+  lines marked with their cause; the items to review filtered by kind, cause and program, or searched, each
+  leading to its line. One self-contained page (nothing loaded, works offline), light and dark, printable.
 
 ### Converts
 - A jointtarget read on the robot (`j:=CJointT()`) is kept in a joint position register (`PR[k]=JPOS`): its axes
