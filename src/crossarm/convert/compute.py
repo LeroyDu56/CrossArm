@@ -64,8 +64,10 @@ def measured_reason(what: str, type_name: str, is_frame: bool, exc: MeasuredAtRu
         return f"{what} measured on the robot when the program runs: {exc}"
     if type_name == "robtarget":  # a FUNC of the backup reads it, or a component of the point is set
         kept = "a point is kept in a position register when it is set to CRobT() itself, as a whole"
+    elif type_name == "jointtarget":
+        kept = "a jointtarget is kept in a position register when it is set to CJointT() itself, as a whole"
     else:
-        kept = f"CrossArm keeps robtargets in position registers, not a {type_name}"
+        kept = f"CrossArm keeps robtargets and jointtargets in position registers, not a {type_name}"
     reading = "the joints (PR[n]=JPOS)" if type_name in ("jointtarget", "robjoint") else "the TCP (PR[n]=LPOS)"
     return f"{what} measured on the robot when the program runs: {exc}. TP reads {reading}, but {kept}"
 

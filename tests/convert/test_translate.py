@@ -519,6 +519,15 @@ def test_the_mapping_file_pins_the_first_register_of_an_array(tmp_path):
     assert [(a.base, a.fixed) for a in result.point_arrays] == [(40, True)]
 
 
+def test_a_point_register_is_never_one_of_the_block_of_a_pinned_array(tmp_path):
+    """A point the mapping file does not number yet (a new one) takes a register past the array's block."""
+    path = tmp_path / "map.json"
+    path.write_text('{"point_arrays": {"pSlot": 97}}', encoding="utf-8")
+    config = ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1))
+    result = run("MoveL Offs(pSlot{n},0,0,50),v100,fine,tGrip;", SLOTS + TOOL, config=config)
+    assert [(a.rapid_name, a.number) for a in result.point_registers] == [("CROSSARM.POINT", 96)]
+
+
 TABLE = "CONST num TORQUE{3}:=[1.5,2,-0.5];PERS num LIMIT{2}:=[5,6];VAR num nSum;VAR num k:=1;VAR num nCount{2};"
 
 
@@ -864,11 +873,11 @@ def test_crobt_without_frames_is_lpos_in_the_frames_selected_when_it_runs():
 
 
 def test_a_position_read_on_the_robot_says_what_tp_reads_not_that_it_cannot_compute_a_frame():
-    result = run("jNow:=CJointT();\nMoveAbsJ jNow,v100,fine,tool0;", "VAR jointtarget jNow;")
-    assert "jNow measured on the robot when the program runs: CJointT() reads the robot's position when the" \
-           " program runs. TP reads the joints (PR[n]=JPOS), but CrossArm keeps robtargets in position registers," \
-           " not a jointtarget" in todos(result)[0]  # fmt: skip
-    assert "frame" not in todos(result)[0] and "'jNow' is measured on the robot at l.4" in todos(result)[1]
+    result = run("pNow:=CPos();\nnX:=pNow.x;", "VAR pos pNow;\nVAR num nX;")
+    assert "pNow measured on the robot when the program runs: CPos() reads the robot's position when the" \
+           " program runs. TP reads the TCP (PR[n]=LPOS), but CrossArm keeps robtargets and jointtargets in position" \
+           " registers, not a pos" in todos(result)[0]  # fmt: skip
+    assert "cannot compute a frame" not in todos(result)[0]
 
 
 def test_a_point_whose_assignment_is_left_todo_is_never_moved_to():

@@ -795,7 +795,7 @@ class Converter:
         self.watched: dict[str, str] = {}  # IPers interrupt (upper) -> the register it watches, as armed
         # Points the programs work out at run time, kept in position registers: 'NAME' for module data,
         # 'ROUTINE.NAME' for a routine's own (runtime_points()).
-        self.runtime_points: set[str] = set()
+        self.runtime_points: dict[str, str] = {}  # -> 'robtarget' or 'jointtarget'
         self.not_converted: set[int] = set()  # id() of the statements that ended up in a TODO, for coverage
         self.record_uses: dict[str, tuple[set[int], set[int]]] = {}  # record data -> its registers, flags
         self.parameters: set[str] = set()  # of the routine being translated (upper case)
@@ -1042,6 +1042,9 @@ class Converter:
         pinned = self.config.point_registers
         taken = {f.number for f in self.result.computed_frames if f.number is not None}
         taken |= set(self.config.frame_registers.values()) | set(pinned.values())
+        for key, (_name, _dims, values) in self.arrays.items():  # the whole block of an array the mapping file pins
+            if key in self.config.point_arrays:
+                taken |= set(range(self.config.point_arrays[key], self.config.point_arrays[key] + len(values)))
         free = [k for k in self._banks if k not in taken]
         used: set[str] = set()  # a register asked for by a statement then left TODO is in no program: none for it
         for info in self.result.programs:
@@ -2317,7 +2320,7 @@ class _RoutineTranslator(RuntimePoints):
         to_point, options = m.to_point, ""
         if motion in ("J", "L") and m.kind is not n.MoveKind.ABSJ and (offset := self.tool_offset(m.to_point)):
             to_point, options = offset
-        passed = self.passed_point(to_point, "CROSSARM.POINT") if m.kind is not n.MoveKind.ABSJ else None
+        passed = self.passed_point(to_point, "CROSSARM.POINT") if m.kind is not n.MoveKind.ABSJ else self.joints_kept(to_point)
         passed_via = self.passed_point(m.via_point, "CROSSARM.VIA") if m.via_point is not None else None
         if passed and passed_via and passed.startswith("PR[R[") and passed_via.startswith("PR[R["):
             raise Untranslatable("MoveC through two elements of arrays indexed at run time: one index register"
@@ -4402,6 +4405,8 @@ class _RoutineTranslator(RuntimePoints):
         if isinstance(expr, n.FuncCall) and expr.name.upper() == "STRLEN" and expr.name.upper() not in self.c.computer.functions:
             fixed = self.fixed_text(self.text_arg(expr, 0))
             return str(len(fixed)) if fixed is not None else f"STRLEN {self.text_source(self.text_arg(expr, 0), (1, 2))}"
+        if (joint := self.joint_axis(expr, 1, operation=True)) is not None:  # an axis of a jointtarget kept in PR
+            return joint
         if isinstance(expr, n.BinaryOp) and expr.op in _ARITHMETIC:
             left, right = self.single(expr.left, 1), self.single(expr.right, 2)
             op = f" {expr.op} " if expr.op in ("DIV", "MOD") else expr.op
@@ -4413,7 +4418,9 @@ class _RoutineTranslator(RuntimePoints):
         R[n:Calc<slot>], one operation per line: TP refuses `+` and `*` in one calculation (ASBN-040) and a
         calculation going on after parentheses. The left side is worked out in the slot, the right one in
         the next slots, which never overwrite it. `bare`: a negative constant without its parentheses, as
-        conditions take it."""
+        WaitTime and SUBSTR take it."""
+        if (joint := self.joint_axis(expr, slot)) is not None:  # an axis of a jointtarget kept in PR, in Calc<slot>
+            return joint
         if (isinstance(expr, n.FuncCall) and expr.name.upper() in ("STRLEN", "STRMATCH")
                 and expr.name.upper() not in self.c.computer.functions):  # fmt: skip
             try:

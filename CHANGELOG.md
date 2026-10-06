@@ -11,7 +11,14 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `robot.ini`) into a `TP` folder to copy to a USB stick. Without MakeTP, the report says so and nothing else changes.
   Measured on ROBOGUIDE: the .TP load and run, and decode back to the lines of their .LS (MakeTP probe).
 
+### Converts
+- A jointtarget read on the robot (`j:=CJointT()`) is kept in a joint position register (`PR[k]=JPOS`): its axes
+  `j.robax.rax_i` are read with the measured axis conventions (the ABB values), `MoveAbsJ j` is `J PR[k]`.
+  External axes and writing an axis stay TODO. Measured on both controllers (joints probe).
+
 ### Fixes
+- A position register numbered for a point is never one of the block of an array of points the mapping file
+  pins (a point new to a mapping file given back could be given one).
 - A negative constant in a condition is written in parentheses (`IF (R[1]<(-2.5))`, `WAIT`, a flag set to a
   condition): ROBOGUIDE loads the bare form but stops on it when it runs (INTP-202 syntax error).
 

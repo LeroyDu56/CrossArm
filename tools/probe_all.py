@@ -33,6 +33,8 @@ probe, everything else in local/logs/probe_all.log):
     flagarrays   arrays of bools kept in blocks of flags (F[base+k], F[R[n]]): the totals RobotStudio computes
     pointref     points passed by reference (VAR, INOUT robtarget) changed by the routine, read back after the
                  CALL: the values RobotStudio computes, after the moves
+    joints       jointtargets read on the robot (CJointT -> PR[k]=JPOS), their axes and a MoveAbsJ back to one
+                 (J PR[k], another tool selected): the ABB axes RobotStudio reads, within 0.01 deg
     movedo       an output set on the line after a FINE move (MoveLDO to a fine point): it switches with the TCP
                  on the point
     timeflag     waits with \\MaxTime and \\TimeFlag: the flags RobotStudio sets
@@ -77,6 +79,7 @@ import make_flag_array_probe
 import make_flag_probe
 import make_interrupt_probe
 import make_io_probe
+import make_joint_probe
 import make_maketp_probe
 import make_move_do_probe
 import make_pallet_probe
@@ -357,6 +360,20 @@ def probe_pointref() -> str:
                 lambda: registers_check(make_point_ref_probe.EXPECTED, numbers))  # fmt: skip
 
 
+def probe_joints() -> str:
+    probe = make_joint_probe
+    numbers = probe.registers(probe.conversion())
+
+    def check() -> str:
+        values = roboguide.numreg()
+        wrong = {name: (values.get(numbers[name]), value) for name, value in probe.EXPECTED.items()
+                 if not probe.same(str(values.get(numbers[name])), value)}  # fmt: skip
+        return f"FAIL {wrong} (found, expected)" if wrong else \
+            f"{len(probe.EXPECTED)} registers within {probe.TOLERANCE} deg of the ABB axes"  # fmt: skip
+
+    return _run("joints", probe.PROGRAM, list(numbers.values()), check)
+
+
 def probe_movedo() -> str:
     try:
         distance, delay = make_move_do_probe.measure()
@@ -444,7 +461,7 @@ def main() -> int:
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
               "interrupts": probe_interrupts, "params": probe_params, "records": probe_records, "strings": probe_strings,
-              "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
+              "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "joints": probe_joints, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
               "pallet": probe_pallet, "maketp": probe_maketp,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
