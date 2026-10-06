@@ -35,11 +35,11 @@ import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, fine_given, signature
+from crossarm.convert.blockers import Blocker, Untranslatable
 from crossarm.convert.compute import (
     LAYOUTS,
     PREDEFINED,
@@ -73,7 +73,9 @@ from crossarm.convert.interrupts import scan as scan_interrupts
 from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
+from crossarm.convert.runtime_points import RuntimePoints, expr_nodes, find_runtime_points
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
+from crossarm.convert.tp_numbers import decimal, fmt_number, operand, register_value
 from crossarm.convert.unsupported import (
     RAPID_DATA,
     RAPID_INSTRUCTIONS,
@@ -108,7 +110,6 @@ from crossarm.geometry import (
     mat_mul,
     matrix_to_quat,
     matrix_to_wpr,
-    quat_to_matrix,
     rot_x,
     rot_y,
     rot_z,
@@ -135,72 +136,6 @@ _ARITHMETIC = {"+", "-", "*", "/", "DIV", "MOD"}
 # The data kept in a register: a byte is a whole number from 0 to 255, which R[n] holds as it holds a num.
 _NUMBERS = ("num", "byte")
 _SIGNAL_PREFIX = re.compile(r"^[dD][iIoO](?=[_0-9A-Z])")
-
-
-class Blocker:
-    """What an integrator has to solve, rather than the individual line it happened on.
-
-    A large backup produces hundreds of TODO entries that come down to a handful of
-    causes. Every TODO carries one of these so the report can group them and show
-    which chunks of work are worth doing next.
-    """
-
-    CALL_ARGS = "routine call with arguments"
-    MISSING = "routine or data not in the backup"
-    MOVE_ROUTINE = "move made inside a routine of the backup"
-    MOVE_ROUTINE_ASSUMED = "routine converted as the move it makes"
-    SAVED_FRAME = "frame value as saved in the backup"
-    RUNTIME_FRAME = "frame or tool built at run time"
-    RUNTIME_POSITION = "position built at run time"
-    CALIBRATION = "frame or position measured on the robot (calibration)"
-    PAYLOAD = "payload changed at run time"
-    STATIONARY = "stationary tool or robot-held work object"
-    RECORD = "record component or array element"
-    NO_TP_EQUIVALENT = "RAPID instruction without a TP equivalent"
-    RECORD_VALUE = "record field written as the value the programs set it to"
-    SAVED_VALUE = "PERS no program changes, read at its saved value"
-    LOCAL_RECORD = "record of a routine kept in registers every call shares"
-    TEXT = "text kept in a string register"
-    CONDITION = "condition not convertible"
-    VALUE = "value not known at conversion time"
-    SIGNAL = "I/O signal without a mapping"
-    WAIT_TIMEOUT = "wait with a timeout"
-    MESSAGE_VALUE = "TPWrite showing a value"
-    MESSAGE_CUT = "TPWrite text longer than MESSAGE allows"
-    CAPACITY = "more numbers used than the controller holds"
-    TAKEN = "pinned number already used on the controller"
-    RENAMED = "program renamed so as not to replace another"
-    MOTION = "motion without a TP equivalent"
-    LOOP = "loop without a TP equivalent"
-    AXIS_CONVENTION = "posture converted with the measured axis conventions"
-    REAL_CONTROLLER = "RobOS() taken as TRUE (real controller)"
-    HANDLER = "error handler: other errors stop the program"
-    OPTIONS_IGNORED = "instruction options dropped"
-    MOTION_SETTING = "motion setting (ConfL, SingArea, AccSet, VelSet...)"
-    INTERRUPT = "interrupt (CONNECT, ISignalDI...) and its TRAP"
-    MONITOR = "interrupt watched by a condition monitor (checked periodically)"
-    SEARCH = "search: the FANUC skip stops and fails otherwise"
-    IO_ROUNDED = "I/O written approximately (pulse length)"
-    INTERNAL = "CrossArm internal error"
-    OTHER = "other"
-
-    @staticmethod
-    def rapid(kind: str) -> str:
-        """Category for a construct the parser left out of scope: 'ERROR_HANDLER' -> 'RAPID error handler'."""
-        if kind == "CONNECT":
-            return Blocker.INTERRUPT
-        return "RAPID " + kind.replace("_", " ").lower()
-
-
-class Untranslatable(Exception):
-    """This RAPID construct has no faithful TP equivalent in the current scope.
-
-    `category` is the Blocker it belongs to; the report groups TODO entries by it.
-    """
-
-    def __init__(self, message: str, category: str = Blocker.OTHER) -> None:
-        super().__init__(message)
-        self.category = category
 
 
 # ---------------------------------------------------------------------------
@@ -716,43 +651,6 @@ def fmt_seconds(value: float) -> str:
     return text.replace(" 0.", "  .", 1) if abs(value) < 1 else text
 
 
-def operand(text: str) -> str:
-    """A negative constant in parentheses, as the controller writes it in an assignment, a calculation, a
-    CALL argument or a condition: `R[1]=(-2.5)`, `CALL P((-2.5))`, `IF (R[1]<(-2.5))`. ROBOGUIDE refuses
-    `CALL P(-2.5)` and rewrites `R[1]=-2.5` with the parentheses; it loads `IF (R[1]<-2.5)` and `WAIT
-    (R[1]<-2.5)` as written, but stops on them when they run (INTP-202 syntax error, joints probe)."""
-    return f"({text})" if text.startswith("-") else text
-
-
-def decimal(text: str) -> str:
-    """A constant below 1 as the controller stores it in a CALL argument or a condition: `.5`, `(-.5)`,
-    not `0.5` (ROBOGUIDE, argument and wait probes). Anything else is returned as it is."""
-    return re.sub(r"^(\(?-?)0\.", r"\1.", text)
-
-
-def fmt_number(value: float) -> str:
-    """A constant with the digits the controller runs with: whole numbers as they are, 6 decimals, and as
-    many as the 7 significant digits of a small one need (`.0000015`). ROBOGUIDE lists 6 significant
-    digits (`300.000215` as `300`) but runs with the value written (300.000214, a 32-bit real)."""
-    if float(value).is_integer():
-        return str(int(value))
-    if abs(value) < 0.1:
-        return format(Decimal(f"{value:.7g}"), "f")
-    return f"{value:.6f}".rstrip("0").rstrip(".")
-
-
-# The largest whole number a TP line keeps (ROBOGUIDE): 2147483647 is stored `********`, -2147483648 as -129.
-REGISTER_MAX = 2147483646
-
-
-def register_value(value: float) -> str:
-    """fmt_number() of a constant written in a register line; a TODO past what a register line keeps."""
-    if abs(value) > REGISTER_MAX:
-        raise Untranslatable(f"constant {fmt_number(value)} too large for a TP register: a TP line keeps"
-                             f" {REGISTER_MAX} at most", Blocker.VALUE)  # fmt: skip
-    return fmt_number(value)
-
-
 def _comment(name: str) -> str:
     return ascii_text(name)[:REGISTER_COMMENT_MAX].replace("]", ")")
 
@@ -920,7 +818,7 @@ class Converter:
         wanted = {r.upper() for r in routines} if routines else None
         everything = [r for m in self.modules for r in m.routines]
         self.interrupts = scan_interrupts(everything, self.procs, set(self.move_routines))
-        self.runtime_points = self._runtime_points(everything)
+        self.runtime_points = find_runtime_points(self, everything)
         selected: list[tuple[n.Module, n.Routine]] = []
         skipped: list[n.Routine] = []
         for module in self.modules:
@@ -1638,76 +1536,6 @@ class Converter:
         others = {name for k, name in self.config.programs.items() if k != key.upper()}
         return suffixed(start, taken | others, self.config.program_name_max_length), start
 
-    def _runtime_points(self, routines: list[n.Routine]) -> set[str]:
-        """The robtargets (not arrays, not CONST) some assignment gives a value only known at run time: kept in a
-        position register, which every assignment sets and every read reads, in whatever routine.
-
-        An assignment is known at run time only when it reads what changes then: data the programs change, a
-        routine's own data or parameter, an input or the robot's position (CRobT...), or such a point. One
-        reading the point itself and fixed data (`pTmp.trans.z:=pTmp.trans.z-100`) is worked out where it is,
-        as before: the point stays a P of each move."""
-        assignments: list[tuple[str, n.Assign, set[str], set[str]]] = []  # key, statement, own names, params
-        for routine in routines:
-            own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
-            read = parameters(routine.params)
-            params = set(read[0]) | set(read[1]) if read else set()
-            params |= {s.var.upper() for s in walk_statements(routine.body) if isinstance(s, n.For)}  # its counters
-            for stmt in walk_statements(routine.body):
-                if not isinstance(stmt, n.Assign) or not (path := path_of(stmt.target)):
-                    continue
-                decl = own.get(path[0]) or self.symbols.get_global(path[0])
-                if decl is None or decl.type_name.lower() != "robtarget" or decl.dims or decl.storage == "CONST":
-                    continue
-                key = f"{routine.name}.{decl.name}".upper() if path[0] in own else path[0]
-                assignments.append((key, stmt, set(own), params))
-        found: set[str] = set()
-        for routine in routines:  # passed to a routine changing it (VAR robtarget): read back into its register
-            own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
-            for stmt in walk_statements(routine.body):
-                searched = [a.value for a in stmt.args if a.name is None][1:2] \
-                    if isinstance(stmt, n.ProcCall) and stmt.name.upper() == "SEARCHL" else []  # fmt: skip
-                if searched and isinstance(searched[0], n.Name):  # the point SearchL finds
-                    decl = own.get(searched[0].name.upper()) or self.symbols.get_global(searched[0].name)
-                    if decl is not None and decl.type_name.lower() == "robtarget" and not decl.dims and decl.storage != "CONST":
-                        found.add(f"{routine.name}.{decl.name}".upper() if decl.name.upper() in own else decl.name.upper())
-                layout = self.signatures.get(stmt.name.upper()) if isinstance(stmt, n.ProcCall) else None
-                if not isinstance(layout, Signature) or not layout.points_changed:
-                    continue
-                for slot, value in zip(layout.required, [a.value for a in stmt.args if a.name is None], strict=False):
-                    if not (slot.kind == "robtarget" and slot.by_reference and slot.key in layout.points_changed
-                            and isinstance(value, n.Name)):  # fmt: skip
-                        continue
-                    decl = own.get(value.name.upper()) or self.symbols.get_global(value.name)
-                    if decl is not None and decl.type_name.lower() == "robtarget" and not decl.dims and decl.storage != "CONST":
-                        found.add(f"{routine.name}.{decl.name}".upper() if value.name.upper() in own else decl.name.upper())
-        while True:  # a point reading a point known at run time is one too
-            more = {key for key, stmt, own, params in assignments
-                    if key not in found and self._at_run_time(stmt, own, params, found)}  # fmt: skip
-            if not more:
-                return found
-            found |= more
-
-    def _at_run_time(self, stmt: n.Assign, own: set[str], params: set[str], found: set[str]) -> bool:
-        """Whether an assignment to a point reads what is only known at run time (_runtime_points)."""
-        target = path_of(stmt.target)[0]  # type: ignore[index]
-        try:
-            self.computer.value(stmt.value)
-            return False
-        except Unresolvable:
-            pass
-        for node in _nodes(stmt.value):
-            if isinstance(node, n.FuncCall) and node.name.upper() in _RUNTIME_FUNCTIONS:
-                return True
-            if not isinstance(node, n.Name) or node.name.upper() == target:
-                continue
-            key = node.name.upper()
-            decl = self.symbols.get_global(node.name)
-            if key in own or key in params or key in found:
-                return True
-            if decl is not None and decl.storage != "CONST" and self.computer.written.where((key,)) is not None:
-                return True
-        return False
-
     def _name_conditions(self, selected: list[tuple[n.Module, n.Routine]]) -> None:
         """A condition program for each interrupt whose TRAP is written, named after the interrupt."""
         written = {r.name.upper(): r for _, r in selected if r.kind == "TRAP"}
@@ -2064,7 +1892,7 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator:
+class _RoutineTranslator(RuntimePoints):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2537,180 +2365,6 @@ class _RoutineTranslator:
             self.lines.append(Instruction(text))  # jumped to from just above: the frames selected are still these
         self.lines.append(Motion(motion, target, speed, "FINE", via, options))
         self.lines.append(Instruction(f"LBL[{after}]"))
-
-    # -- points worked out at run time --------------------------------------------------
-
-    def runtime_key(self, name: str) -> str | None:
-        """The key of the position register a point worked out at run time is kept in; None for another data. A
-        robtarget parameter the routine changes is one, in the register the caller passes it in."""
-        if self.args and self.args.kind(name) == "robtarget" and name.upper() in self.args.points_changed:
-            slot = next(s for s in self.args.slots if s.key == name.upper())
-            return f"{self.routine.name}.{slot.name}"  # as the caller names it (point_argument)
-        if name.upper() in self.local_names or self.c.symbols.is_local(name):
-            key = f"{self.routine.name}.{name}".upper()
-        else:
-            key = name.upper()
-        return key if key in self.c.runtime_points else None
-
-    def runtime_set(self, name: str) -> None:
-        """A point kept in a register must have been set: not when its last assignment was left TODO."""
-        unset = self.known.get(f"{name.upper()}#UNSET")
-        if isinstance(unset, Unknown):
-            raise Untranslatable(str(unset.error(name)), Blocker.CALIBRATION if unset.measured else Blocker.RUNTIME_POSITION)
-
-    def runtime_axis(self, expr: n.Expr) -> str | None:
-        """`PR[k,3]` for `pDepose.trans.z`, pDepose kept in PR[k]; None for anything else."""
-        path = path_of(expr) if isinstance(expr, n.Component) else None
-        if not path or not (key := self.runtime_key(path[0])):
-            return None
-        root = expr
-        while isinstance(root, n.Component | n.Index):
-            root = root.base
-        self.runtime_set(root.name if isinstance(root, n.Name) else path[0])
-        axis = {("TRANS", "X"): 1, ("TRANS", "Y"): 2, ("TRANS", "Z"): 3}.get(path[1:])
-        if axis is None:
-            raise Untranslatable(f"{format_expr(expr)}: of a point kept in a position register, TP reads x, y and z",
-                                 Blocker.RUNTIME_POSITION)  # fmt: skip
-        return f"{self.c.point_register(key)[:-1]},{axis}]"
-
-    def runtime_assign(self, a: n.Assign, key: str, path: tuple[str, ...]) -> None:
-        """A point worked out at run time, in its position register PR[k]: a value known now (PR[k]=P[j]); a copy of
-        another one, Offs() of it (component by component); RelTool() of one whose orientation is known now
-        (the displacement turned by it, the new W, P, R written); CRobT() (PR[k]=LPOS, in the frames
-        selected); one of its x, y, z (PR[k,3]=...)."""
-        register = self.c.point_register(key)
-        name = path_of(a.target)[0] if path_of(a.target) else key  # type: ignore[index]
-        turn = f"{name}#ROT"
-        if len(path) > 1:
-            axis = self.runtime_axis(a.target)
-            self.emit(f"{axis}={self.arithmetic(a.value)}")
-            return
-        self._runtime_value(a, register, name, turn)
-        self.known.pop(f"{name}#UNSET", None)  # set whole: readable again
-
-    def _runtime_value(self, a: n.Assign, register: str, name: str, turn: str) -> None:
-        """The whole of a point kept in a register (runtime_assign)."""
-        value = a.value
-        if isinstance(value, n.FuncCall) and value.name.upper() == "CROBT":
-            self.robot_position(value)
-            self.emit(f"{register}=LPOS")
-            self.known[turn] = Unknown(f"is measured on the robot at l.{a.span.line}", measured=True)
-            return
-        if isinstance(value, n.FuncCall) and value.name.upper() == "RELTOOL":
-            orientation = self.turned(value, register)
-            if orientation is not None:
-                self.known[turn] = orientation
-                return
-        try:
-            target = self.c.evaluator.robtarget(value)
-        except Unresolvable:
-            target = None
-        if target is not None:
-            self.emit(f"{register}={self.known_point(value, target, a.span.line)}")
-            self.known[turn] = Typed(tuple(target.pose.rot), "orient")
-            return
-        offs = isinstance(value, n.FuncCall) and value.name.upper() == "OFFS" and len(value.args) == 4 \
-            and all(arg.name is None and arg.value is not None for arg in value.args)  # fmt: skip
-        base = value.args[0].value if offs else value  # type: ignore[union-attr]
-        try:  # Offs() of a point known now, by what is only known at run time: the pallet's corner and the cell
-            fixed = self.c.evaluator.robtarget(base) if offs else None  # type: ignore[arg-type]
-        except Unresolvable:
-            fixed = None
-        if fixed is not None:
-            self.emit(f"{register}={self.known_point(base, fixed, a.span.line)}")  # type: ignore[arg-type]
-            self.add_offsets(register, [arg.value for arg in value.args[1:]])  # type: ignore[union-attr, misc]
-            self.known[turn] = Typed(tuple(fixed.pose.rot), "orient")
-            return
-        if self.passed_point(value, "CROSSARM.POINT", into=register) is None:
-            raise Untranslatable(f"point {format_expr(a.target)} set to {format_expr(value)}: a point kept in a position"
-                                 " register is set to a point, Offs() or RelTool() of one, or CRobT()",
-                                 Blocker.RUNTIME_POSITION)  # fmt: skip
-        source = path_of(base) if isinstance(base, n.Name) else None  # Offs keeps the orientation
-        self.known[turn] = self.known.get(f"{source[0]}#ROT", Unknown("has an orientation known at run time only")) \
-            if source else Unknown("has an orientation known at run time only")  # fmt: skip
-
-    def known_point(self, expr: n.Expr, value: RobTarget, line: int) -> str:
-        """P[j] for a point known now that a position register is set from (`PR[k]=P[j]` keeps its values and
-        configuration, whatever frames are selected and the P is recorded in: ROBOGUIDE). Recorded in the frames
-        selected, else those of the routine's first move (its configuration worked out for them), else UF 0, UT 1."""
-        uf, ut = self.active_uf, self.active_ut
-        if uf is None or ut is None:
-            first = next((s for s in walk_statements(self.routine.body) if isinstance(s, n.Move)), None)
-            try:
-                if first is not None and self.given_frames(first) == (None, None):
-                    uf = uf or self.c.selection("UF", self.c.frame_number("UF", first.wobj, self.name, line))
-                    ut = ut or self.c.selection("UT", self.c.frame_number("UT", first.tool, self.name, line))
-            except Untranslatable:
-                pass
-        return self.point(expr, value, uf or (0, None), ut or (1, None), line)
-
-    def turned(self, call: n.FuncCall, register: str) -> Typed | None:
-        """RelTool() of a point kept in a register whose orientation is known now: the displacement turned into the
-        work object's axes and added component by component, the new orientation written as W, P, R; the
-        orientation it leaves. None when RelTool() is of a point known now (worked out whole)."""
-        positional = [a.value for a in call.args if a.name is None]
-        options = {(a.name or "").upper(): a.value for a in call.args if a.name is not None}
-        if len(positional) != 4 or not isinstance(positional[0], n.Name) or not set(options) <= {"RX", "RY", "RZ"}:
-            return None
-        source = self.runtime_key(positional[0].name)
-        if source is None:
-            return None
-        orientation = self.known.get(f"{positional[0].name.upper()}#ROT")
-        if not isinstance(orientation, Typed):
-            raise Untranslatable(f"RelTool of {positional[0].name}, whose orientation is only known at run time: TP"
-                                 " cannot turn a position register", Blocker.RUNTIME_POSITION)  # fmt: skip
-        try:
-            turns = {axis: self.c.evaluator.constant_number(v) for axis, v in options.items() if v is not None}
-        except Unresolvable as exc:
-            raise Untranslatable(f"RelTool rotation only known at run time ({exc})", Blocker.RUNTIME_POSITION) from exc
-        m = quat_to_matrix(orientation.value)
-        from_register = self.c.point_register(source)
-        if from_register != register:
-            self.emit(f"{register}={from_register}")
-        span = call.span
-        for i in range(3):  # the displacement along the tool's axes, in the work object's
-            terms = [(m[i][j], positional[j + 1]) for j in range(3) if abs(m[i][j]) > 1e-9]
-            try:
-                step = sum(c * self.c.evaluator.constant_number(d) for c, d in terms)  # type: ignore[arg-type]
-                if abs(step) > 1e-9:
-                    sign, size = ("-", -step) if step < 0 else ("+", step)
-                    self.emit(f"{register[:-1]},{i + 1}]={register[:-1]},{i + 1}]{sign}{fmt_number(round(size, 3))}")
-                continue
-            except Unresolvable:
-                pass
-            expr: n.Expr | None = None
-            for c, d in terms:
-                term = n.BinaryOp(span, "*", n.Number(span, round(c, 6), str(round(c, 6))), d)  # type: ignore[arg-type]
-                expr = term if expr is None else n.BinaryOp(span, "+", expr, term)
-            if expr is not None:
-                self.emit(f"{register[:-1]},{i + 1}]={register[:-1]},{i + 1}]+{self.single(expr)}")
-        if turns:
-            rotation = mat_mul(m, mat_mul(rot_x(turns.get("RX", 0.0)), mat_mul(rot_y(turns.get("RY", 0.0)),
-                                                                           rot_z(turns.get("RZ", 0.0)))))  # fmt: skip
-            for axis, angle in zip((4, 5, 6), matrix_to_wpr(rotation), strict=True):
-                self.emit(f"{register[:-1]},{axis}]={operand(fmt_number(round(angle, 3) + 0.0))}")
-            orientation = Typed(tuple(matrix_to_quat(rotation)), "orient")
-        return orientation
-
-    def robot_position(self, call: n.FuncCall) -> None:
-        """CRobT() as LPOS: the TCP in the frames selected, the ones \\Tool and \\WObj name selected first (a
-        selection does not move the robot). Without them RAPID reads in the active tool and work object, those
-        of the last move made, whatever the program: the frames that move selected on the FANUC, and still
-        selected when LPOS reads (a selection lasts until another one)."""
-        wanted = {"UF": self.active_uf, "UT": self.active_ut}
-        for arg in call.args:
-            kind = {"TOOL": "UT", "WOBJ": "UF"}.get((arg.name or "").upper())
-            if kind is None:
-                raise Untranslatable(f"CRobT option \\{arg.name}: LPOS reads the TCP in the frames selected",
-                                     Blocker.CALIBRATION)  # fmt: skip
-            wanted[kind] = self.c.selection(kind, self.c.frame_number(kind, arg.value, self.name, call.span.line))
-        for kind, name, active in (("UF", "UFRAME", self.active_uf), ("UT", "UTOOL", self.active_ut)):
-            if wanted[kind] is not None and wanted[kind] != active:
-                number, bank = wanted[kind]  # type: ignore[misc]
-                if bank is not None:
-                    self.emit(f"{name}[{number}]=PR[{bank}]")
-                self.emit(f"{name}_NUM={number}")
-        self.active_uf, self.active_ut = wanted["UF"], wanted["UT"]
 
     def given_frames(self, m: n.Move) -> tuple[str | None, str | None]:
         """(work object, tool) the move takes from the routine's parameters, as their AR[n]; None for a named
@@ -4701,7 +4355,7 @@ class _RoutineTranslator:
     def measured_point(self, value: n.Expr) -> MeasuredAtRunTime | None:
         """"'pMeas' is measured on the robot at l.4" when the value reads a point kept in a position register
         that was read on the robot (CRobT, as LPOS), or derives from one; None otherwise."""
-        for node in _nodes(value):
+        for node in expr_nodes(value):
             if isinstance(node, n.Name) and self.runtime_key(node.name) is not None:
                 turn = self.known.get(f"{node.name.upper()}#ROT")
                 if isinstance(turn, Unknown) and turn.measured:
@@ -5162,22 +4816,6 @@ class _RoutineTranslator:
                 if isinstance(expr, n.Name) and self.absent(expr.name):  # IF bReady ...: declared nowhere
                     raise self.not_in_backup(expr.name, "data")
         raise Untranslatable(f"condition not convertible: {format_expr(expr)}", Blocker.CONDITION)
-
-
-# Functions whose value is only known at run time: the robot's position, inputs
-_RUNTIME_FUNCTIONS = frozenset({"CROBT", "CJOINTT", "CPOS", "CTOOL", "CWOBJ", "DINPUT", "DOUTPUT", "GINPUT", "GOUTPUT",
-                                "AINPUT", "AOUTPUT", "TESTDI", "READNUM", "CLKREAD"})  # fmt: skip
-
-
-def _nodes(node: object) -> Iterable[object]:
-    """Every node of an expression, itself first."""
-    yield node
-    if isinstance(node, tuple | list):
-        for item in node:
-            yield from _nodes(item)
-    elif hasattr(node, "__dataclass_fields__") and not isinstance(node, n.Span):
-        for name in node.__dataclass_fields__:
-            yield from _nodes(getattr(node, name))
 
 
 def _as_assignment(call: n.ProcCall, name: str, positional: list[n.Expr]) -> n.Assign:
