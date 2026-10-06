@@ -14,6 +14,8 @@ complete the tags are read into ProgramInfo.sources, one per TP line, None for a
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from crossarm.fanuc.tp import Motion
+
 
 class SourceTags:
     """The RAPID line of each TP line a routine's translator wrote, by line object."""
@@ -81,3 +83,18 @@ def side_by_side(sources: Sequence[int | None], first: int, last: int) -> list[R
         i = j
     rows.extend(Row(k, ()) for k in range(shown, last + 1))
     return rows
+
+
+def tp_text(line: object) -> list[str]:
+    """A TP line as the .LS shows it, without number and ';': two lines for a circular move."""
+    if isinstance(line, Motion):
+        tail = f"{line.speed} {line.termination}" + (f" {line.options}" if line.options else "")
+        if line.kind == "C":
+            return [f"C {line.via}", f"   {line.target} {tail}"]
+        return [f"{line.kind} {line.target} {tail}"]
+    return [getattr(line, "text", str(line))]
+
+
+def line_anchor(program: str, line: int) -> str:
+    """The id of a RAPID line in the report page: its row in the program's side-by-side view."""
+    return f"L-{program}-{line}"

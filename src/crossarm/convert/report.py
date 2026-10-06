@@ -133,7 +133,6 @@ def _payload_section(result: ConversionResult, config: ConversionConfig) -> list
     gripped = [s for s in result.grip_payloads if s.load is not None or s.tool.upper() not in listed]
     if not known and not unknown and not gripped:
         return []
-    limit = config.limits.get("UTOOL")
     lines = [
         "### Payloads to set up (PAYLOAD)",
         "",
@@ -153,6 +152,18 @@ def _payload_section(result: ConversionResult, config: ConversionConfig) -> list
         ),
         "",
     ]
+    headers = ["PAYLOAD", "RAPID tooldata", "Mass (kg)", "Centre X, Y, Z (cm)", "Inertia X, Y, Z (kgf.cm.s2)", "Note"]
+    lines += _table(headers, payload_rows(result, config))
+    return lines
+
+
+def payload_rows(result: ConversionResult, config: ConversionConfig) -> list[list[str]]:
+    """One row per payload schedule to set: schedule, RAPID name, mass (kg), centre (cm), inertia (kgf.cm.s2),
+    note. The schedule is "—" when there is none for it."""
+    known, unknown = result.payloads(), result.unknown_payloads()
+    listed = {f.rapid_name.upper() for f in known}
+    gripped = [s for s in result.grip_payloads if s.load is not None or s.tool.upper() not in listed]
+    limit = config.limits.get("UTOOL")
     rows = []
     for f in known:
         load = f.frame.load if f.frame else None
@@ -180,9 +191,7 @@ def _payload_section(result: ConversionResult, config: ConversionConfig) -> list
         rows.append([str(s.number) if s.number is not None else "—", name, f"{p.mass:g}",
                      ", ".join(_fixed(c / 10, 3) for c in p.cog), ", ".join(_fixed(i / KGF_CM_S2, 4) for i in p.inertia),
                      "; ".join(notes)])  # fmt: skip
-    headers = ["PAYLOAD", "RAPID tooldata", "Mass (kg)", "Centre X, Y, Z (cm)", "Inertia X, Y, Z (kgf.cm.s2)", "Note"]
-    lines += _table(headers, rows)
-    return lines
+    return rows
 
 
 def _move_routine_section(result: ConversionResult) -> list[str]:

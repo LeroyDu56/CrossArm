@@ -8,6 +8,7 @@ reads from file:// in any browser. Without its script every section is still the
 filters, the search and the jumps from a TODO to its place.
 
     Summary          the figures, then the summary of the Markdown report
+    Checklist        commissioning on the FANUC cell, in order, ticked off in the browser (crossarm.convert.checklist)
     Items to review  every TODO and warning, filtered by kind, cause and program, or searched
     RAPID and TP     each program, its RAPID routine and the TP written from it side by side, line by line
                      (crossarm.convert.source_map), the lines left TODO marked with their cause and why
@@ -21,14 +22,15 @@ import html
 import re
 from collections import Counter, defaultdict
 
+from crossarm.convert.checklist import CHECKLIST_CSS, CHECKLIST_JS, checklist_section
 from crossarm.convert.config import ConversionConfig
 from crossarm.convert.coverage import fmt_percent
 from crossarm.convert.html import CSS as MARKDOWN_CSS
 from crossarm.convert.html import inline, markdown_body
 from crossarm.convert.report import report_parts
-from crossarm.convert.source_map import Row, side_by_side
+from crossarm.convert.source_map import Row, line_anchor, side_by_side, tp_text
 from crossarm.convert.translate import ConversionResult, Note, ProgramInfo
-from crossarm.fanuc.tp import Motion
+from crossarm.fanuc.maketp import TpExport
 from crossarm.licence import LicenceStatus
 
 Section = tuple[str, str, str]  # (id, menu label, HTML)
@@ -40,26 +42,12 @@ def _e(text: object) -> str:
     return html.escape(str(text), quote=True)
 
 
-def _anchor(program: str, line: int) -> str:
-    return f"L-{program}-{line}"
-
-
 def routine_end(source: list[str], first: int) -> int:
     """The line of the ENDPROC (ENDFUNC, ENDTRAP) closing the routine starting at `first`."""
     for number in range(first, len(source) + 1):
         if _END.match(source[number - 1].split("!", 1)[0]):
             return number
     return len(source)
-
-
-def tp_text(line: object) -> list[str]:
-    """A TP line as the .LS shows it, without number and ';': two lines for a circular move."""
-    if isinstance(line, Motion):
-        tail = f"{line.speed} {line.termination}" + (f" {line.options}" if line.options else "")
-        if line.kind == "C":
-            return [f"C {line.via}", f"   {line.target} {tail}"]
-        return [f"{line.kind} {line.target} {tail}"]
-    return [getattr(line, "text", str(line))]
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +108,7 @@ def _program_view(info: ProgramInfo, result: ConversionResult, notes: list[Note]
         kind = ' class="todo"' if any(n.kind == "TODO" for n in here) else ' class="warn"' if here else ""
         text = source[row.rapid - 1] if source and row.rapid <= len(source) else ""
         anchors.add((name, row.rapid))
-        out.append(f'<tr id="{_e(_anchor(name, row.rapid))}"{kind}><td class="n">{row.rapid}</td>'
+        out.append(f'<tr id="{_e(line_anchor(name, row.rapid))}"{kind}><td class="n">{row.rapid}</td>'
                    f'<td class="c">{_e(text.rstrip())}</td>{tp_cells}</tr>')  # fmt: skip
         out.append(_note_rows(here))
     out.append("</tbody></table>")
@@ -190,7 +178,7 @@ def _review_section(result: ConversionResult, anchors: set[tuple[str, int]]) -> 
     for note in notes:
         kind = "todo" if note.kind == "TODO" else "warn"
         if note.program and note.rapid_line and (note.program, note.rapid_line) in anchors:
-            where = f'<a href="#{_e(_anchor(note.program, note.rapid_line))}">{note.rapid_line}</a>'
+            where = f'<a href="#{_e(line_anchor(note.program, note.rapid_line))}">{note.rapid_line}</a>'
         elif note.program in shown:
             where = f'<a href="#p-{_e(note.program)}">{note.rapid_line or "—"}</a>'
         else:
@@ -344,6 +332,9 @@ _JS = r"""
     var a = ev.target.closest && ev.target.closest('a[href^="#"]');
     if (!a) { return; }
     if (a.dataset.cause !== undefined && $('f-cause')) { $('f-cause').value = a.dataset.cause; $('f-kind').value = 'TODO'; review(); }
+    if (a.dataset.prog !== undefined && $('f-prog')) {
+      $('f-text').value = ''; $('f-cause').value = ''; $('f-kind').value = 'TODO'; $('f-prog').value = a.dataset.prog; review();
+    }
     if (a.getAttribute('href') === location.hash) { setTimeout(go, 0); }
   });
 
@@ -393,15 +384,16 @@ _JS = r"""
 
 def build_html_report(result: ConversionResult, config: ConversionConfig, sources: list[str],
                       licence: LicenceStatus | None = None, *, title: str, extra: str = "",
-                      lead: list[str] | None = None) -> str:  # fmt: skip
+                      lead: list[str] | None = None, tp: TpExport | None = None, tp_where: str = "") -> str:  # fmt: skip
     """The page. `extra`: Markdown the pipeline adds to the report (the .TP export, syntax errors);
-    `lead`: the lines the pipeline writes first in each program (the licence mark), numbered before the rest."""
+    `lead`: the lines the pipeline writes first in each program (the licence mark), numbered before the rest;
+    `tp`: the .TP export when one was asked for, in `tp_where` (the TP folder, as the report names it)."""
     parts = dict(report_parts(result, config, sources, licence))
     anchors: set[tuple[str, int]] = set()
     code = _code_section(result, lead or [], anchors)  # first: the review links to the lines it shows
     sections = [
         _summary_section(result, parts["summary"]),
-        # 1.5-04: the commissioning checklist goes here, as one more section.
+        checklist_section(result, config, anchors, identity=f"{title}|{'|'.join(sources)}", tp=tp, tp_where=tp_where),
         _review_section(result, anchors),
         code,
         _details_section(parts, extra),
@@ -411,8 +403,8 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>{_e(title)}</title>\n<style>{MARKDOWN_CSS}{_CSS}</style>\n</head>\n<body><main>\n"
+        f"<title>{_e(title)}</title>\n<style>{MARKDOWN_CSS}{_CSS}{CHECKLIST_CSS}</style>\n</head>\n<body><main>\n"
         f'<header class="top">\n{markdown_body(chr(10).join(parts["head"]))}\n</header>\n'
         f'<nav class="menu" aria-label="Sections">{menu}</nav>\n{page}\n'
-        f"</main>\n<script>{_JS}</script>\n</body>\n</html>\n"
+        f"</main>\n<script>{_JS}{CHECKLIST_JS}</script>\n</body>\n</html>\n"
     )

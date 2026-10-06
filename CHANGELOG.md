@@ -13,6 +13,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - An interactive `crossarm_report.html`: each program's RAPID routine and TP side by side, line by line, TODO
   lines marked with their cause; the items to review filtered by kind, cause and program, or searched, each
   leading to its line. One self-contained page (nothing loaded, works offline), light and dark, printable.
+- A commissioning checklist in that page, in the order the cell is brought up: loading (.LS or .TP), frames and
+  tools with their values, payloads, I/O, registers, TODO lines, points to touch up, motion and assumptions to
+  check, each item linked to the lines using it. Ticks are kept in the browser, per report; it prints with its boxes.
 
 ### Converts
 - A jointtarget read on the robot (`j:=CJointT()`) is kept in a joint position register (`PR[k]=JPOS`): its axes

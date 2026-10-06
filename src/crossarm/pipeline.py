@@ -208,7 +208,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
     (folder / "crossarm_report.md").write_text(build_report(result, config, names, licence) + extra, encoding="utf-8")
     out.report_html = folder / "crossarm_report.html"
     page = build_html_report(result, config, names, licence, title=f"CrossArm - {source.name} - {task.name}",
-                             extra=extra, lead=_mark(licence))  # fmt: skip
+                             extra=extra, lead=_mark(licence), tp=out.tp,
+                             tp_where=os.path.relpath(tp[1], folder) if tp else "")  # fmt: skip
     out.report_html.write_text(page, encoding="utf-8")
     # The numbering this run used, ready to edit and feed back with --map.
     (folder / "crossarm_mapping.json").write_text(build_mapping(result, config), encoding="utf-8")
