@@ -67,7 +67,7 @@ from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
 from crossarm.convert.interrupts import GAPS, SINGLE_OPTIONS, Interrupt, arming, called_by, changed_by, connected
 from crossarm.convert.interrupts import scan as scan_interrupts
-from crossarm.convert.motion import corner
+from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
@@ -321,8 +321,6 @@ class Capacity:
         return not self.over
 
 
-# Statements a zoned move blends past: the next move after them is the one the corner leads into.
-_BLENDED_PAST = frozenset({"SET", "RESET", "SETDO", "SETGO", "SETAO", "PULSEDO", "INVERTDO"})
 # Motion settings: what FANUC does without them, or where they need a person (see motion_setting()).
 _MOTION_SETTINGS = frozenset({"CONFL", "CONFJ", "SINGAREA", "CIRPATHMODE", "ACCSET", "VELSET"})
 _INTERRUPTS = frozenset({"IDELETE", "ISIGNALDI", "ISIGNALDO", "ISIGNALGI", "ISIGNALGO", "ISIGNALAI", "ISIGNALAO",
@@ -373,10 +371,6 @@ PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAY
 _TOOL_ARGUMENT = {"MOVELDO": 3, "MOVEJDO": 3, "MOVECDO": 4, "MOVELAO": 3, "MOVEJAO": 3, "MOVECAO": 4,
                   "MOVELGO": 3, "MOVEJGO": 3, "MOVECGO": 4, "TRIGGL": 4, "TRIGGJ": 4, "TRIGGC": 5,
                   "SEARCHL": 4, "SEARCHJ": 4, "SEARCHC": 5}  # fmt: skip
-
-
-def _passed_through(stmt: n.Stmt) -> bool:
-    return isinstance(stmt, n.Comment) or (isinstance(stmt, n.ProcCall) and stmt.name.upper() in _BLENDED_PAST)
 
 
 @dataclass(frozen=True)
@@ -2233,8 +2227,8 @@ class _RoutineTranslator:
         for i, stmt in enumerate(stmts):
             # The move that follows a move, past what the robot does not stop for: a corner into a faster
             # move is rounded more.
-            following = next((s for s in stmts[i + 1 :] if not _passed_through(s)), None)
-            self.next_speed = following.speed if isinstance(stmt, n.Move) and isinstance(following, n.Move) else None
+            following = next_move(stmts, i)
+            self.next_speed = following.speed if following is not None else None
             self.after = stmts[i + 1 :]
             self.number_slots = set()
             self.text_slots: set[int] = set()  # the scratch string registers the statement being written uses

@@ -31,6 +31,8 @@ angles and short moves: the FANUC stays within about 1 mm of the ABB's path, or 
 from dataclasses import dataclass
 from itertools import pairwise
 
+from crossarm.rapid import nodes as n
+
 Table = dict[float, tuple[tuple[float, float], ...]]  # speed -> ((zone radius or CNT, corner cut mm), ...)
 
 
@@ -237,7 +239,24 @@ def profile_for(model: str | None) -> tuple[MotionProfile, str]:
     return M20ID_25, ""
 
 
+# Statements a zoned move blends past: the next move after them is the one the corner leads into.
+_BLENDED_PAST = frozenset({"SET", "RESET", "SETDO", "SETGO", "SETAO", "PULSEDO", "INVERTDO"})
+
+
+def next_move(stmts: tuple[n.Stmt, ...], i: int) -> n.Move | None:
+    """The move the corner of stmts[i] leads into, past what the robot does not stop for; None when stmts[i]
+    is not a move or no move follows it in its block."""
+    if not isinstance(stmts[i], n.Move):
+        return None
+    following = next((s for s in stmts[i + 1 :] if not _passed_through(s)), None)
+    return following if isinstance(following, n.Move) else None
+
+
+def _passed_through(stmt: n.Stmt) -> bool:
+    return isinstance(stmt, n.Comment) or (isinstance(stmt, n.ProcCall) and stmt.name.upper() in _BLENDED_PAST)
+
+
 __all__ = [
     "M20ID_25", "PROFILES", "R1000IA_80F", "R2000IC_190S", "Corner", "MotionProfile", "abb_cut", "corner", "family", "fanuc_cut",
-    "profile_for",
+    "next_move", "profile_for",
 ]  # fmt: skip
