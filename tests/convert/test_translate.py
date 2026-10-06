@@ -959,6 +959,17 @@ def test_a_call_to_a_routine_of_the_backup_using_files_or_sockets_is_said_so(bod
     assert [(n.category, n.message.split(" — ")[0]) for n in found] == [(Blocker.NO_TP_EQUIVALENT, message)]
 
 
+
+def test_a_call_to_a_routine_using_sockets_is_said_so_before_its_parameters():
+    """Whatever it is given, the routine talks over a socket: that is why the call stays TODO."""
+    procs = SOCKETS + "\nPROC ReadReply(INOUT bool bOk)\n  bOk:=Ask(\"ok\")=\"1\";\nENDPROC"
+    result = run("ReadReply bDone;", "VAR socketdev sCam;\nVAR bool bDone;", extra_procs=procs)
+    found = [n for n in result.notes if n.kind == "TODO" and n.program == result.programs[0].program.name]
+    assert [(n.category, n.message.split(" — ")[0]) for n in found] == [
+        (Blocker.NO_TP_EQUIVALENT, "ReadReply, through Ask, SendLine, calls SocketSend: sockets: TP has no network messaging"),
+    ]  # fmt: skip
+
+
 def test_a_text_a_function_of_the_backup_gives_is_said_so():
     result = run("sName:=Label(nKind);", "VAR string sName;\nVAR num nKind;", extra_procs=SOCKETS)
     found = [n for n in result.notes if n.kind == "TODO"]

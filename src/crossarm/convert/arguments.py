@@ -182,10 +182,10 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
             frame = type_name.lower() in ("tooldata", "wobjdata")
             if mode in ("VAR", "INOUT") and frame:
                 return f"{type_name} parameter {name} is passed by reference ({mode}): a frame is passed by its number"
-            if mode and not frame and (type_name.lower() not in ("num", "robtarget") or dims or optional):
-                return f"{type_name} parameter {name} is passed by reference ({mode}): only a num or a point is read back"
             if dims:
                 return f"parameter {name} is an array: TP arguments are single values"
+            if mode and not frame and not optional and type_name.lower() not in ("num", "robtarget"):
+                return f"{type_name} parameter {name} is passed by reference ({mode}): only a num or a point is read back"
             if frame and (reason := _frame_uses(routine, name)):
                 return reason
             if optional:

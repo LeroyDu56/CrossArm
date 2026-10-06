@@ -63,6 +63,9 @@ def test_parameters_map_to_ar_in_order_switches_last():
     ("INOUT tooldata t", "tooldata parameter t is passed by reference (INOUT)"),
     ("\\num speed", "optional num parameter speed"),
     ("num list{*}", "parameter list is an array"),
+    ("INOUT num list{*}", "parameter list is an array"),
+    ("\\INOUT num list{*}", "parameter list is an array"),
+    ("\\INOUT num count", "optional num parameter count"),
     (",".join(f"num a{i}" for i in range(11)), "11 parameters: a TP CALL takes at most 10 arguments"),
 ])  # fmt: skip
 def test_what_tp_cannot_pass_is_said(params, reason):

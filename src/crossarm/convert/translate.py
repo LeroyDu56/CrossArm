@@ -3291,6 +3291,8 @@ class _RoutineTranslator:
             self.routine_move(call, self.c.move_routines[name])
         elif isinstance(self.c.signatures.get(name), Signature) and name in self.c.program_names:
             self.call_with_args(call, self.c.signatures[name])  # type: ignore[arg-type]
+        elif isinstance(self.c.signatures.get(name), str) and (through := self.c.routine_use.of(call)) is not None:
+            raise Untranslatable(through, Blocker.NO_TP_EQUIVALENT)  # its files or sockets, before its parameters
         elif isinstance(self.c.signatures.get(name), str):
             raise Untranslatable(f"{call.name} is not converted: {self.c.signatures[name]}", Blocker.CALL_ARGS)
         elif name not in self.c.procs and name not in self.c.computer.functions and name not in RAPID_INSTRUCTIONS:

@@ -29,6 +29,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   or through the routines it calls, is "RAPID instruction without a TP equivalent", saying which
   (`LogLine calls Open`, `Ask, through SendLine, calls SocketSend`). A text a function of the backup gives, or an
   element of an array of texts, says so instead of "only known at run time".
+- The same holds for a call to such a routine whose parameters TP cannot take (`ToFile \Text:=...`): files or
+  sockets are why it stays TODO. An array parameter passed by reference (`INOUT num regs{*}`) is said to be an
+  array, and an optional one (`\INOUT num count`) optional, instead of "only a num or a point is read back".
 
 ## 1.3.0 — 2026-10-05
 
