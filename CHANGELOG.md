@@ -41,6 +41,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   says what TP reads and why it stays TODO, instead of a frame TP cannot compute; a position a function of the
   backup gets over a socket (`pPart:=Detect()`, a camera) is "RAPID instruction without a TP equivalent"; a frame
   computed from a point read with `CRobT()` is a calibration.
+- A byte array passed to a routine (`Combine bHead,7,bAll`) that the caller also hands to a socket or
+  a file, directly or through a routine of the backup, is a frame: "RAPID instruction without a TP equivalent",
+  saying where it goes (`bHead, given to Combine, is a byte buffer also passed to ReadFrame, which calls
+  SocketReceive`), instead of an array parameter TP arguments cannot take.
 
 ## 1.3.0 — 2026-10-05
 

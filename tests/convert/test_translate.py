@@ -1003,6 +1003,44 @@ def test_a_call_to_a_routine_using_sockets_is_said_so_before_its_parameters():
     ]  # fmt: skip
 
 
+BUFFERS = SOCKETS + """
+PROC ReadFrame(INOUT byte bIn{*})
+  SocketReceive sCam\\Data:=bIn;
+ENDPROC
+PROC Combine(byte bA{*},num nLen,INOUT byte bOut{*})
+  FOR i FROM 1 TO nLen DO
+    bOut{i}:=bA{i};
+  ENDFOR
+ENDPROC
+PROC Clear(\\INOUT byte bTable{*})
+  bTable{1}:=0;
+ENDPROC"""
+
+
+@pytest.mark.parametrize(("body", "message"), [
+    ("ReadFrame bHead;\nCombine bHead,7,bAll;",
+     ("bHead, given to Combine, is a byte buffer also passed to ReadFrame, which calls SocketReceive: sockets: TP has"
+      " no network messaging")),
+    ("Clear\\bTable:=bAll;\nSocketSend sCam\\Data:=bAll;",
+     "bAll, given to Clear, is a byte buffer also passed to SocketSend: sockets: TP has no network messaging"),
+])  # fmt: skip
+def test_a_byte_array_the_caller_also_sends_or_receives_is_said_to_be_a_frame(body, message):
+    """A byte array passed to a routine is a frame when the caller also hands it to a socket: that is why, not the
+    array; the socket statement stays TODO for itself."""
+    data = "VAR socketdev sCam;\nVAR byte bHead{7};\nVAR byte bAll{300};"
+    result = run(body, data, extra_procs=BUFFERS)
+    found = [n for n in result.notes if n.kind == "TODO" and n.program == result.programs[0].program.name]
+    assert (Blocker.NO_TP_EQUIVALENT, message) in [(n.category, n.message.split(" — ")[0]) for n in found]
+
+
+def test_a_byte_array_kept_away_from_files_and_sockets_is_still_an_array_parameter():
+    result = run("Combine bHead,7,bAll;", "VAR byte bHead{7};\nVAR byte bAll{300};", extra_procs=BUFFERS)
+    found = [n for n in result.notes if n.kind == "TODO" and n.program == result.programs[0].program.name]
+    assert [(n.category, n.message.split(" — ")[0]) for n in found] == [
+        (Blocker.CALL_ARGS, "Combine is not converted: parameter bA is an array: TP arguments are single values"),
+    ]  # fmt: skip
+
+
 RAISING_DATA = "VAR socketdev sCam;\nVAR string sAnswer;\nVAR errnum ERR_LINK:=-1;\nVAR errnum ERR_PART:=-1;"
 RAISING = SOCKETS + """
 PROC CheckLink()

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BUSL-1.1
 
 """What TP has nothing for, or does otherwise: RAPID instructions, functions and data types a statement
-using one stays TODO for, with why, as does a call to a routine of the backup using files or sockets, and the ERROR
-handler of such a routine; and RAPID's own instructions and data, which a backup never declares."""
+using one stays TODO for, with why, as does a call to a routine of the backup using files or sockets, or given a byte
+array its caller sends or receives, and the ERROR handler of such a routine; and RAPID's own instructions and data, which a backup never declares."""
 
 import re
 from collections import defaultdict
@@ -182,6 +182,32 @@ class RoutineUse:
         called, why = what.split(": ", 1)
         return f"{called}, called through {', '.join(through)}: {why}"
 
+    def byte_buffer(self, call: n.ProcCall, caller: Iterable[n.Stmt]) -> str | None:
+        """'mbapBytes, given to ArrayCombine, is a byte buffer also passed to MbReceiveBytes, which calls
+        SocketReceive: sockets: ...' when the call gives a byte array parameter of the backup's routine data the
+        caller (its statements) hands to what uses files, sockets or byte buffers too: a frame, not numbers."""
+        routine = self.routines.get(call.name.upper())
+        if routine is None or not (given := _byte_arrays_given(call, routine.params)):
+            return None
+        for stmt in walk_statements(caller):
+            for node in nodes(stmt):
+                if not isinstance(node, n.ProcCall | n.FuncCall) or node is call:
+                    continue
+                passed = {v.name.upper() for v in nodes(node.args) if isinstance(v, n.Name)}
+                if not (shared := [name for name in given if name.upper() in passed]):
+                    continue
+                upper = node.name.upper()
+                if upper not in self.routines and NO_TP.get(upper) in _PASSED_ON:
+                    where = f"{node.name}: {NO_TP[upper]}"
+                elif (found := self._uses(upper)) is not None:
+                    through, what = found
+                    via = f", through {', '.join(through)}," if through else ""
+                    where = f"{self.routines[upper].name}, which{via} calls {what}"
+                else:
+                    continue
+                return f"{shared[0]}, given to {call.name}, is a byte buffer also passed to {where}"
+        return None
+
     def _uses(self, key: str) -> tuple[tuple[str, ...], str] | None:
         """(the routines in between, 'Open: why') for the routine `key`; None if it uses none."""
         if key in self._found or key not in self.routines:
@@ -197,6 +223,23 @@ class RoutineUse:
                     self._found[key] = ((self.routines[upper].name, *inner[0]), inner[1])
                     return self._found[key]
         return None
+
+
+def _byte_arrays_given(call: n.ProcCall, params: str) -> list[str]:
+    """The data the call gives to the byte array parameters of a routine with these raw parameters, in order."""
+    required: list[bool] = []  # whether each required parameter is a byte array, in order
+    optional: set[str] = set()  # the optional ones that are
+    for part in (p.strip() for p in re.split(r",|(?=\\)", params)):
+        for alternative in part.lstrip("\\").split("|") if part else ():
+            is_bytes = re.search(r"\bbyte\s+(\w+)\s*\{", alternative, re.IGNORECASE)
+            if part.startswith("\\"):
+                optional |= {is_bytes[1].upper()} if is_bytes else set()
+            else:
+                required.append(bool(is_bytes))
+    positional = [a for a in call.args if a.name is None]
+    found = [a.value for a, is_bytes in zip(positional, required, strict=False) if is_bytes]
+    found += [a.value for a in call.args if a.name is not None and a.name.upper() in optional]
+    return [v.name for v in found if isinstance(v, n.Name)]
 
 
 def _errno(expr: object) -> bool:
