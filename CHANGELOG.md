@@ -3,7 +3,17 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.4.0 — 2026-10-06
+
+Routines given their speed and zone, converted, and what is left told apart by cause. A routine taking
+`speeddata` and `zonedata` parameters makes its moves with what each call gives it, measured on both
+controllers before CrossArm writes it; bytes, waits of a calculated time, `CRobT()` in the frames selected
+and RAPID's math functions of fixed data are converted too. The report now says when a routine or data is
+not in the backup, and when the RAPID left is what TP has nothing for (files, sockets, operator dialogs,
+positions read on the robot), rather than a conversion still to come. On the three RobotWare backups of the
+test corpus, the share of RAPID instructions converted stays at 86 %, 93 % and 87 %; on public open-source
+programs it is about 60 % (what that means: [docs/validation.md](docs/validation.md#public-programs)).
+A mapping file written for 1.0 to 1.3 gives the same numbers.
 
 ### Converts
 - A routine given its speed and zone (`PROC Approach(robtarget p,speeddata v,zonedata z)`) that makes its MoveJ,

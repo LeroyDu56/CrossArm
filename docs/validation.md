@@ -15,7 +15,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | RAPID instructions converted, our test corpus, written for testing | 86 % to 93 % |
 | Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes, run again on both simulators for this version | 26 of 26 give what was measured |
+| The controller probes on both simulators: the one added in 1.4 run for this version, the 26 others run again for 1.3.0, their programs unchanged since | 27 of 27 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -38,6 +38,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Waits with `\MaxTime` and `\TimeFlag`, run on both controllers | the flags RAPID sets |
 | `SearchL` converted to a skip, run on ROBOGUIDE with the input switched as the TCP passes a point | the point found within 0.1 mm of where the input switched |
 | Arrays of bools kept in flags, run on both controllers | the values RAPID computes |
+| Routines given their speed and zone, run on both controllers | the time of the same moves written with constants, to 5 ms |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -70,6 +71,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 29. [Waits with a time flag, run](#29-waits-with-a-time-flag-run)
 30. [A search, run](#30-a-search-run)
 31. [Arrays of bools, run](#31-arrays-of-bools-run)
+32. [Speeds and zones given to a routine, run](#32-speeds-and-zones-given-to-a-routine-run)
 
 ## 1. The test corpus
 
@@ -288,7 +290,8 @@ the results are read from the virtual controller's `HOME:` folder:
 | waits with a time flag | 2 registers as RAPID computes them ([section 29](#29-waits-with-a-time-flag-run)) |
 | a search | the point found within 0.1 mm of the switch, `\Sup` on to the point, a pause with the input on at the start ([section 30](#30-a-search-run)) |
 | arrays of bools | 4 registers as RAPID computes them ([section 31](#31-arrays-of-bools-run)) |
-| ABB probe modules (RobotStudio) | the 15 modules write what RobotStudio measured before, number for number |
+| speeds and zones given to a routine | 1 register as RAPID computes it, the moves in the time they take with constants ([section 32](#32-speeds-and-zones-given-to-a-routine-run)) |
+| ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -824,3 +827,30 @@ programs:
 | slots set | 5 | 5 |
 | sum of i*10+j over the elements of the 2 x 3 array set | 44 | 44 |
 | an element and another set at fixed indices both set; an element clear | 1, 1 | 1, 1 |
+
+## 32. Speeds and zones given to a routine, run
+
+A routine given its speed and zone (`PROC SpdMoves(speeddata v,zonedata z)`) makes its moves with them. TP
+takes neither an argument as the speed of a move nor as its CNT: ROBOGUIDE refuses `L P[1] AR[1]mm/sec`,
+`J P[1] AR[1]%` and `CNT AR[1]` at load (ASBN-092), and a negative argument (`CALL X(25,-1)`), but loads
+`J P[1] R[20]%`. So the call passes numbers worked out from the speed and the zone as each move would be
+written with them, the mm/s, the joint % and the CNT of each corner (`CALL SPDMOVES(400,9,100,100)`), and the
+routine copies them to registers where it starts (`R[1:v.tcp]=AR[1]`) and moves with those,
+`L P[2] R[1]mm/sec CNT R[4]`. `fine` given for the zone is passed as 101: a move through it is written both
+ways, `IF R[4]>100,JMP LBL[3]`, the move with `CNT R[4]`, else with `FINE`.
+
+[tools/make_speed_arg_probe.py](../tools/make_speed_arg_probe.py) converts a module calling such a routine
+three times (`v400,z50`; a speeddata of its own at 200 mm/s and `z10`; `v400,fine`), each followed by the same
+three moves written with those constants, every run timed with a clock. RobotStudio runs the RAPID,
+ROBOGUIDE the converted programs:
+
+| Run | RobotStudio, routine / constants | ROBOGUIDE, routine / constants |
+|---|---|---|
+| `v400`, `z50` | 5.476 s / 5.476 s | 10.584 s / 10.579 s |
+| 200 mm/s, `z10` | 10.936 s / 10.936 s | 23.216 s / 23.211 s |
+| `v400`, `fine` | 5.796 s / 5.796 s | 11.074 s / 11.071 s |
+| calls made | 3 | 3 |
+
+On each controller the routine takes the time of the moves written with constants, to 5 ms: the corner is
+rounded across the lines of the double form. The two robots differ from each other as their moves do
+([section 12](#12-speeds-and-zones-measured-on-both-robots)); only the pairs on the same controller compare.

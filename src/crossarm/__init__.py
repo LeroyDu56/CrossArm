@@ -3,4 +3,4 @@
 
 """CrossArm — industrial robot program converter (ABB RAPID -> FANUC TP)."""
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"

@@ -95,8 +95,8 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
 - **I/O**: digital, group and analog signals, typed by the backup's `EIO.cfg`, pulses, clocks; waits,
   including a wait with a time limit and its error handler.
 - **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR`, `WHILE`, conditions calling the backup's own functions, calls with
-  num, bool, string, point (robtarget), record, tool, work object and switch arguments, nums passed by
-  reference, the integrator's own move routines;
+  num, bool, string, point (robtarget), record, tool, work object, speed, zone and switch arguments, nums
+  passed by reference, the integrator's own move routines;
   interrupts (`ISignalDI`, `ISignalDO`, `IPers`) as FANUC condition monitors calling the `TRAP`.
 - **Data**: `num` and `bool` to registers and flags, data of the backup's own `RECORD` types field by field
   (a state machine's state in a register named by its path), strings in string registers (texts compared,
@@ -152,7 +152,7 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 | RAPID instructions converted, our test corpus, written for testing | 86 % to 93 % |
 | Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes, run again on both simulators for this version | 26 of 26 give what was measured |
+| The controller probes on both simulators: the one added in 1.4 run for this version, the 26 others run again for 1.3.0, their programs unchanged since | 27 of 27 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -190,13 +190,15 @@ TODO, and touch up the points. ROBOGUIDE is the right place to do that before th
 Three reasons, and the report gives each `!TODO` its cause.
 - **What TP cannot do** without KAREL or a robot option: files, sockets and raw byte buffers; an
   operator dialog that waits for an answer; more than 25 string registers; an event log;
-  trigonometric functions; setting some outputs in the middle of a corner path; turning positions
-  the robot measures (a calibration, a search on either edge of an input) into a frame.
+  trigonometric functions of data that changes at run time; setting some outputs in the middle of a
+  corner path; turning positions the robot measures (a calibration, a search on either edge of an
+  input) into a frame.
 - **What CrossArm does not convert yet:** error handlers (`ERROR`, `RETRY`, `RAISE`); data the
   programs work out other than as constants; routines taking parameters of other types (optional
-  numbers and texts, speeds); some conditions; arrays of strings.
+  numbers and texts); some conditions; arrays of strings.
 - **Programs that are not complete:** a library using data or routines declared in another project
-  cannot be resolved, by CrossArm or by RobotStudio.
+  cannot be resolved, by CrossArm or by RobotStudio; the report lists them as "routine or data not in
+  the backup".
 
 ### How close to the ABB is the converted program?
 The points are exactly the ABB's: the FANUC flange lands within 0.004 mm and 0.001° of where the ABB
@@ -243,10 +245,11 @@ backups of the test corpus, written for testing in three integrators' styles and
 controllers ([validation](docs/validation.md#1-the-test-corpus)), 86 %, 93 % and 87 %; on public
 open-source programs, about 60 %. What is left gives the order of the next steps:
 
-1. Error handlers (`ERROR`, `RETRY`, `RAISE`), for errors the program raises itself (part not found,
+1. Values only known at run time, and the conditions on them: what is left of them is spread over
+   many forms, each found in few programs.
+2. Routines taking optional parameters, and calls whose arguments TP cannot take.
+3. Error handlers (`ERROR`, `RETRY`, `RAISE`), for errors the program raises itself (part not found,
    measure out of range) and those of the instructions it calls.
-2. Routines taking optional parameters and speeds; values only known at run time.
-3. Operator dialogs and system functions (`UIMessageBox`, `OpMode()`), as far as TP allows.
 4. Frames and positions measured on the robot (calibration): TP cannot compute a frame, so this needs
    KAREL. Those computed from fixed values, and searches on one edge of an input, are converted.
 
@@ -278,8 +281,8 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.3.0 on 2030-10-05,
-v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
+Each released version becomes Apache 2.0 four years after it is published: v1.4.0 on 2030-10-06,
+v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
