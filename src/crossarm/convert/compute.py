@@ -52,6 +52,24 @@ class MeasuredAtRunTime(Unresolvable):
     """The value reads the robot (its position, its joints): a calibration, only known when the program runs."""
 
 
+def measured_reason(what: str, type_name: str, is_frame: bool, exc: MeasuredAtRunTime, read_here: bool) -> str:
+    """Why a frame or a position read on the robot stays TODO: TP reads the robot's position (LPOS, JPOS), but no
+    frame is computed from it, and only a robtarget set to CRobT() itself is kept in a position register.
+    `read_here`: the assignment itself reads the robot; else it derives from a reading left TODO, which says why."""
+    if is_frame:
+        return (f"{what} measured on the robot when the program runs (a calibration): {exc}. TP reads the position"
+                " (PR[n]=LPOS) but cannot compute a frame from it (no pose product, inverse or angle function):"
+                " set this frame with the FANUC frame setup, or in KAREL")  # fmt: skip
+    if not read_here:
+        return f"{what} measured on the robot when the program runs: {exc}"
+    if type_name == "robtarget":  # a FUNC of the backup reads it, or a component of the point is set
+        kept = "a point is kept in a position register when it is set to CRobT() itself, as a whole"
+    else:
+        kept = f"CrossArm keeps robtargets in position registers, not a {type_name}"
+    reading = "the joints (PR[n]=JPOS)" if type_name in ("jointtarget", "robjoint") else "the TCP (PR[n]=LPOS)"
+    return f"{what} measured on the robot when the program runs: {exc}. TP reads {reading}, but {kept}"
+
+
 # -- data layouts ----------------------------------------------------------------------------------
 
 LAYOUTS: dict[str, tuple[tuple[str, str], ...]] = {
@@ -1024,6 +1042,7 @@ __all__ = [
     "Written",
     "def_frame",
     "from_pose",
+    "measured_reason",
     "parse_params",
     "path_of",
     "to_pose",

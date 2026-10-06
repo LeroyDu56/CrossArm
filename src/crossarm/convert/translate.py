@@ -49,6 +49,7 @@ from crossarm.convert.compute import (
     Typed,
     Unknown,
     Written,
+    measured_reason,
     parse_params,
     path_of,
     to_pose,
@@ -4705,18 +4706,7 @@ class _RoutineTranslator:
 
     def measured_why(self, a: n.Assign, root_type: str, what: str, exc: MeasuredAtRunTime) -> str:
         """Why a frame or a position read on the robot (computed() of it) stays TODO."""
-        if root_type in _FRAME_TYPES:
-            return (f"{what} measured on the robot when the program runs (a calibration): {exc}. TP reads the position"
-                    " (PR[n]=LPOS) but cannot compute a frame from it (no pose product, inverse or angle function):"
-                    " set this frame with the FANUC frame setup, or in KAREL")  # fmt: skip
-        if not self.c.computer.robot_reads(a.value):  # what derives from a reading left TODO: that one says why
-            return f"{what} measured on the robot when the program runs: {exc}"
-        if root_type == "robtarget":  # a FUNC of the backup reads it, or a component of the point is set
-            kept = "a point is kept in a position register when it is set to CRobT() itself, as a whole"
-        else:
-            kept = f"CrossArm keeps robtargets in position registers, not a {root_type}"
-        reading = "the joints (PR[n]=JPOS)" if root_type in ("jointtarget", "robjoint") else "the TCP (PR[n]=LPOS)"
-        return f"{what} measured on the robot when the program runs: {exc}. TP reads {reading}, but {kept}"
+        return measured_reason(what, root_type, root_type in _FRAME_TYPES, exc, bool(self.c.computer.robot_reads(a.value)))
 
     def _fanuc_frame(self, kind: str, new: Typed, target: str) -> Pose:
         """A computed tooldata / wobjdata as the FANUC frame: the tool on the faceplate, uframe x oframe."""
