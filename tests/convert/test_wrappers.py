@@ -129,8 +129,10 @@ ENDPROC"""
     cfg = config(move_routines={"TWICE": True, "SHIFTED": True})
     result = run("Twice pHome,v100,fine,tGrip;\nShifted pHome,v100,fine,tGrip;\nMaybe pHome,v100,fine,tGrip;",
                  DATA, cfg, extra_procs=procs)  # fmt: skip
-    # called as routines given their speed and zone: fine has no CNT number to pass them
-    assert all(m.startswith("argument z: fine, where ") for m in todos(result))
+    # called as routines given their speed and zone, fine every time: their moves are FINE
+    assert not todos(result)
+    assert [line for line in tp_lines(result) if line.startswith("CALL")] == [
+        "CALL TWICE(100,1)", "CALL SHIFTED(100,1)", "CALL MAYBE(100,1)"]  # fmt: skip
     assert not result.move_routines
     # Asked for, but not recognised: said once each, not left to be discovered.
     assert sum("is not a routine CrossArm recognises as one move" in n.message for n in result.notes) == 2

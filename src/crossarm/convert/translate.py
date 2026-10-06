@@ -39,7 +39,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, signature
+from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, fine_given, signature
 from crossarm.convert.compute import (
     LAYOUTS,
     Computer,
@@ -863,6 +863,12 @@ class Converter:
         self.signatures: dict[str, Signature | str] = {
             r.name.upper(): signature(r, records) for m in modules for r in m.routines if r.kind == "PROC" and r.params
         }
+        # A zone some calls pass fine for: the routine writes its moves through it FINE, or both ways.
+        calls = [(layout, stmt) for m in modules for r in m.routines for stmt in walk_statements(r.body)
+                 if isinstance(stmt, n.ProcCall) and isinstance(layout := self.signatures.get(stmt.name.upper()), Signature)]
+        for name, fine in fine_given(calls, self._fine_now).items():  # fmt: skip
+            routine = next(r for m in modules for r in m.routines if r.kind == "PROC" and r.name.upper() == name)
+            self.signatures[name] = signature(routine, records, fine)
         self.procs = {r.name.upper(): r for m in modules for r in m.routines if r.kind == "PROC"}
         self.move_routine_calls: Counter[str] = Counter()
         # Interrupts (crossarm.convert.interrupts): upper-case intnum -> what the programs do with it, set by
@@ -881,6 +887,13 @@ class Converter:
         self.inliner = Inliner(modules, self._const_bool, self._inlined,
                                lambda name: self.symbols.is_local(name) or name.upper() in self.parameters,
                                self._const_field)  # fmt: skip
+
+    def _fine_now(self, expr: n.Expr) -> bool | None:
+        """Whether a zone passed to a routine is fine, None when it is not known before the programs are written."""
+        try:
+            return self.evaluator.zone(expr).fine
+        except (Unresolvable, TypeError, ValueError):
+            return None
 
     # -- entry point -------------------------------------------------------
 
@@ -2051,6 +2064,7 @@ class _RoutineTranslator:
         self.args: Signature | None = layout if isinstance(layout, Signature) else None  # its parameters: AR[n]
         self.copies: dict[str, str] = {}  # parameters it changes: upper name -> register holding the copy
         self.given: dict[str, str] = {}  # its speeds and corners given as arguments ('V.TCP') -> their register
+        self.both_ways: str | None = None  # the move being written: the register of a CNT some calls pass fine for
         self._on_timeout: OnTimeout | None | bool = False  # what its ERROR handler does when a wait times out
         self.timed_waits = 0  # waits with \MaxTime written with the handler's timeout path
         self.error_jumps: tuple[int, int] | None = None  # (RETRY, TRYNEXT) labels while writing that path
@@ -2429,6 +2443,7 @@ class _RoutineTranslator:
         via_value = evaluator.robtarget(m.via_point) if m.via_point is not None and passed_via is None else None
         if isinstance(to_value, JointTarget) and len(to_value.joints) < 6:
             raise Untranslatable(f"jointtarget with {len(to_value.joints)} axes", Blocker.MOTION)
+        self.both_ways = None
         speed, termination = self.given_motion(m, motion) if self.given else (None, None)
         if speed is None:
             speed, rapid_speed, fanuc_speed = self.speed(m.speed, motion)
@@ -2453,7 +2468,17 @@ class _RoutineTranslator:
                     self.emit(f"{kind}[{number}]=PR[{bank}]")
                 self.emit(f"{kind}_NUM={number}")
         self.active_uf, self.active_ut = uf, ut
+        if self.both_ways is None:
+            self.lines.append(Motion(motion, target, speed, termination, via, options))
+            return
+        # A zone some calls pass fine for (101): a TP move is FINE or CNT as written, so it is written both ways.
+        fine, after = self.label(), self.label()
+        self.emit(f"IF {self.both_ways}>100,JMP LBL[{fine}]")
         self.lines.append(Motion(motion, target, speed, termination, via, options))
+        for text in (f"JMP LBL[{after}]", f"LBL[{fine}]"):
+            self.lines.append(Instruction(text))  # jumped to from just above: the frames selected are still these
+        self.lines.append(Motion(motion, target, speed, "FINE", via, options))
+        self.lines.append(Instruction(f"LBL[{after}]"))
 
     # -- points worked out at run time --------------------------------------------------
 
@@ -3097,11 +3122,14 @@ class _RoutineTranslator:
         speed_slot = layout.given_speed(m.speed, motion)
         speed = f"{_bare(self.given[speed_slot.key])}{'%' if motion == 'J' else 'mm/sec'}" if speed_slot else None
         zone_given = isinstance(m.zone, n.Name) and layout.kind(m.zone.name) == "zonedata"
+        if zone_given and m.zone.name.upper() in layout.fine_zones:  # type: ignore[union-attr]
+            return speed, "FINE"  # every call passes fine
         if not zone_given and (speed_slot is None or self.c.evaluator.zone(m.zone).fine):
             return speed, ("FINE" if speed_slot is not None else None)
         corner = layout.given_corner(motion, m.zone, m.speed, self.next_speed)
         if corner is None:  # a move the signature did not see: an ERROR handler's
             raise Untranslatable("a move at a speed or zone given as argument, out of the routine's body", Blocker.CALL_ARGS)
+        self.both_ways = self.given[corner.key] if corner.fine else None
         return speed, f"CNT {_bare(self.given[corner.key])}"
 
     def termination(self, expr: n.Expr, speed_expr: n.Expr, motion: str, rapid_speed: float, fanuc_speed: float,
@@ -3561,6 +3589,9 @@ class _RoutineTranslator:
             elif slot.kind in ("speeddata", "zonedata"):
                 if a.value is None:
                     raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
+                if slot.key in layout.fine_zones and not self.fine_zone(a.value):
+                    raise Untranslatable(f"argument {slot.name}: {format_expr(a.value)}, where every other call passes"
+                                         f" fine: {layout.routine} writes its moves through it FINE", Blocker.CALL_ARGS)  # fmt: skip
                 values += [self.motion_argument(field, bound, layout.routine) for field in slot.fields]
             elif slot.kind == "record":
                 if a.value is None:
@@ -3592,6 +3623,12 @@ class _RoutineTranslator:
         for text in back:
             self.emit(text)
 
+    def fine_zone(self, expr: n.Expr) -> bool:
+        try:
+            return self.c.evaluator.zone(expr).fine
+        except Unresolvable as exc:
+            raise Untranslatable(f"zone {format_expr(expr)}: {exc}", Blocker.CALL_ARGS) from exc
+
     def motion_argument(self, field, bound: dict[str, n.Expr | None], routine: str) -> str:
         """The number a speed or a corner of the called routine is passed as: the TCP speed in mm/s, the % of a
         joint move, or the CNT of the corner, worked out as the move would be written with what this call gives."""
@@ -3605,6 +3642,8 @@ class _RoutineTranslator:
             corner = field.corner
             zone, speed = passed(corner.zone), passed(corner.speed)
             if self.c.evaluator.zone(zone).fine:
+                if field.fine:
+                    return "101"  # above any CNT: the routine writes this move FINE as well (IF R[m]>100,JMP)
                 if zone is not corner.zone:
                     raise Untranslatable(f"argument {field.name.split('.')[0]}: fine, where {routine} moves through a "
                                          "zone given at run time: a TP move is FINE or CNT as written", Blocker.CALL_ARGS)  # fmt: skip

@@ -7,7 +7,7 @@ CREATE		= DATE 26-01-01  TIME 00:00:00;
 MODIFIED	= DATE 26-01-01  TIME 00:00:00;
 FILE_NAME	= ;
 VERSION		= 0;
-LINE_COUNT	= 11;
+LINE_COUNT	= 21;
 MEMORY_SIZE	= 0;
 PROTECT		= READ_WRITE;
 TCD:  STACK_SIZE	= 0,
@@ -26,10 +26,20 @@ CONTROL_CODE	= 00000000 00000000;
    5:  R[4:z.cnt2]=AR[4]    ;
    6:  UFRAME_NUM=0 ;
    7:  UTOOL_NUM=1 ;
-   8:J P[1] R[2]% CNT R[3]    ;
-   9:L P[2] R[1]mm/sec CNT R[4]    ;
-  10:L P[3] R[1]mm/sec FINE    ;
-  11:  R[5:nCalls]=R[5:nCalls]+1    ;
+   8:  IF R[3:z.cnt]>100,JMP LBL[1] ;
+   9:J P[1] R[2]% CNT R[3]    ;
+  10:  JMP LBL[2] ;
+  11:  LBL[1] ;
+  12:J P[1] R[2]% FINE    ;
+  13:  LBL[2] ;
+  14:  IF R[4:z.cnt2]>100,JMP LBL[3] ;
+  15:L P[2] R[1]mm/sec CNT R[4]    ;
+  16:  JMP LBL[4] ;
+  17:  LBL[3] ;
+  18:L P[2] R[1]mm/sec FINE    ;
+  19:  LBL[4] ;
+  20:L P[3] R[1]mm/sec FINE    ;
+  21:  R[5:nCalls]=R[5:nCalls]+1    ;
 /POS
 P[1]{
    GP1:

@@ -414,6 +414,37 @@ def test_speeds_and_zones_used_otherwise_are_refused(procs, reason):
     assert signature(parse_module(f"MODULE M\n{SPEED_POINTS}\n{procs}\nENDMODULE").routines[0]).startswith(reason)
 
 
-def test_fine_given_for_a_zone_the_routine_moves_through_stays_todo():
-    assert todos(run("Moves v400,fine;", SPEED_POINTS, extra_procs=MOVES))[0].startswith(
-        "argument z: fine, where Moves moves through a zone given at run time")
+def moves_program(body: str) -> tuple[list[str], list[str]]:
+    """The MOVES program's lines after its copies, and the CALLs main makes."""
+    source = f"MODULE M\n{SPEED_POINTS}\nPROC main()\n{body}\nENDPROC\n{MOVES}\nENDMODULE\n"
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    assert not todos(result)
+    moves = next(p for p in result.programs if p.program.name == "MOVES").program
+    lines = [f"{m.kind} {m.target} {m.speed} {m.termination}" if not isinstance(m, Instruction) else m.text
+             for m in moves.lines if not getattr(m, "text", "").startswith(("!", "UFRAME", "UTOOL"))]  # fmt: skip
+    main = next(p for p in result.programs if p.program.name == "MAIN").program
+    return lines, [line.text for line in main.lines if getattr(line, "text", "").startswith("CALL")]
+
+
+def test_a_zone_every_call_passes_fine_for_is_written_fine():
+    lines, calls = moves_program("Moves v400,fine;\nMoves v200,fine;")
+    assert lines == ["R[1:v.tcp]=AR[1]", "R[2:v.joint]=AR[2]", "J P[1] R[2]% FINE", "L P[2] R[1]mm/sec FINE",
+                     "L P[3] R[1]mm/sec FINE"]  # fmt: skip
+    assert calls == ["CALL MOVES(400,9)", "CALL MOVES(200,4)"]
+
+
+def test_a_zone_some_calls_pass_fine_for_is_written_both_ways():
+    """The CNT is rounded across IF/JMP/LBL (speed argument probe); a CALL takes no -1 (ASBN-092): fine is 101."""
+    lines, calls = moves_program("Moves v400,z50;\nMoves v400,fine;")
+    assert lines == ["R[1:v.tcp]=AR[1]", "R[2:v.joint]=AR[2]", "R[3:z.cnt]=AR[3]", "R[4:z.cnt2]=AR[4]",
+                     "IF R[3:z.cnt]>100,JMP LBL[1]", "J P[1] R[2]% CNT R[3]", "JMP LBL[2]", "LBL[1]",
+                     "J P[1] R[2]% FINE", "LBL[2]",
+                     "IF R[4:z.cnt2]>100,JMP LBL[3]", "L P[2] R[1]mm/sec CNT R[4]", "JMP LBL[4]", "LBL[3]",
+                     "L P[2] R[1]mm/sec FINE", "LBL[4]", "L P[3] R[1]mm/sec FINE"]  # fmt: skip
+    assert calls == ["CALL MOVES(400,9,100,100)", "CALL MOVES(400,9,101,101)"]
+
+
+def test_a_zone_only_known_at_the_call_where_the_others_pass_fine_stays_todo():
+    local = "CONST zonedata zLoc:=[FALSE,50,75,75,7.5,75,7.5];\n"  # a routine's own: not known before it is written
+    result = run(f"{local}Moves v400,fine;\nMoves v400,zLoc;", SPEED_POINTS, extra_procs=MOVES)
+    assert todos(result)[0].startswith("argument z: zLoc, where every other call passes fine: Moves writes its moves")

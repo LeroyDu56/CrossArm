@@ -9,9 +9,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - A routine given its speed and zone (`PROC Approach(robtarget p,speeddata v,zonedata z)`) that makes its MoveJ,
   MoveL and MoveAbsJ with them: the call passes the speed (mm/s, and % for joint moves) and the CNT of each corner,
   worked out as the move would be written with them (`CALL APPROACH(400,9,100)`); the routine copies them to
-  registers, `L P[1] R[1]mm/sec CNT R[3]`, as a move takes no `AR[n]` there. A call giving `fine` for a zone the
-  routine moves through, MoveC and other uses of the speed or zone stay TODO, with why. Measured on both
-  controllers (speed argument probe): the time of the same moves written with constants.
+  registers, `L P[1] R[1]mm/sec CNT R[3]`, as a move takes no `AR[n]` there. MoveC and other uses of the speed or
+  zone stay TODO, with why. Measured on both controllers (speed argument probe): the time of the same moves
+  written with constants.
+- `fine` given for such a zone: when every call gives it, the routine's moves through the zone are FINE; when only
+  some do, each is written both ways (`IF R[3]>100,JMP LBL[1]`, CNT, else FINE) and the call passes 101 for fine,
+  as a CALL takes no negative number. Measured: the corner is rounded across those lines, same time as constants.
 
 ## 1.3.0 — 2026-10-05
 

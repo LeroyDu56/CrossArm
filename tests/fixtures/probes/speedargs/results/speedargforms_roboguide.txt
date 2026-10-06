@@ -5,3 +5,4 @@ SPDF_JCNT 550 Error occurred during load: ASBN-092 Undefined instruction at line
 SPDF_LCNT 550 Error occurred during load: ASBN-092 Undefined instruction at line 22, column 19
 SPDF_JR loaded
 SPDF_CALL loaded
+SPDF_NEG 550 Error occurred during load: ASBN-092 Undefined instruction at line 22, column 27

@@ -4,10 +4,12 @@
 """Generate and run the speed argument probe: a routine given its speed and zone as parameters
 (`PROC SpdMoves(speeddata v,zonedata z)`), which is not a move wrapper: it makes three moves with them.
 
-SpeedArgProbe.mod calls SpdMoves twice, with v400 and z50, then with a speeddata of its own (200 mm/s) and z10,
-and makes the same three moves with those constants written in them; each run is timed. CrossArm passes the
-speed as numbers (mm/s for the linear moves, % for the joint one) and the zone as the CNT of each move worked out
-at the call: the converted routine must take the time the same moves take with constants.
+SpeedArgProbe.mod calls SpdMoves three times, with v400 and z50, with a speeddata of its own (200 mm/s) and z10,
+then with v400 and fine, and makes the same three moves with those constants written in them; each run is timed.
+CrossArm passes the speed as numbers (mm/s for the linear moves, % for the joint one) and the zone as the CNT of
+each move worked out at the call, 101 for fine: the routine writes each move through z both ways
+(`IF R[m]>100,JMP LBL[a]` / CNT / `JMP LBL[b]` / `LBL[a]` / FINE / `LBL[b]`). The converted routine must take the
+time the same moves take with constants: the corner is rounded across those lines.
 
   ABB (RobotStudio): PROC Probe runs SpdProbe and writes the times to HOME:/speedargprobe.txt.
   FANUC (ROBOGUIDE): the converted SPDPROBE runs; times and the count of calls from NUMREG.VA.
@@ -61,6 +63,8 @@ MODULE = "\r\n".join([
     "    VAR num nT2:=0;",
     "    VAR num nT3:=0;",
     "    VAR num nT4:=0;",
+    "    VAR num nT5:=0;",
+    "    VAR num nT6:=0;",
     "",
     "    PROC SpdMoves(speeddata v,zonedata z)",
     "        MoveJ pA,v,z,tool0;",
@@ -75,6 +79,8 @@ MODULE = "\r\n".join([
     *_timed("nT2", ["SpdMoves vSpd,z10;"]),
     *_timed("nT3", ["MoveJ pA,v400,z50,tool0;", "MoveL pB,v400,z50,tool0;", "MoveL pC,v400,fine,tool0;"]),
     *_timed("nT4", ["MoveJ pA,vSpd,z10,tool0;", "MoveL pB,vSpd,z10,tool0;", "MoveL pC,vSpd,fine,tool0;"]),
+    *_timed("nT5", ["SpdMoves v400,fine;"]),
+    *_timed("nT6", ["MoveJ pA,v400,fine,tool0;", "MoveL pB,v400,fine,tool0;", "MoveL pC,v400,fine,tool0;"]),
     "    ENDPROC",
     "",
     "    PROC Probe()",
@@ -88,15 +94,18 @@ MODULE = "\r\n".join([
     '        Write file, "nT2 " \\Num:=nT2;',
     '        Write file, "nT3 " \\Num:=nT3;',
     '        Write file, "nT4 " \\Num:=nT4;',
+    '        Write file, "nT5 " \\Num:=nT5;',
+    '        Write file, "nT6 " \\Num:=nT6;',
     "        Close file;",
     "    ENDPROC",
     "ENDMODULE",
     "",
 ])  # fmt: skip
 
-EXPECTED = {"nCalls": 2.0}
-TIMES = ("nT1", "nT2", "nT3", "nT4")
-PAIRS = (("nT1", "nT3"), ("nT2", "nT4"))  # the routine given v400,z50 / vSpd,z10 against the same moves written so
+EXPECTED = {"nCalls": 3.0}
+TIMES = ("nT1", "nT2", "nT3", "nT4", "nT5", "nT6")
+# the routine given v400,z50 / vSpd,z10 / v400,fine against the same moves written so
+PAIRS = (("nT1", "nT3"), ("nT2", "nT4"), ("nT5", "nT6"))
 TOLERANCE = 0.01  # a routine given its speed and zone takes the time of the moves written with them, within 1 %
 
 # Loaded only: what the controller accepts as a speed and a CNT given as arguments (measured before CrossArm
@@ -109,6 +118,7 @@ FORMS = {
     "SPDF_LCNT": ["L PR[81] AR[1]mm/sec CNT AR[2]"],
     "SPDF_JR": ["J PR[81] R[20]% FINE"],
     "SPDF_CALL": ["CALL SPDF_JCNT(25,40)"],
+    "SPDF_NEG": ["CALL SPDF_JCNT(25,-1)"],  # fine as -1: refused, so passed as 101
 }
 
 

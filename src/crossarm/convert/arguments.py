@@ -19,8 +19,10 @@ A speeddata or zonedata parameter the routine makes its MoveJ, MoveL and MoveAbs
 the speed in mm/s for its linear moves and in % for its joint ones, and the CNT of each corner the call decides,
 worked out by the caller as it would write the move with what it passes (motion.corner: the CNT depends on the
 zone, the speed and the speed of the move after). A move takes no AR[n] as its speed or CNT (measured: ASBN-092),
-so the routine copies them to registers when it starts: `L P[1] R[k]mm/sec CNT R[m]`. A call passing `fine` for
-a zone the routine moves through so stays TODO: a TP move is FINE or CNT as written.
+so the routine copies them to registers when it starts: `L P[1] R[k]mm/sec CNT R[m]`. A TP move is FINE or CNT as
+written: when every call passes `fine` for a zone, the routine's moves through it are FINE and nothing is passed
+for them; when only some do, each such move is written twice, CNT and FINE, and the call passes 101 for fine
+(`IF R[m]>100,JMP LBL[a]`): a CALL takes no negative number (ASBN-092), a CNT is at most 100.
 A routine with any other parameter — a record passed whole to another routine, a frame used other
 than to move with, an optional num — is not converted, and its calls stay TODO with the reason.
 
@@ -83,6 +85,7 @@ class Slot:
     by_reference: bool = False  # INOUT, VAR or PERS: what the routine changes goes back to the caller
     optional: bool = False  # a switch, or an optional work object (0 when not given: wobj0)
     corner: CallCorner | None = None  # a "cnt": the move it is the CNT of
+    fine: bool = False  # a "cnt" some calls pass fine for (101): the routine writes the move both ways
 
     @property
     def key(self) -> str:
@@ -101,6 +104,7 @@ class Signature:
     # upper-case robtarget parameters the routine changes, in their position register: passed by reference
     # (VAR, INOUT), the caller reads the point back after the CALL
     points_changed: frozenset[str] = frozenset()
+    fine_zones: frozenset[str] = frozenset()  # upper-case zonedata parameters every call passes fine for: FINE
 
     @property
     def arguments(self) -> tuple[Slot, ...]:
@@ -149,11 +153,14 @@ class Signature:
         return tuple(s for s in self.slots if s.by_reference and s.key in self.copied)
 
 
-def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]] | None = None) -> Signature | str:
+def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]] | None = None,
+              fine: dict[str, bool] | None = None) -> Signature | str:  # fmt: skip
     """The routine's AR[n] layout, or why its parameters cannot be passed as TP arguments.
 
-    `records`: the RECORD types the backup declares, lower-case name -> (component, type) in order."""
+    `records`: the RECORD types the backup declares, lower-case name -> (component, type) in order.
+    `fine`: the zonedata parameters (upper case) calls pass fine for -> whether every call does (fine_given)."""
     records = records or {}
+    fine = fine or {}
     required: list[Slot] = []
     switches: list[Slot] = []
     for part in re.split(r",|(?=\\)", routine.params):
@@ -201,7 +208,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                 return f"{type_name} parameter {name}: TP arguments are numbers or text"
     motion = {s.key: s for s in required if s.kind in ("speeddata", "zonedata")}
     if motion:
-        found = _motion_fields(routine, motion)
+        found = _motion_fields(routine, motion, fine)
         if isinstance(found, str):
             return found
         required = [replace(s, fields=found[s.key]) if s.key in motion else s for s in required]
@@ -247,7 +254,24 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                 if isinstance(base, n.Name) and base.name.upper() in points:
                     frames.setdefault(base.name.upper(), (fixed(stmt.tool), fixed(stmt.wobj)))
     return Signature(slots, frozenset(copied), routine.name,
-                     tuple((key, tool, wobj) for key, (tool, wobj) in frames.items()), frozenset(points_changed))  # fmt: skip
+                     tuple((key, tool, wobj) for key, (tool, wobj) in frames.items()), frozenset(points_changed),
+                     frozenset(key for key, every in fine.items() if every and key in motion))  # fmt: skip
+
+
+def fine_given(calls: list[tuple[Signature, n.ProcCall]], is_fine) -> dict[str, dict[str, bool]]:
+    """The zonedata parameters calls pass fine for: routine (upper case) -> parameter (upper case) -> whether every
+    call that passes a zone known now passes fine. `is_fine(expr)`: True or False, None when not known now (the call
+    stays TODO, or is checked when it is written)."""
+    seen: dict[str, dict[str, set[bool]]] = {}
+    for layout, call in calls:
+        positional = [a.value for a in call.args if a.name is None]
+        if len(positional) != len(layout.required):
+            continue  # stays TODO
+        for value, slot in zip(positional, layout.required, strict=True):
+            if slot.kind == "zonedata" and value is not None and (found := is_fine(value)) is not None:
+                seen.setdefault(layout.routine.upper(), {}).setdefault(slot.key, set()).add(found)
+    return {routine: {key: values == {True} for key, values in params.items() if True in values}
+            for routine, params in seen.items() if any(True in values for values in params.values())}  # fmt: skip
 
 
 _CHANGING = frozenset({"INCR", "DECR", "ADD", "CLEAR"})  # instructions that change their first argument
@@ -285,11 +309,12 @@ def _frame_uses(routine: n.Routine, name: str) -> str:
     return f"its {name} is used other than to move with or to pass on: a frame is passed by its number" if other else ""
 
 
-def _motion_fields(routine: n.Routine, params: dict[str, Slot]) -> dict[str, tuple[Slot, ...]] | str:
+def _motion_fields(routine: n.Routine, params: dict[str, Slot], given_fine: dict[str, bool]) -> dict[str, tuple[Slot, ...]] | str:
     """The numbers each speeddata and zonedata parameter is passed as: a speed its TCP speed when linear moves
     take it and its % when joint moves do; then the CNT of each corner it decides (a zone parameter, or the
-    speed of a move through a zone written in the routine). Or why they cannot be passed so: the routine uses
-    them other than as the speed and zone of its MoveJ, MoveL and MoveAbsJ."""
+    speed of a move through a zone written in the routine), but for a zone every call passes fine for (FINE).
+    Or why they cannot be passed so: the routine uses them other than as the speed and zone of its MoveJ, MoveL
+    and MoveAbsJ."""
     other: list[str] = []
 
     def mine(expr: object, kind: str | None = None) -> str | None:
@@ -328,8 +353,8 @@ def _motion_fields(routine: n.Routine, params: dict[str, Slot]) -> dict[str, tup
                 return f"Move{motion} at the {'speed' if speed else 'zone'} of a parameter: not measured on the controller"
             if speed:
                 speeds[speed].add("joint" if motion == "J" else "tcp")
-            fine = isinstance(stmt.zone, n.Name) and stmt.zone.name.upper() == "FINE"
-            if owner := zone or (speed if not fine else None):
+            fine = isinstance(stmt.zone, n.Name) and stmt.zone.name.upper() == "FINE" or given_fine.get(zone) is True
+            if owner := (zone if given_fine.get(zone) is not True else None) or (speed if not fine else None):
                 following = next_move(block, i)
                 corner = CallCorner(motion, stmt.zone, stmt.speed, following.speed if following else None)
                 if corner.key not in {c.key for c in corners[owner]}:
@@ -337,7 +362,8 @@ def _motion_fields(routine: n.Routine, params: dict[str, Slot]) -> dict[str, tup
     fields = {}
     for key, slot in params.items():
         found = [Slot(f"{slot.name}.{use}", f"speed_{use}") for use in ("tcp", "joint") if use in speeds[key]]
-        found += [Slot(f"{slot.name}.cnt{i if i > 1 else ''}", "cnt", corner=c) for i, c in enumerate(corners[key], 1)]
+        found += [Slot(f"{slot.name}.cnt{i if i > 1 else ''}", "cnt", corner=c, fine=given_fine.get(key) is False)
+                  for i, c in enumerate(corners[key], 1)]  # fmt: skip
         fields[key] = tuple(found)
     return fields
 
@@ -402,4 +428,4 @@ def _record_fields(routine: n.Routine, name: str, type_name: str,
     return tuple(fields)
 
 
-__all__ = ["MAX_ARGS", "MOTION_ARGUMENTS", "CallCorner", "Signature", "Slot", "signature"]
+__all__ = ["MAX_ARGS", "MOTION_ARGUMENTS", "CallCorner", "Signature", "Slot", "fine_given", "signature"]

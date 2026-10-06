@@ -11,6 +11,8 @@ MODULE SpeedArgProbe
     VAR num nT2:=0;
     VAR num nT3:=0;
     VAR num nT4:=0;
+    VAR num nT5:=0;
+    VAR num nT6:=0;
 
     PROC SpdMoves(speeddata v,zonedata z)
         MoveJ pA,v,z,tool0;
@@ -49,6 +51,20 @@ MODULE SpeedArgProbe
         MoveL pC,vSpd,fine,tool0;
         ClkStop ckSpd;
         nT4:=ClkRead(ckSpd);
+        MoveAbsJ jStart,v1000,fine,tool0;
+        ClkReset ckSpd;
+        ClkStart ckSpd;
+        SpdMoves v400,fine;
+        ClkStop ckSpd;
+        nT5:=ClkRead(ckSpd);
+        MoveAbsJ jStart,v1000,fine,tool0;
+        ClkReset ckSpd;
+        ClkStart ckSpd;
+        MoveJ pA,v400,fine,tool0;
+        MoveL pB,v400,fine,tool0;
+        MoveL pC,v400,fine,tool0;
+        ClkStop ckSpd;
+        nT6:=ClkRead(ckSpd);
     ENDPROC
 
     PROC Probe()
@@ -62,6 +78,8 @@ MODULE SpeedArgProbe
         Write file, "nT2 " \Num:=nT2;
         Write file, "nT3 " \Num:=nT3;
         Write file, "nT4 " \Num:=nT4;
+        Write file, "nT5 " \Num:=nT5;
+        Write file, "nT6 " \Num:=nT6;
         Close file;
     ENDPROC
 ENDMODULE
