@@ -6,7 +6,8 @@
 The probes of tests/fixtures/probes were each run once by hand, their results stored as fixtures. This
 runs them all from the files CrossArm writes today (tools/roboguide.py: FTP, the robot's web pages, the
 FANUC COM interface; tools/robotstudio.py: the probe server on the ABB virtual controller), so that a
-change to CrossArm is checked on a controller and not only on text:
+change to CrossArm is checked on a controller and not only on text (--summary: one short line per
+probe, everything else in local/logs/probe_all.log):
 
     negative     load only: the forms the controller refuses are still the ones it refuses
     args         calls with arguments: registers as RAPID computes them
@@ -51,6 +52,7 @@ position registers: use a test cell. The virtual pendant must be OFF.
 Usage:  python tools/probe_all.py [probe ...]      (default: all of them)
 """
 
+import contextlib
 import math
 import sys
 import time
@@ -415,20 +417,34 @@ def main() -> int:
               "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag,
               "pallet": probe_pallet,
               "abb": probe_abb}  # fmt: skip
-    chosen = sys.argv[1:] or list(probes)
+    # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
+    summary = "--summary" in sys.argv
+    chosen = [name for name in sys.argv[1:] if name != "--summary"] or list(probes)
     failed = 0
+    log = None
+    if summary:
+        (ROOT / "local" / "logs").mkdir(parents=True, exist_ok=True)
+        log = (ROOT / "local" / "logs" / "probe_all.log").open("w", encoding="utf-8")
     try:
         for name in chosen:
             start = time.monotonic()
-            verdict = probes[name]()
+            with contextlib.redirect_stdout(log) if log else contextlib.nullcontext():
+                verdict = probes[name]()
             failed += verdict.startswith("FAIL")
-            print(f"{name:11s} {time.monotonic() - start:5.1f} s  {verdict}", flush=True)
+            line = f"{name:11s} {time.monotonic() - start:5.1f} s  {verdict}"
+            if log:
+                print(line, file=log, flush=True)
+                first = verdict.splitlines()[0] if verdict else ""
+                line = f"{name:11s} {time.monotonic() - start:5.1f} s  " + (first[:60] + "..." if len(first) > 60 else first)
+            print(line, flush=True)
     finally:
         for program in dict.fromkeys(LOADED):
             try:
                 roboguide.delete(program)
             except Exception:  # noqa: BLE001, S110 - already gone
                 pass
+        if log:
+            log.close()
     print("all probes pass" if not failed else f"{failed} probe(s) FAILED")
     return 1 if failed else 0
 
