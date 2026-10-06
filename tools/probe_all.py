@@ -36,6 +36,8 @@ probe, everything else in local/logs/probe_all.log):
     movedo       an output set on the line after a FINE move (MoveLDO to a fine point): it switches with the TCP
                  on the point
     timeflag     waits with \\MaxTime and \\TimeFlag: the flags RobotStudio sets
+    speedargs    a routine given its speed and zone (speeddata, zonedata): the time of the same moves written
+                 with constants
     search       SearchL as a skip, the input switched through COM as the TCP passes a point: the point found
                  where it switched, a move above it, \\Sup going on to the point, a pause when the input is on at
                  the start; moves with a skip latching the position not slowed down up to the speed converted
@@ -82,6 +84,7 @@ import make_record_probe
 import make_search_probe
 import make_select_probe
 import make_setup_probe
+import make_speed_arg_probe
 import make_string_probe
 import make_time_flag_probe
 import make_wait_probe
@@ -111,6 +114,7 @@ ABB_PROBES = [
     (PROBES / "flagarrays" / "FlagArrayProbe.mod", "Probe", "flagarrayprobe.txt", make_flag_array_probe.ABB_RESULT),
     (PROBES / "pointref" / "PointRefProbe.mod", "Probe", "pointrefprobe.txt", make_point_ref_probe.ABB_RESULT),
     (PROBES / "timeflag" / "TimeFlagProbe.mod", "Probe", "timeflagprobe.txt", make_time_flag_probe.ABB_RESULT),
+    (PROBES / "speedargs" / "SpeedArgProbe.mod", "Probe", "speedargprobe.txt", make_speed_arg_probe.ABB_RESULT),
 ]
 REFUSED = {"NEG_FOR_B"}  # the negative-constant probe: the one form the controller does not load
 
@@ -388,6 +392,24 @@ def probe_pallet() -> str:
 LOADED: list[str] = []
 
 
+def probe_speedargs() -> str:
+    probe = make_speed_arg_probe
+    numbers = probe.registers(probe.conversion())
+
+    def check() -> str:
+        values = roboguide.numreg()
+        found = registers_check(probe.EXPECTED, {k: numbers[k] for k in probe.EXPECTED})
+        if found.startswith("FAIL"):
+            return found
+        for given, written in probe.PAIRS:
+            a, b = values.get(numbers[given], float("nan")), values.get(numbers[written], float("nan"))
+            if not abs(a - b) <= probe.TOLERANCE * b:
+                return f"FAIL {given} {a:.3f} s with arguments, {written} {b:.3f} s with constants"
+        return f"{found}, the times of the moves written with constants"
+
+    return _run("speedargs", probe.PROGRAM, list(numbers.values()), check)
+
+
 def _run(folder: str, program: str, zero: list[int], check: Callable[[], str] | None, *, resumes: int = 0,
          timeout: float = 180, load: bool = True) -> str:  # fmt: skip
     """Load the probe's programs, zero its registers, run it, check it. '' when `check` is None and all went well."""
@@ -414,7 +436,7 @@ def main() -> int:
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
               "interrupts": probe_interrupts, "params": probe_params, "records": probe_records, "strings": probe_strings,
-              "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag,
+              "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
               "pallet": probe_pallet,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log

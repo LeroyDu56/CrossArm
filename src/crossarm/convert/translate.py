@@ -39,7 +39,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from crossarm.convert.arguments import Signature, signature
+from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, signature
 from crossarm.convert.compute import (
     LAYOUTS,
     Computer,
@@ -371,6 +371,11 @@ PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAY
 _TOOL_ARGUMENT = {"MOVELDO": 3, "MOVEJDO": 3, "MOVECDO": 4, "MOVELAO": 3, "MOVEJAO": 3, "MOVECAO": 4,
                   "MOVELGO": 3, "MOVEJGO": 3, "MOVECGO": 4, "TRIGGL": 4, "TRIGGJ": 4, "TRIGGC": 5,
                   "SEARCHL": 4, "SEARCHJ": 4, "SEARCHC": 5}  # fmt: skip
+
+
+def _bare(register: str) -> str:
+    """R[12] for R[12:name]: a speed or a CNT in a register is written without its comment, as measured."""
+    return register.split(":", 1)[0] + "]" if ":" in register else register
 
 
 @dataclass(frozen=True)
@@ -1539,6 +1544,8 @@ class Converter:
             return f"{routine.kind} routines have no TP program equivalent"
         if isinstance(layout, str):
             return f"parameters not converted: {layout}"
+        if routine.name.upper() in self.move_routines:  # never called: its calls are its move, or TODO
+            return "it wraps one move: its calls are written as that move, not as a CALL"
         return ""
 
     def _program_names(self, converted: list[n.Routine]) -> dict[str, str]:
@@ -2043,6 +2050,7 @@ class _RoutineTranslator:
         layout = conv.signatures.get(routine.name.upper())
         self.args: Signature | None = layout if isinstance(layout, Signature) else None  # its parameters: AR[n]
         self.copies: dict[str, str] = {}  # parameters it changes: upper name -> register holding the copy
+        self.given: dict[str, str] = {}  # its speeds and corners given as arguments ('V.TCP') -> their register
         self._on_timeout: OnTimeout | None | bool = False  # what its ERROR handler does when a wait times out
         self.timed_waits = 0  # waits with \MaxTime written with the handler's timeout path
         self.error_jumps: tuple[int, int] | None = None  # (RETRY, TRYNEXT) labels while writing that path
@@ -2092,6 +2100,11 @@ class _RoutineTranslator:
             if slot.key in self.args.copied:  # type: ignore[union-attr]
                 register = self.c.written_register(slot.name, key=f"{self.name}.{slot.name}")
                 self.copies[slot.key] = register
+                self.emit(f"{register}={self.args.register(slot.key)}")  # type: ignore[union-attr]
+        for slot in self.args.arguments if self.args else ():
+            if slot.kind in MOTION_ARGUMENTS:  # a move takes no AR[n] as its speed or CNT (measured)
+                register = self.c.written_register(slot.name, key=f"{self.name}.{slot.name}")
+                self.given[slot.key] = register
                 self.emit(f"{register}={self.args.register(slot.key)}")  # type: ignore[union-attr]
         if self.interrupt is not None:
             self._trap_prologue(self.interrupt)
@@ -2416,8 +2429,11 @@ class _RoutineTranslator:
         via_value = evaluator.robtarget(m.via_point) if m.via_point is not None and passed_via is None else None
         if isinstance(to_value, JointTarget) and len(to_value.joints) < 6:
             raise Untranslatable(f"jointtarget with {len(to_value.joints)} axes", Blocker.MOTION)
-        speed, rapid_speed, fanuc_speed = self.speed(m.speed, motion)
-        termination = self.termination(m.zone, m.speed, motion, rapid_speed, fanuc_speed, self.next_speed)
+        speed, termination = self.given_motion(m, motion) if self.given else (None, None)
+        if speed is None:
+            speed, rapid_speed, fanuc_speed = self.speed(m.speed, motion)
+        if termination is None:
+            termination = self.termination(m.zone, m.speed, motion, rapid_speed, fanuc_speed, self.next_speed)
         given = self.given_frames(m)
         ignored = [a.name for a in m.options if a.name and a.name.upper() != "NOEOFFS"
                    and not (given[0] and a.name.upper() == "WOBJ")]  # fmt: skip
@@ -3073,6 +3089,21 @@ class _RoutineTranslator:
         self.c.result.speeds[(speed.name, motion)] = text
         return text, speed.v_tcp, value
 
+    def given_motion(self, m: n.Move, motion: str) -> tuple[str | None, str | None]:
+        """The speed and the termination of a move that takes them from the routine's speeddata and zonedata
+        parameters, in the registers they were copied to: `R[k]mm/sec`, `R[k]%`, `CNT R[m]` with the CNT the
+        caller worked out. None for what the move does not take from them."""
+        layout: Signature = self.args  # type: ignore[assignment]
+        speed_slot = layout.given_speed(m.speed, motion)
+        speed = f"{_bare(self.given[speed_slot.key])}{'%' if motion == 'J' else 'mm/sec'}" if speed_slot else None
+        zone_given = isinstance(m.zone, n.Name) and layout.kind(m.zone.name) == "zonedata"
+        if not zone_given and (speed_slot is None or self.c.evaluator.zone(m.zone).fine):
+            return speed, ("FINE" if speed_slot is not None else None)
+        corner = layout.given_corner(motion, m.zone, m.speed, self.next_speed)
+        if corner is None:  # a move the signature did not see: an ERROR handler's
+            raise Untranslatable("a move at a speed or zone given as argument, out of the routine's body", Blocker.CALL_ARGS)
+        return speed, f"CNT {_bare(self.given[corner.key])}"
+
     def termination(self, expr: n.Expr, speed_expr: n.Expr, motion: str, rapid_speed: float, fanuc_speed: float,
                     next_speed: n.Expr | None = None) -> str:  # fmt: skip
         """FINE or the CNT for the zone. Into a faster move, the FANUC rounds a corner more than at the
@@ -3507,9 +3538,13 @@ class _RoutineTranslator:
         if call.name.upper() in self.c.recursive and any(s.kind == "robtarget" for s in required):
             raise Untranslatable(f"{call.name} calls itself back and is given points: they travel in position"
                                  " registers every call under way shares", Blocker.CALL_ARGS)  # fmt: skip
+        if call.name.upper() in self.c.recursive and any(s.fields for s in required if s.kind in ("speeddata", "zonedata")):
+            raise Untranslatable(f"{call.name} calls itself back and is given speeds or zones: they are copied to"
+                                 " registers every call under way shares", Blocker.CALL_ARGS)  # fmt: skip
         values, points, back = [], [], []
         name = self.c.program_names[call.name.upper()]
         returned = {s.key for s in layout.returned()}
+        bound = {s.key: a.value for a, s in zip(positional, required, strict=True)}  # parameter -> what this call passes
         # The tool and work object this call gives the routine: a point passed with them is recorded in them.
         framed = [(s, a.value) for a, s in zip(positional, required, strict=True)]
         framed += [(s, given[s.key].value) for s in layout.slots if s.kind == "wobjdata" and s.key in given]
@@ -3523,6 +3558,10 @@ class _RoutineTranslator:
                     back.append(f"{self.point_back(a.value, slot)}={self.c.point_register(f'{layout.routine}.{slot.name}')}")
             elif slot.kind in ("tooldata", "wobjdata"):
                 values.append(self.frame_argument(a.value, slot, points))
+            elif slot.kind in ("speeddata", "zonedata"):
+                if a.value is None:
+                    raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
+                values += [self.motion_argument(field, bound, layout.routine) for field in slot.fields]
             elif slot.kind == "record":
                 if a.value is None:
                     raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
@@ -3552,6 +3591,29 @@ class _RoutineTranslator:
         self.emit(f"CALL {name}({','.join(values)})" if values else f"CALL {name}")
         for text in back:
             self.emit(text)
+
+    def motion_argument(self, field, bound: dict[str, n.Expr | None], routine: str) -> str:
+        """The number a speed or a corner of the called routine is passed as: the TCP speed in mm/s, the % of a
+        joint move, or the CNT of the corner, worked out as the move would be written with what this call gives."""
+
+        def passed(expr: n.Expr | None) -> n.Expr | None:  # the routine's own parameter: what this call passes
+            return bound.get(expr.name.upper(), expr) if isinstance(expr, n.Name) else expr
+
+        try:
+            if field.kind != "cnt":
+                return str(self.speed(bound[field.key.split(".")[0]], "J" if field.kind == "speed_joint" else "L")[2])
+            corner = field.corner
+            zone, speed = passed(corner.zone), passed(corner.speed)
+            if self.c.evaluator.zone(zone).fine:
+                if zone is not corner.zone:
+                    raise Untranslatable(f"argument {field.name.split('.')[0]}: fine, where {routine} moves through a "
+                                         "zone given at run time: a TP move is FINE or CNT as written", Blocker.CALL_ARGS)  # fmt: skip
+                return "0"  # a zone written in the routine, fine: the routine writes FINE
+            _, rapid_speed, fanuc_speed = self.speed(speed, corner.motion)
+            return self.termination(zone, speed, corner.motion, rapid_speed, fanuc_speed,
+                                    passed(corner.following)).removeprefix("CNT")  # fmt: skip
+        except Unresolvable as exc:
+            raise Untranslatable(f"argument {field.name}: {exc}", Blocker.CALL_ARGS) from exc
 
     def frame_argument(self, expr: n.Expr | None, slot, before: list[str]) -> str:
         """The frame number a tooldata or wobjdata argument is passed as; this routine's own frame parameter as

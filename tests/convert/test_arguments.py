@@ -59,7 +59,7 @@ def test_parameters_map_to_ar_in_order_switches_last():
 
 @pytest.mark.parametrize(("params", "reason"), [
     ("INOUT bool on", "bool parameter on is passed by reference (INOUT): only a num or a point is read back"),
-    ("speeddata v", "speeddata parameter v"),
+    ("dnum d", "dnum parameter d"),
     ("INOUT tooldata t", "tooldata parameter t is passed by reference (INOUT)"),
     ("\\num speed", "optional num parameter speed"),
     ("num list{*}", "parameter list is an array"),
@@ -134,9 +134,9 @@ def test_calls_that_cannot_be_passed_stay_todo(call, reason):
 
 
 def test_a_routine_out_of_scope_says_why_at_every_call():
-    procs = "PROC Grip(speeddata v)\n  Stop;\nENDPROC"
-    assert todos(run("Grip pHome;", extra_procs=procs))[0].startswith(
-        "Grip is not converted: speeddata parameter v: TP arguments are numbers or text")
+    procs = "PROC Grip(dnum d)\n  Stop;\nENDPROC"
+    assert todos(run("Grip 3;", extra_procs=procs))[0].startswith(
+        "Grip is not converted: dnum parameter d: TP arguments are numbers or text")
 
 
 def test_a_string_parameter_is_passed_as_text_written_in_the_call():
@@ -371,3 +371,49 @@ def test_a_routine_calling_itself_back_with_points_stays_todo():
     procs = "PROC Tower(num n,robtarget pFrom)\n  IF n>0 Tower n-1,pFrom;\n  MoveL pFrom,v100,fine,tGrip;\nENDPROC"
     result = run("Tower 3,pA;", POINTS, extra_procs=procs)
     assert "calls itself back and is given points" in todos(result)[0]
+
+
+SPEED_POINTS = "".join(f"CONST robtarget {p}:=[[1100,{y},{z}],[0,1,0,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];"
+                 for p, y, z in (("pA", 50, 1000), ("pB", 250, 1000), ("pC", 250, 800)))  # fmt: skip
+MOVES = """PROC Moves(speeddata v,zonedata z)
+  MoveJ pA,v,z,tool0;
+  MoveL pB,v,z,tool0;
+  MoveL pC,v,fine,tool0;
+ENDPROC"""
+
+
+def test_a_routine_given_its_speed_and_zone_copies_them_to_registers():
+    """A move takes no AR[n] as its speed or CNT (ROBOGUIDE, ASBN-092): R[n] it does (speed argument probe)."""
+    source = f"MODULE M\n{SPEED_POINTS}\nPROC main()\nMoves v400,z50;\nMoves v200,z10;\nENDPROC\n{MOVES}\nENDMODULE\n"
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), sources={"M": source})
+    moves = next(p for p in result.programs if p.program.name == "MOVES").program
+    assert [getattr(line, "text", None) for line in moves.lines[1:5]] == [
+        "R[1:v.tcp]=AR[1]", "R[2:v.joint]=AR[2]", "R[3:z.cnt]=AR[3]", "R[4:z.cnt2]=AR[4]"]  # fmt: skip
+    assert [(m.speed, m.termination) for m in moves.lines if not isinstance(m, Instruction)] == [
+        ("R[2]%", "CNT R[3]"), ("R[1]mm/sec", "CNT R[4]"), ("R[1]mm/sec", "FINE")]  # fmt: skip
+    # the CNT of each corner as the caller would write the move with what it passes
+    assert [line for line in tp_lines(result) if line.startswith("CALL")] == [
+        "CALL MOVES(400,9,100,100)", "CALL MOVES(200,4,100,97)"]  # fmt: skip
+
+
+def test_a_zone_written_in_the_routine_is_worked_out_at_the_call_from_the_speed():
+    procs = "PROC Slow(speeddata v)\n  MoveL pA,v,z10,tool0;\n  MoveL pB,v,fine,tool0;\nENDPROC"
+    sig = signature(parse_module(f"MODULE M\n{SPEED_POINTS}\n{procs}\nENDMODULE").routines[0])
+    assert [s.name for s in sig.arguments] == ["v.tcp", "v.cnt"]
+    assert [line for line in tp_lines(run("Slow v200;", SPEED_POINTS, extra_procs=procs)) if line.startswith("CALL")] == [
+        "CALL SLOW(200,97)"]  # fmt: skip
+
+
+@pytest.mark.parametrize(("procs", "reason"), [
+    ("PROC P(speeddata v)\n  TPWrite \"\"\\Num:=v.v_tcp;\nENDPROC", "its speeddata v is used other than as the speed of its moves"),
+    ("PROC P(zonedata z)\n  Q z;\nENDPROC\nPROC Q(zonedata z)\n  MoveL pA,v100,z,tool0;\nENDPROC",
+     "its zonedata z is used other than as the zone of its moves"),
+    ("PROC P(speeddata v)\n  MoveC pA,pB,v,fine,tool0;\nENDPROC", "MoveC at the speed of a parameter: not measured"),
+])  # fmt: skip
+def test_speeds_and_zones_used_otherwise_are_refused(procs, reason):
+    assert signature(parse_module(f"MODULE M\n{SPEED_POINTS}\n{procs}\nENDMODULE").routines[0]).startswith(reason)
+
+
+def test_fine_given_for_a_zone_the_routine_moves_through_stays_todo():
+    assert todos(run("Moves v400,fine;", SPEED_POINTS, extra_procs=MOVES))[0].startswith(
+        "argument z: fine, where Moves moves through a zone given at run time")

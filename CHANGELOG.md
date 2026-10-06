@@ -3,6 +3,16 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+### Converts
+- A routine given its speed and zone (`PROC Approach(robtarget p,speeddata v,zonedata z)`) that makes its MoveJ,
+  MoveL and MoveAbsJ with them: the call passes the speed (mm/s, and % for joint moves) and the CNT of each corner,
+  worked out as the move would be written with them (`CALL APPROACH(400,9,100)`); the routine copies them to
+  registers, `L P[1] R[1]mm/sec CNT R[3]`, as a move takes no `AR[n]` there. A call giving `fine` for a zone the
+  routine moves through, MoveC and other uses of the speed or zone stay TODO, with why. Measured on both
+  controllers (speed argument probe): the time of the same moves written with constants.
+
 ## 1.3.0 — 2026-10-05
 
 More of the RAPID that cells keep their state in, converted: records, strings, arrays the programs

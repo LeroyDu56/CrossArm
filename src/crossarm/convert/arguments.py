@@ -15,6 +15,12 @@ A tooldata or wobjdata the routine moves with is passed as its frame number (`CA
 routine selects (`UTOOL_NUM=AR[1]`); an optional work object not given is 0, wobj0. A point moved to
 in such a routine is in a position register: the controller refuses a P recorded in another tool
 than the one selected (INTP-253), a move to a register takes the frames selected when it runs.
+A speeddata or zonedata parameter the routine makes its MoveJ, MoveL and MoveAbsJ with is passed as numbers:
+the speed in mm/s for its linear moves and in % for its joint ones, and the CNT of each corner the call decides,
+worked out by the caller as it would write the move with what it passes (motion.corner: the CNT depends on the
+zone, the speed and the speed of the move after). A move takes no AR[n] as its speed or CNT (measured: ASBN-092),
+so the routine copies them to registers when it starts: `L P[1] R[k]mm/sec CNT R[m]`. A call passing `fine` for
+a zone the routine moves through so stays TODO: a TP move is FINE or CNT as written.
 A routine with any other parameter — a record passed whole to another routine, a frame used other
 than to move with, an optional num — is not converted, and its calls stay TODO with the reason.
 
@@ -36,9 +42,11 @@ and the routine works on the register.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from crossarm.convert.motion import next_move
 from crossarm.rapid import nodes as n
+from crossarm.rapid.to_pseudo import format_expr
 from crossarm.rapid.walk import base_name, walk_statements
 
 MAX_ARGS = 10  # TP CALL takes at most ten arguments
@@ -46,14 +54,35 @@ _NAME = re.compile(r"([A-Za-z_]\w*)\s*(\{[^}]*\})?\s*$")
 
 
 @dataclass(frozen=True, slots=True)
+class CallCorner:
+    """A move of the routine through a zone whose CNT the call decides: its zone is a zonedata parameter, or its
+    speed a speeddata one. The caller works the CNT out from what it passes and gives it as a number."""
+
+    motion: str  # "J" | "L"
+    zone: n.Expr
+    speed: n.Expr
+    following: n.Expr | None  # the speed of the move the corner leads into (motion.next_move)
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        return (self.motion, *(format_expr(e).upper() if e is not None else "" for e in (self.zone, self.speed, self.following)))
+
+
+# What a speeddata or zonedata parameter is passed as: the TCP speed in mm/s, the % of a joint move, a CNT.
+MOTION_ARGUMENTS = frozenset({"speed_tcp", "speed_joint", "cnt"})
+
+
+@dataclass(frozen=True, slots=True)
 class Slot:
-    name: str  # as declared; a record's component: "part.passes"
+    name: str  # as declared; a record's component: "part.passes"; a speed's: "v.tcp", "v.joint", "z.cnt"
     # "num" | "bool" | "string" | "switch" | "robtarget" (in a position register, not in AR[n]) | "record"
-    # | "tooldata" | "wobjdata" (its frame number)
+    # | "tooldata" | "wobjdata" (its frame number) | "speeddata" | "zonedata" (as their MOTION_ARGUMENTS)
     kind: str
-    fields: tuple["Slot", ...] = ()  # a record: the components the routine reads, each passed as an argument
+    # a record: the components the routine reads, each passed as an argument; a speed or zone: its numbers
+    fields: tuple["Slot", ...] = ()
     by_reference: bool = False  # INOUT, VAR or PERS: what the routine changes goes back to the caller
     optional: bool = False  # a switch, or an optional work object (0 when not given: wobj0)
+    corner: CallCorner | None = None  # a "cnt": the move it is the CNT of
 
     @property
     def key(self) -> str:
@@ -76,7 +105,8 @@ class Signature:
     @property
     def arguments(self) -> tuple[Slot, ...]:
         """The slots passed as AR[n], in order: every one but the points, a record as its components."""
-        return tuple(f for s in self.slots if s.kind != "robtarget" for f in (s.fields if s.kind == "record" else (s,)))
+        return tuple(f for s in self.slots if s.kind != "robtarget"
+                     for f in (s.fields if s.kind in ("record", "speeddata", "zonedata") else (s,)))  # fmt: skip
 
     def frames_of(self, name: str) -> tuple[n.Expr | None, n.Expr | None]:
         """(tool, work object) the routine moves to its point `name` with; (None, None) if it only passes it on."""
@@ -101,6 +131,18 @@ class Signature:
     def frame(self, name: str) -> str | None:
         """'AR[1]' when `name` is a tooldata or wobjdata parameter: the frame number the caller passed."""
         return self.register(name) if self.kind(name) in ("tooldata", "wobjdata") else None
+
+    def given_speed(self, expr: n.Expr, motion: str) -> Slot | None:
+        """The argument a move at one of the routine's speeddata parameters takes its speed from."""
+        if isinstance(expr, n.Name) and self.kind(expr.name) == "speeddata":
+            name = f"{expr.name}.{'joint' if motion == 'J' else 'tcp'}".upper()
+            return next((s for s in self.arguments if s.key == name), None)
+        return None
+
+    def given_corner(self, motion: str, zone: n.Expr, speed: n.Expr, following: n.Expr | None) -> Slot | None:
+        """The argument a move through a zone the call decides takes its CNT from."""
+        key = CallCorner(motion, zone, speed, following).key
+        return next((s for s in self.arguments if s.corner is not None and s.corner.key == key), None)
 
     def returned(self) -> tuple[Slot, ...]:
         """The parameters passed by reference that the routine changes: the caller reads them back."""
@@ -148,7 +190,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                 switches.append(Slot(name, "switch", optional=True))
             elif frame:
                 required.append(Slot(name, type_name.lower()))
-            elif type_name.lower() in ("num", "bool", "string", "robtarget"):
+            elif type_name.lower() in ("num", "bool", "string", "robtarget", "speeddata", "zonedata"):
                 required.append(Slot(name, type_name.lower(), by_reference=bool(mode)))
             elif type_name.lower() in records:
                 fields = _record_fields(routine, name, type_name, records[type_name.lower()])
@@ -157,8 +199,14 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                 required.append(Slot(name, "record", fields))
             else:
                 return f"{type_name} parameter {name}: TP arguments are numbers or text"
+    motion = {s.key: s for s in required if s.kind in ("speeddata", "zonedata")}
+    if motion:
+        found = _motion_fields(routine, motion)
+        if isinstance(found, str):
+            return found
+        required = [replace(s, fields=found[s.key]) if s.key in motion else s for s in required]
     slots = tuple(required + switches)
-    arguments = [s for s in slots if s.kind != "robtarget"]
+    arguments = [f for s in slots if s.kind != "robtarget" for f in (s.fields if s.kind in ("speeddata", "zonedata") else (s,))]
     if len(arguments) > MAX_ARGS:
         return f"{len(arguments)} parameters: a TP CALL takes at most {MAX_ARGS} arguments"
     kinds = {s.key: s.kind for s in slots}
@@ -237,6 +285,81 @@ def _frame_uses(routine: n.Routine, name: str) -> str:
     return f"its {name} is used other than to move with or to pass on: a frame is passed by its number" if other else ""
 
 
+def _motion_fields(routine: n.Routine, params: dict[str, Slot]) -> dict[str, tuple[Slot, ...]] | str:
+    """The numbers each speeddata and zonedata parameter is passed as: a speed its TCP speed when linear moves
+    take it and its % when joint moves do; then the CNT of each corner it decides (a zone parameter, or the
+    speed of a move through a zone written in the routine). Or why they cannot be passed so: the routine uses
+    them other than as the speed and zone of its MoveJ, MoveL and MoveAbsJ."""
+    other: list[str] = []
+
+    def mine(expr: object, kind: str | None = None) -> str | None:
+        key = expr.name.upper() if isinstance(expr, n.Name) else None
+        return key if key in params and (kind is None or params[key].kind == kind) else None
+
+    def visit(node: object) -> None:
+        if (key := mine(node)) is not None:
+            other.append(params[key].name)
+        elif isinstance(node, n.Move):
+            for field_name in node.__dataclass_fields__:
+                value = getattr(node, field_name)
+                if (field_name == "speed" and mine(value, "speeddata")) or (field_name == "zone" and mine(value, "zonedata")):
+                    continue
+                visit(value)
+        elif isinstance(node, tuple | list):
+            for item in node:
+                visit(item)
+        elif hasattr(node, "__dataclass_fields__") and not isinstance(node, n.Span):
+            for field_name in node.__dataclass_fields__:
+                visit(getattr(node, field_name))
+
+    visit(routine.body)
+    if other:
+        slot = params[other[0].upper()]
+        return f"its {slot.kind} {slot.name} is used other than as the {'speed' if slot.kind == 'speeddata' else 'zone'} of its moves"
+    speeds: dict[str, set[str]] = {key: set() for key in params}
+    corners: dict[str, list[CallCorner]] = {key: [] for key in params}
+    for block in _blocks(routine.body):
+        for i, stmt in enumerate(block):
+            if not isinstance(stmt, n.Move):
+                continue
+            speed, zone = mine(stmt.speed, "speeddata"), mine(stmt.zone, "zonedata")
+            motion = "J" if stmt.kind in (n.MoveKind.J, n.MoveKind.ABSJ) else stmt.kind.value
+            if (speed or zone) and motion not in ("J", "L"):
+                return f"Move{motion} at the {'speed' if speed else 'zone'} of a parameter: not measured on the controller"
+            if speed:
+                speeds[speed].add("joint" if motion == "J" else "tcp")
+            fine = isinstance(stmt.zone, n.Name) and stmt.zone.name.upper() == "FINE"
+            if owner := zone or (speed if not fine else None):
+                following = next_move(block, i)
+                corner = CallCorner(motion, stmt.zone, stmt.speed, following.speed if following else None)
+                if corner.key not in {c.key for c in corners[owner]}:
+                    corners[owner].append(corner)
+    fields = {}
+    for key, slot in params.items():
+        found = [Slot(f"{slot.name}.{use}", f"speed_{use}") for use in ("tcp", "joint") if use in speeds[key]]
+        found += [Slot(f"{slot.name}.cnt{i if i > 1 else ''}", "cnt", corner=c) for i, c in enumerate(corners[key], 1)]
+        fields[key] = tuple(found)
+    return fields
+
+
+def _blocks(stmts: tuple[n.Stmt, ...]) -> list[tuple[n.Stmt, ...]]:
+    """Each block of statements, nested ones included: a corner leads into the next move of its own block."""
+    found = [stmts]
+    for stmt in stmts:
+        match stmt:
+            case n.If():
+                for branch in stmt.branches:
+                    found += _blocks(branch.body)
+                found += _blocks(stmt.else_body)
+            case n.For() | n.While():
+                found += _blocks(stmt.body)
+            case n.Test():
+                for case in stmt.cases:
+                    found += _blocks(case.body)
+                found += _blocks(stmt.default or ())
+    return found
+
+
 def _changed_by_call(stmt: n.Stmt) -> str | None:
     """The data an Incr, Decr, Add or Clear changes, as written."""
     if isinstance(stmt, n.ProcCall) and stmt.name.upper() in _CHANGING and stmt.args:
@@ -279,4 +402,4 @@ def _record_fields(routine: n.Routine, name: str, type_name: str,
     return tuple(fields)
 
 
-__all__ = ["MAX_ARGS", "Signature", "Slot", "signature"]
+__all__ = ["MAX_ARGS", "MOTION_ARGUMENTS", "CallCorner", "Signature", "Slot", "signature"]
