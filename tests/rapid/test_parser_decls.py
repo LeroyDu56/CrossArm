@@ -93,3 +93,12 @@ def test_local_declarations_inside_routine():
     module = parse_module("MODULE M\nPROC p()\nVAR jointtarget j;\nVAR num a:=2;\nENDPROC\nENDMODULE")
     body = module.routines[0].body
     assert [(d.type_name, d.name) for d in body] == [("jointtarget", "j"), ("num", "a")]
+
+
+def test_a_parameter_list_splits_on_commas_between_parameters_only():
+    from crossarm.rapid.walk import split_params
+
+    assert split_params("num n, INOUT byte out{*, *}") == ["num n", "INOUT byte out{*, *}"]
+    assert split_params("robtarget p,\\PERS wobjdata W") == ["robtarget p", "\\PERS wobjdata W"]
+    assert split_params("num Area\\switch XP|switch XM") == ["num Area", "\\switch XP|switch XM"]
+    assert split_params("") == []

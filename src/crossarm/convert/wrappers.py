@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, replace
 
 from crossarm.rapid import nodes as n
-from crossarm.rapid.walk import walk_statements
+from crossarm.rapid.walk import split_params, walk_statements
 
 _INSTRUCTION = {n.MoveKind.J: "MoveJ", n.MoveKind.L: "MoveL", n.MoveKind.C: "MoveC", n.MoveKind.ABSJ: "MoveAbsJ"}
 _PARAM_NAME = re.compile(r"([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*$")
@@ -44,10 +44,7 @@ def parameters(raw: str) -> tuple[tuple[str, ...], frozenset[str]] | None:
     """
     required: list[str] = []
     optional: set[str] = set()
-    for part in re.split(r",|(?=\\)", raw):
-        part = part.strip()
-        if not part:
-            continue
+    for part in split_params(raw):
         names = []
         for alternative in part.lstrip("\\").split("|"):
             match = _PARAM_NAME.search(alternative.strip())

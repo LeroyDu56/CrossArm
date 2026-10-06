@@ -22,6 +22,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - A number calculated with RAPID's math functions (`Pow`, `Sqrt`, `Sin`...) from data no program changes
   (`FOR i FROM 1 TO Pow(2, nRings) - 1`) is worked out once, as TP has no such function: a PERS read at its saved
   value, with a warning. One that reads data the programs change stays TODO, saying where.
+- A routine with a parameter that is an array of two or more dimensions (`INOUT num table{*,*}`) is read: its
+  parameter list was taken as unreadable, so every argument of a call to it counted as changed, and the data
+  given to its other parameters were no longer known values.
 
 ### Report
 - A call to a routine, or a use of data, that no module of the backup declares (a system module, an option, another

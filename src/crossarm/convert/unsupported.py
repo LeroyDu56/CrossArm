@@ -13,7 +13,7 @@ from crossarm.convert.compute import path_of
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.records import nodes
 from crossarm.rapid import nodes as n
-from crossarm.rapid.walk import walk_statements
+from crossarm.rapid.walk import split_params, walk_statements
 
 # RAPID instructions, functions and data types TP has nothing for, by family: a statement using one is a TODO
 # under Blocker.NO_TP_EQUIVALENT with why, rather than a call or a value CrossArm could not work out.
@@ -229,8 +229,8 @@ def _byte_arrays_given(call: n.ProcCall, params: str) -> list[str]:
     """The data the call gives to the byte array parameters of a routine with these raw parameters, in order."""
     required: list[bool] = []  # whether each required parameter is a byte array, in order
     optional: set[str] = set()  # the optional ones that are
-    for part in (p.strip() for p in re.split(r",|(?=\\)", params)):
-        for alternative in part.lstrip("\\").split("|") if part else ():
+    for part in split_params(params):
+        for alternative in part.lstrip("\\").split("|"):
             is_bytes = re.search(r"\bbyte\s+(\w+)\s*\{", alternative, re.IGNORECASE)
             if part.startswith("\\"):
                 optional |= {is_bytes[1].upper()} if is_bytes else set()

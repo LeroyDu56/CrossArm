@@ -3,6 +3,7 @@
 
 """Depth-first traversal helpers over the RAPID AST."""
 
+import re
 from collections.abc import Iterable, Iterator
 
 from crossarm.rapid import nodes as n
@@ -35,6 +36,17 @@ def module_statements(module: n.Module | None) -> Iterator[n.Stmt | n.ModuleItem
             yield from item.handlers
         else:
             yield item
+
+
+# A comma between two parameters, not one between the dimensions of an array ({*,*}); a backslash starts an
+# optional one, with or without a comma before it ('num Area\switch XP|switch XM').
+_PARAM_SPLIT = re.compile(r",(?![^{}]*\})|(?=\\)")
+
+
+def split_params(raw: str) -> list[str]:
+    """A routine's raw parameter list, one part per parameter (alternatives `|` kept together), stripped;
+    'num n, INOUT byte out{*,*}' -> ['num n', 'INOUT byte out{*,*}']."""
+    return [part.strip() for part in _PARAM_SPLIT.split(raw) if part.strip()]
 
 
 def base_name(expr: n.Expr) -> str | None:

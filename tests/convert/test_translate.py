@@ -316,6 +316,14 @@ def test_a_math_function_of_data_no_program_changes_is_worked_out():
                       " Pow(2, nRings) - 1, which TP cannot calculate; a value set on the ABB controller since is not")]
 
 
+def test_a_routine_with_a_two_dimension_array_parameter_changes_that_array_only():
+    """'num n, INOUT num out{*, *}' is two parameters: the comma between the dimensions splits nothing."""
+    data = "PERS num nRings:=3;\nVAR num nTable{7,6};\nVAR num nCount;"
+    procs = "PROC Fill(num n, INOUT num out{*, *})\n  out{1,1}:=n;\nENDPROC"
+    result = run("Fill nRings, nTable;\nnCount:=Pow(2, nRings);", data, extra_procs=procs)
+    assert tp_lines(result)[-1] == "R[1:nCount]=8"
+
+
 def test_a_math_function_of_data_a_program_changes_stays_todo_and_says_where():
     result = run("nRings:=nRings+1;\nnCount:=Pow(2, nRings);", "PERS num nRings:=3;\nVAR num nCount;")
     assert [message.split(" — ")[0] for message in todos(result)] == [

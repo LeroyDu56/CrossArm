@@ -49,7 +49,7 @@ from dataclasses import dataclass, replace
 from crossarm.convert.motion import next_move
 from crossarm.rapid import nodes as n
 from crossarm.rapid.to_pseudo import format_expr
-from crossarm.rapid.walk import base_name, walk_statements
+from crossarm.rapid.walk import base_name, split_params, walk_statements
 
 MAX_ARGS = 10  # TP CALL takes at most ten arguments
 _NAME = re.compile(r"([A-Za-z_]\w*)\s*(\{[^}]*\})?\s*$")
@@ -163,10 +163,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
     fine = fine or {}
     required: list[Slot] = []
     switches: list[Slot] = []
-    for part in re.split(r",|(?=\\)", routine.params):
-        part = part.strip()
-        if not part:
-            continue
+    for part in split_params(routine.params):
         optional = part.startswith("\\")
         alternatives = part.lstrip("\\").split("|")
         if not optional and len(alternatives) > 1:

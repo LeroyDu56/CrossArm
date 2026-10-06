@@ -45,7 +45,7 @@ from crossarm.convert.values import (
 )
 from crossarm.geometry import Pose, mat_mul, matrix_to_quat, matrix_to_wpr, quat_to_matrix, rot_x, rot_y, rot_z
 from crossarm.rapid import nodes as n
-from crossarm.rapid.walk import walk_statements
+from crossarm.rapid.walk import split_params, walk_statements
 
 
 class MeasuredAtRunTime(Unresolvable):
@@ -139,10 +139,7 @@ _PARAM = re.compile(r"^(?:(VAR|PERS|INOUT)\s+)?([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s
 def parse_params(raw: str) -> list[list[Param]] | None:
     """A routine's parameters, each a list of alternatives (`\\switch On | switch Off`); None if unreadable."""
     out: list[list[Param]] = []
-    for part in re.split(r",|(?=\\)", raw):
-        part = part.strip()
-        if not part:
-            continue
+    for part in split_params(raw):
         optional = part.startswith("\\")
         group = []
         for alternative in part.lstrip("\\").split("|"):
