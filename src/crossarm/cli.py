@@ -85,6 +85,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="the robot MakeTP makes the .TP for (implies --tp): a ROBOGUIDE robot folder (...\\Robot_1) "
              "or a robot.ini made by FANUC Setrobot; default: robot.ini in the current folder",
     )  # fmt: skip
+    p_conv.add_argument(
+        "--keep-taught", type=Path, action="append", metavar="PATH",
+        help="keep the positions touched up on the robot: its programs as they are now (folder, .zip, .LS, or .TP "
+             "decoded by FANUC PrintTP, installed with ROBOGUIDE; robot as for --tp-robot) and the earlier CrossArm "
+             "output folder (its crossarm_points.json, also found next to the --map file); repeatable. A point "
+             "touched up there keeps its taught value unless it changed in the backup: then it is theoretical, "
+             "listed to touch up again",
+    )  # fmt: skip
     p_conv.set_defaults(handler=_cmd_convert)
     return parser
 
@@ -158,7 +166,9 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         return 2
     try:
         tp = TpRequest(args.tp_robot) if args.tp or args.tp_robot else None
-        output = pipeline.run(args.paths, args.output, config, args.routine, args.eio, fanuc=args.fanuc, tp=tp)
+        keep = pipeline.KeepTaught(args.keep_taught, args.map) if args.keep_taught else None
+        output = pipeline.run(args.paths, args.output, config, args.routine, args.eio, fanuc=args.fanuc, tp=tp,
+                              keep=keep)  # fmt: skip
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         print(f"CrossArm: {exc}", file=sys.stderr)
         return 2

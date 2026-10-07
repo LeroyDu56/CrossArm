@@ -9,6 +9,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   or byte buffers) can be a TP or KAREL program the integrator provides. Its calls become `CALL NAME(args)`, the
   routine is not written, and the report and checklist list each program to provide with its arguments; the
   mapping file offers the candidates with `"program": null`. Measured on ROBOGUIDE (new `external` probe).
+- Converting again keeps the positions touched up on the robot: `crossarm convert --keep-taught PATH` reads the
+  robot's programs (.LS, or .TP decoded by FANUC PrintTP) and `crossarm_points.json`, which every conversion now
+  writes; a point touched up keeps its taught value unless it, or its frame, changed in the backup (then it is
+  theoretical and listed to touch up again). Measured on ROBOGUIDE (new `taught` probe).
 
 ## 1.5.0 — 2026-10-07
 

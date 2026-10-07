@@ -164,10 +164,11 @@ _SETUP_ERRORS = {
 
 
 def reason(output: str) -> str:
-    """MakeTP's message, without its banner and the temporary path it names."""
-    lines = [line.strip() for line in output.splitlines() if line.strip() and not line.startswith("MakeTP V")]
-    lines = [line for line in lines if not re.search(r"\.ls\(\d+\)$", line, re.IGNORECASE)]
-    text = " ".join(lines).replace("Error executing MakeTP: ", "")
+    """MakeTP's (or PrintTP's) message, without its banner and the temporary path it names."""
+    lines = [line.strip() for line in output.splitlines()
+             if line.strip() and not line.startswith(("MakeTP V", "PrintTP V"))]  # fmt: skip
+    lines = [line for line in lines if not re.search(r"\.(ls|tp)\(\d+\)$", line, re.IGNORECASE)]
+    text = re.sub(r"Error executing (MakeTP|PrintTP): ", "", " ".join(lines))
     return re.sub(r"\s+", " ", text).strip() or "no message"
 
 
@@ -212,6 +213,57 @@ def make_tp(programs: list[Path], folder: Path, request: TpRequest, log: Callabl
             export.refused.append((name, why))
             log(f"    MakeTP refused {name}.LS: {why}")
     return export
+
+
+@dataclass
+class TpDecoded:
+    """What PrintTP made of binary .TP programs: their text, as a .LS."""
+
+    texts: dict[str, str] = field(default_factory=dict)  # program name -> .LS text
+    refused: list[tuple[str, str]] = field(default_factory=list)  # (program, PrintTP's reason)
+    problem: str = ""  # why none was decoded: PrintTP or the robot configuration not found
+
+
+def print_tp(programs: list[Path], request: TpRequest, runner: Runner | None = None) -> TpDecoded:
+    """Each NAME.TP turned back into .LS text by FANUC's PrintTP (printtp.exe, next to maketp.exe).
+
+    Measured with ROBOGUIDE V10.10 (tools/make_taught_probe.py): PrintTP, like MakeTP, goes through the robot's
+    virtual controller, and in a cell open in ROBOGUIDE it deletes the program of the same name."""
+    decoded = TpDecoded()
+    runner = runner or subprocess.run
+    maketp = request.maketp or find_maketp()
+    printtp = maketp.with_name("printtp.exe") if maketp else None
+    if printtp is None or (request.maketp is None and not printtp.is_file()):
+        decoded.problem = ("FANUC PrintTP (printtp.exe) not found: it is installed with ROBOGUIDE, in "
+                           "C:\\Program Files (x86)\\FANUC\\WinOLPC\\bin")  # fmt: skip
+        return decoded
+    with tempfile.TemporaryDirectory(prefix="crossarm_printtp_") as temp:
+        work = Path(temp)
+        ini, problem = robot_config(request.robot, maketp, work)  # type: ignore[arg-type]
+        if ini is None:
+            decoded.problem = problem
+            return decoded
+        for source in programs:
+            name = source.stem.upper()
+            shutil.copyfile(source, work / f"{name}.TP")
+            try:
+                done = runner([str(printtp), f"{name}.TP", f"{name}.LS", "/config", str(ini)], cwd=work,
+                              capture_output=True, text=True, errors="replace", timeout=TIMEOUT_S,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))  # fmt: skip
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                decoded.refused.append((name, f"PrintTP did not finish: {exc}"))
+                continue
+            made = work / f"{name}.LS"
+            if done.returncode == 0 and made.is_file():
+                decoded.texts[name] = made.read_bytes().decode("cp1252", errors="replace")
+                continue
+            why = reason(f"{done.stdout}\n{done.stderr}")
+            setup = next((text for key, text in _SETUP_ERRORS.items() if key in why), None)
+            if setup and not decoded.texts:
+                decoded.problem = f"{setup} (PrintTP: {why})"
+                return decoded
+            decoded.refused.append((name, why))
+    return decoded
 
 
 def report_section(export: TpExport, where: str) -> str:

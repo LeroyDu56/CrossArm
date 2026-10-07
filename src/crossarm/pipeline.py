@@ -16,6 +16,9 @@ Output layout, created next to the input unless an output folder is given:
         *.LS
         crossarm_report.md / .html
       TP/                       when asked: the .TP of every task, made by FANUC MakeTP (fanuc/maketp.py)
+
+Each task folder also holds crossarm_points.json: the points written, for a later conversion keeping the
+positions touched up on the robot (--keep-taught, convert/taught.py).
 """
 
 import os
@@ -30,6 +33,20 @@ from crossarm.convert.coverage import Coverage, fmt_percent
 from crossarm.convert.html_report import build_html_report
 from crossarm.convert.motion import M20ID_25, profile_for
 from crossarm.convert.setup import SETUP_NAME, SETUP_NAME_SHORT, build_setup
+from crossarm.convert.taught import (
+    AGAIN,
+    POINTS_FILE,
+    PointsFile,
+    RobotPrograms,
+    apply,
+    build_points,
+    compare,
+    earlier_for,
+    read_points,
+    read_robot,
+    records,
+)
+from crossarm.convert.taught import report_section as taught_section
 from crossarm.convert.translate import ControllerScope, remark_lines
 from crossarm.fanuc.ls_writer import write_ls
 from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
@@ -56,6 +73,22 @@ class TaskOutput:
     report_html: Path | None = None
     result: ConversionResult | None = None  # the full detail, for a summary on screen
     tp: TpExport | None = None  # the .TP files, when asked for
+
+
+@dataclass(frozen=True)
+class KeepTaught:
+    """What the user gave to keep the positions touched up on the robot (--keep-taught)."""
+
+    paths: list[Path]  # the robot's programs (.LS, .TP, folders, .zip), and the earlier conversion's output
+    mapping: Path | None = None  # the --map file: an earlier conversion's crossarm_points.json next to it is found
+
+
+@dataclass
+class _Keeping:
+    robot: RobotPrograms
+    earlier: list[PointsFile]
+    where: str  # the robot's programs, as the report names them
+    tasks: int = 1
 
 
 @dataclass
@@ -171,7 +204,7 @@ def _parse_task(task: TaskSource) -> tuple[list[ParseResult], list[str]]:
 def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[str]], folder: Path,
                   config: ConversionConfig, signals, routines, source: Source, log: Log, numbers: ControllerScope,
                   other_tasks: list[str], licence: LicenceStatus,
-                  tp: tuple[TpRequest, Path] | None = None) -> TaskOutput:  # fmt: skip
+                  tp: tuple[TpRequest, Path] | None = None, keeping: _Keeping | None = None) -> TaskOutput:  # fmt: skip
     out = TaskOutput(task.name, folder)
     parsed, out.syntax_errors = parsed_task
     modules = [p.module for p in parsed if p.module is not None]
@@ -183,6 +216,14 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         program_modules=program_names if source.kind == "backup" else None, shared=numbers,
     )  # fmt: skip
     result.shared_with = other_tasks
+    points = records(result, task.name)  # theoretical, before any taught value is kept
+    if keeping is not None:
+        earlier = earlier_for(task.name, keeping.earlier, keeping.tasks)
+        if earlier is None:
+            log(f"  {task.name}: no {POINTS_FILE} of this task in the earlier conversion: every point theoretical")
+        else:
+            result.taught = compare(result, earlier, keeping.robot, task.name)
+            apply(result, result.taught)
     folder.mkdir(parents=True, exist_ok=True)
     for info in result.programs:
         (folder / f"{info.program.name}.LS").write_text(write_ls(_marked(info.program, licence)), encoding="ascii",
@@ -202,6 +243,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
     extra = ""  # what this run adds to the report
     if out.tp is not None:
         extra += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
+    if result.taught is not None and keeping is not None:
+        extra += taught_section(result.taught, keeping.where)
     if out.syntax_errors:
         extra += "\n## Syntax errors (statements skipped by the parser)\n\n"
         extra += "\n".join(f"- `{e}`" for e in out.syntax_errors) + "\n"
@@ -213,6 +256,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
     out.report_html.write_text(page, encoding="utf-8")
     # The numbering this run used, ready to edit and feed back with --map.
     (folder / "crossarm_mapping.json").write_text(build_mapping(result, config), encoding="utf-8")
+    # The points written, for a later conversion keeping what is touched up on the robot (--keep-taught).
+    (folder / POINTS_FILE).write_text(build_points(points), encoding="utf-8")
 
     out.result = result
     out.programs = len(result.programs)
@@ -224,6 +269,10 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
            if result.coverage.total else ""))  # fmt: skip
     if out.tp is not None:
         log(f"  {task.name}: {out.tp.summary()}")
+    if result.taught is not None:
+        log(f"  {task.name}: taught positions: {result.taught.summary()}")
+        for point in result.taught.of(AGAIN):
+            log(f"    touch up again: {point.program} P[{point.number}] {point.source}: {point.why}")
     return out
 
 
@@ -236,8 +285,10 @@ def run(
     log: Log = print,
     fanuc: list[Path] | None = None,
     tp: TpRequest | None = None,
+    keep: KeepTaught | None = None,
 ) -> RunOutput:
-    """Convert; with `tp`, also write the programs as .TP with FANUC MakeTP (fanuc/maketp.py), in TP/."""
+    """Convert; with `tp`, also write the programs as .TP with FANUC MakeTP (fanuc/maketp.py), in TP/; with `keep`,
+    keep the positions touched up on the robot (convert/taught.py)."""
     given, lines = list(paths), []
     user_log = log
 
@@ -275,6 +326,8 @@ def run(
                                      motion_profile_source=how)  # fmt: skip
                 log(f"  speeds and zones: {how or 'no profile measured on its series, the M-20iD/25 one is used'}")
 
+    keeping = _keeping(keep, tp, log) if keep is not None else None
+
     with open_source(paths) as source:
         if not any(task.files for task in source.tasks):
             raise ValueError("no RAPID module found (.mod, .modx, .sys, .sysx, .prg)")
@@ -292,6 +345,8 @@ def run(
         # One controller: its registers, flags and I/O are shared by every task converted here.
         shared = ControllerScope.from_config(config, controller.programs if controller else ())
         names = [task.name for task in source.tasks if task.files]
+        if keeping is not None:
+            keeping.tasks = len(names)
         parsed = [_parse_task(task) for task in source.tasks]
         # A PERS is shared by the tasks: what one task changes, a frame another computes from is not fixed.
         shared.written = Written.of(p.module for modules, _ in parsed for p in modules if p.module is not None)
@@ -303,8 +358,31 @@ def run(
             task_folder = folder / task.name if source.kind == "backup" or len(source.tasks) > 1 else folder
             others = [name for name in names if name != task.name]
             tasks.append(_convert_task(task, parsed_task, task_folder, config, signals, routines, source, log, shared,
-                                       others, licence, (tp, folder / TP_FOLDER) if tp else None))  # fmt: skip
+                                       others, licence, (tp, folder / TP_FOLDER) if tp else None,
+                                       keeping))  # fmt: skip
         log(f"Output: {folder}")
         # What a user can send when a result looks wrong: stays next to the report.
         (folder / "crossarm_log.txt").write_text(log_text(given, fanuc, lines), encoding="utf-8")
         return RunOutput(source.name, source.kind, folder, tasks, eio_path, controller, licence, config)
+
+
+def _keeping(keep: KeepTaught, tp: TpRequest | None, log: Log) -> _Keeping:
+    """The robot's programs and the earlier conversion's points, read once for every task."""
+    robot = read_robot(keep.paths, tp)
+    earlier = list(robot.earlier)
+    if not earlier and keep.mapping is not None and (keep.mapping.parent / POINTS_FILE).is_file():
+        earlier.append(read_points(keep.mapping.parent / POINTS_FILE))
+    if not earlier:
+        raise ValueError(
+            f"--keep-taught: no {POINTS_FILE} of an earlier conversion found: give the earlier CrossArm output folder "
+            "too (--keep-taught again), or its crossarm_mapping.json with --map. A conversion made before CrossArm "
+            "1.6 has none: convert the earlier ABB backup again, with its mapping file, to make one"
+        )  # fmt: skip
+    where = ", ".join(f"`{p}`" for p in keep.paths)
+    log(f"Taught positions: {len(robot.programs)} programs read on the robot"
+        + (f", {len(robot.unread)} not read" if robot.unread else "")
+        + f"; earlier conversion: {', '.join(str(e.path) for e in earlier)}")  # fmt: skip
+    if robot.tp_files:
+        log("  robot's .TP decoded by FANUC PrintTP, which goes through the robot's virtual controller (a cell open "
+            "in ROBOGUIDE loses its programs of the same names)" + (f": {robot.tp_problem}" if robot.tp_problem else ""))  # fmt: skip
+    return _Keeping(robot, earlier, f"{len(robot.programs)} read from {where}")

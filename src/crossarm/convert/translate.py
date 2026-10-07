@@ -133,6 +133,7 @@ from crossarm.rapid.walk import walk_statements
 
 if TYPE_CHECKING:
     from crossarm.convert.setup import FrameSetup
+    from crossarm.convert.taught import Taught
 
 REMARK_MAX = 32  # characters after '!' shown on the pendant
 MESSAGE_MAX = 24  # MESSAGE[...] text length: longer texts are silently cut by the controller (ROBOGUIDE probe)
@@ -182,6 +183,10 @@ class PointInfo:
     uf: int
     ut: int
     value: CartesianPosition | JointPosition
+    # The position registers the frames were loaded from, when above what the controller holds (FrameInfo.bank):
+    # with uf/ut, which frame the point is in (crossarm.convert.taught).
+    uf_bank: int | None = None
+    ut_bank: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,6 +402,9 @@ class ConversionResult:
     # each program has to do and where it is called; and the routines CrossArm could not write, which may be.
     provided: list[ProvidedProgram] = field(default_factory=list)
     provided_candidates: list[Candidate] = field(default_factory=list)
+    # The positions taught on the robot kept, or not, from an earlier conversion (crossarm.convert.taught; set by the
+    # pipeline when asked: --keep-taught).
+    taught: "Taught | None" = None
 
     @property
     def todo_count(self) -> int:
@@ -2865,7 +2873,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls):
             faceplate = self.written_faceplate((x, y, z, w, p, r), uf_selected[0], ut_selected[0])
             tp_value = CartesianPosition(x, y, z, w, p, r, self.config_string(value, line, faceplate))
         self.positions.append(Position(number, uf, ut, tp_value))
-        self.points.append(PointInfo(number, source, line, uf, ut, tp_value))
+        self.points.append(PointInfo(number, source, line, uf, ut, tp_value, uf_selected[1], ut_selected[1]))
         return f"P[{number}]"
 
     def written_faceplate(self, point: tuple[float, ...], uf: int, ut: int) -> Pose | None:

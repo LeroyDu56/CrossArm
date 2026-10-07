@@ -1,0 +1,24 @@
+{
+ "_README": "The points CrossArm wrote, for a later conversion with --keep-taught: each by the RAPID it came from (routine, expression, rank of that expression in the routine), with its P[n], frames and theoretical value as written. Converting again with --keep-taught reads it, with the programs as they are on the robot, to keep the positions touched up there. Not to edit.",
+ "format": 1,
+ "task": "files",
+ "frames": {
+  "uframes": {
+   "wKeep": [900.0, 0.0, 400.0, 0.0, 0.0, 0.0]
+  },
+  "utools": {
+   "tKeep": [0.0, 0.0, 150.0, 0.0, 0.0, 0.0]
+  }
+ },
+ "programs": {
+  "KEEPPROBE": {
+   "routine": "KeepProbe.KeepProbe",
+   "points": [
+    {"P": 1, "rapid": "pKeep", "rank": 1, "uf": 1, "ut": 1, "wobj": "wKeep", "tool": "tKeep", "xyzwpr": [100.0, -150.0, 200.0, 180.0, 0.0, 180.0], "config": "N U T, 0, 0, 0"},
+    {"P": 2, "rapid": "pMove", "rank": 1, "uf": 1, "ut": 1, "wobj": "wKeep", "tool": "tKeep", "xyzwpr": [150.0, 100.0, 200.0, 180.0, 0.0, 180.0], "config": "N U T, 0, 0, 0"},
+    {"P": 3, "rapid": "pPlain", "rank": 1, "uf": 1, "ut": 1, "wobj": "wKeep", "tool": "tKeep", "xyzwpr": [-50.0, 0.0, 250.0, 180.0, 0.0, 180.0], "config": "N U T, 0, 0, 1"}
+   ]
+  }
+ },
+ "point_arrays": {}
+}

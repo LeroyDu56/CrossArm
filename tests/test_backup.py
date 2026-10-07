@@ -134,7 +134,8 @@ def test_full_backup_conversion(tmp_path):
     # Each robot gets the program that sets its frames, named apart the same way.
     for task, program, setup in (("T_ROB1", "MAIN.LS", "SETUP_FRAMES.LS"), ("T_ROB2", "MAIN_2.LS", "SETUP_FRAMES_2.LS")):
         files = sorted(p.name for p in (result.folder / task).iterdir())
-        assert files == [program, setup, "crossarm_mapping.json", "crossarm_report.html", "crossarm_report.md"]
+        assert files == [program, setup, "crossarm_mapping.json", "crossarm_points.json", "crossarm_report.html",
+                         "crossarm_report.md"]  # fmt: skip
     ls = (result.folder / "T_ROB1" / "MAIN.LS").read_text(encoding="ascii")
     assert "DO[1]=ON" in ls and "J P[1]" in ls
     assert result.todo == 0

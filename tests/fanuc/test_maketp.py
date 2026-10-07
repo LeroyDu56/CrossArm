@@ -194,3 +194,33 @@ def test_the_summary_warns_when_no_tp_was_written(fixtures_dir, tmp_path, monkey
     assert any(level == WARN and text.startswith("No .TP written: FANUC MakeTP") for level, text in summarize(run).attention)
     run.tasks[0].tp = TpExport(tmp_path, made=["A"], refused=[("B", "why")])
     assert (WARN, "MakeTP refused 1 program: see the report; load their .LS instead.") in summarize(run).attention
+
+
+class FakePrintTP:
+    """subprocess.run as PrintTP behaves: NAME.LS written in the current folder, or the refusal printed."""
+
+    def __init__(self, refuse: dict[str, str] | None = None) -> None:
+        self.refuse = refuse or {}
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args, cwd, **kwargs) -> subprocess.CompletedProcess:
+        self.calls.append(args)
+        name = args[1].removesuffix(".TP")
+        if name in self.refuse:
+            return subprocess.CompletedProcess(args, 1, "PrintTP V10.10-1, Copyright\n" + self.refuse[name], "")
+        (Path(cwd) / args[2]).write_bytes(f"/PROG  {name}\r\n".encode("ascii"))
+        return subprocess.CompletedProcess(args, 0, "PrintTP V10.10-1, Copyright\nPrintTP completed.\n", "")
+
+
+def test_printtp_turns_the_robot_tp_back_into_ls_text(winolpc, tmp_path, monkeypatch):
+    exe, robot = winolpc
+    tps = []
+    for name in ("MAIN", "BAD"):
+        (tmp_path / f"{name}.TP").write_bytes(b"binary")
+        tps.append(tmp_path / f"{name}.TP")
+    run = FakePrintTP(refuse={"BAD": "Error executing PrintTP: cannot read file\n"})
+    decoded = maketp.print_tp(tps, TpRequest(robot, maketp=exe), runner=run)
+    assert decoded.texts == {"MAIN": "/PROG  MAIN\r\n"} and decoded.refused == [("BAD", "cannot read file")]
+    assert run.calls[0][:4] == [str(exe.with_name("printtp.exe")), "MAIN.TP", "MAIN.LS", "/config"]
+    monkeypatch.setattr(maketp, "find_maketp", lambda: None)
+    assert maketp.print_tp(tps, TpRequest(robot), runner=run).problem.startswith("FANUC PrintTP (printtp.exe) not found")

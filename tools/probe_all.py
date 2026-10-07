@@ -50,6 +50,9 @@ probe, everything else in local/logs/probe_all.log):
                  50 ms, the payload schedule of the tool with the part active
     external     calls to programs the integrator provides (external_routines): the caller loads without them and
                  stops on the CALL (INTP-222); with them, the arguments and the num given back as RAPID passes them
+    taught       a point touched up on the robot (COM Record), the program read back (.LS, and .TP through PrintTP), the
+                 backup changed and converted again keeping what was taught: the robot reaches the taught point and
+                 the new theoretical one of the point changed in the backup
     maketp       the .LS made binary .TP by FANUC MakeTP (SETUP_FRAMES too): loaded, run, registers as RAPID
                  computes them, decoded back by PrintTP to the lines of the .LS (skipped without MakeTP)
 
@@ -95,6 +98,7 @@ import make_select_probe
 import make_setup_probe
 import make_speed_arg_probe
 import make_string_probe
+import make_taught_probe
 import make_time_flag_probe
 import make_wait_probe
 import roboguide
@@ -398,6 +402,14 @@ def probe_external() -> str:
             f" {len(make_external_probe.EXPECTED)} registers as RAPID passes them")
 
 
+def probe_taught() -> str:
+    try:
+        problem = make_taught_probe.run()
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return problem or make_taught_probe.summary()
+
+
 def probe_search() -> str:
     try:
         found = make_search_probe.read_results("\n".join(make_search_probe.measure()))
@@ -477,7 +489,7 @@ def main() -> int:
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
               "interrupts": probe_interrupts, "params": probe_params, "records": probe_records, "strings": probe_strings,
               "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "joints": probe_joints, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
-              "external": probe_external,
+              "external": probe_external, "taught": probe_taught,
               "pallet": probe_pallet, "maketp": probe_maketp,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log

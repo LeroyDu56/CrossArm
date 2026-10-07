@@ -44,7 +44,8 @@ def test_convert_writes_ls_files_and_report(fixtures_dir, tmp_path, capsys):
     out = tmp_path / "out"
     assert main(["convert", str(fixtures_dir / "rapid" / "pick_and_place.mod"), "-o", str(out)]) == 0
     assert sorted(p.name for p in out.iterdir()) == [
-        "MAIN.LS", "PICK.LS", "PLACE.LS", "SETUP_FRAMES.LS", "crossarm_log.txt", "crossarm_mapping.json", "crossarm_report.html",
+        "MAIN.LS", "PICK.LS", "PLACE.LS", "SETUP_FRAMES.LS", "crossarm_log.txt", "crossarm_mapping.json", "crossarm_points.json",
+        "crossarm_report.html",
         "crossarm_report.md",
     ]  # fmt: skip
     assert (out / "MAIN.LS").read_bytes().startswith(b"/PROG  MAIN\r\n")

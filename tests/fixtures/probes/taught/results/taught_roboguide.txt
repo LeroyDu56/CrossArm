@@ -1,0 +1,25 @@
+run SETUP_FRAMES done
+run KPTOUCH1 done
+touched pKeep 104.000 -150.000 197.000 180.000 0.000 -178.000
+touchup pKeep P[1] recorded
+run KPTOUCH2 done
+touched pMove 150.000 100.000 205.000 180.000 0.000 -180.000
+touchup pMove P[2] recorded
+status pNew new P[1] was P[None]
+status pKeep kept P[2] was P[1]
+taught pKeep 104.000 -150.000 197.000 180.000 -0.000 -178.000
+status pMove touch up again P[3] was P[2]
+taught pMove 150.000 100.000 205.000 180.000 0.000 180.000
+status pPlain theoretical P[4] was P[3]
+taught pPlain -50.000 0.000 250.000 180.000 0.000 180.000
+tp_route same points
+printtp_left_program no
+run v2 done
+lpos pNew 0.000 -100.000 300.000 -180.000 0.000 180.000
+lpos pKeep 104.000 -150.000 197.000 -180.000 0.000 -178.000
+lpos pMove 150.000 120.000 200.000 180.000 0.000 180.000
+lpos pPlain -50.000 0.000 250.000 -180.000 -0.000 180.000
+expected pNew 0.000 -100.000 300.000 180.000 0.000 180.000
+expected pKeep 104.000 -150.000 197.000 180.000 -0.000 -178.000
+expected pMove 150.000 120.000 200.000 180.000 0.000 180.000
+expected pPlain -50.000 0.000 250.000 180.000 0.000 180.000
