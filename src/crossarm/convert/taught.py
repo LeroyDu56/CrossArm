@@ -183,10 +183,6 @@ class Taught:
         counts = self.counts()
         return ", ".join(f"{n} {status}" for status, n in counts.items() if n) or "no point"
 
-    def programs(self) -> list[str]:
-        """The programs the points are in, in the order they come (a gone point: the earlier program)."""
-        return list(dict.fromkeys(p.program for p in self.points))
-
 
 # ---------------------------------------------------------------------------
 # What a conversion wrote: crossarm_points.json
