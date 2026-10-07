@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from crossarm.convert.analysis import Verdict, blocking_causes, decide, todo_causes
 from crossarm.convert.translate import Blocker
 from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
 from crossarm.fanuc.usage import ControllerUsage
@@ -71,6 +72,8 @@ class Summary:
     # loaded or run; INFO: where the work is; GOOD: something that went as it should.
     attention: list[tuple[str, str]] = field(default_factory=list)
     report: Path | None = None
+    # The decision, every task counted together, by the rule of the report's analysis (crossarm.convert.analysis).
+    decision: Verdict | None = None
 
 
 def summarize(run: RunOutput) -> Summary:
@@ -81,6 +84,12 @@ def summarize(run: RunOutput) -> Summary:
                       report=report)  # fmt: skip
     several = len(run.tasks) > 1
     attention = summary.attention
+    notes = [note for t in run.tasks if t.result for note in t.result.notes]
+    summary.decision = decide(
+        programs=run.programs, percent=coverage.percent, todo=run.todo, blocking=blocking_causes(notes),
+        over=[c.resource for t in run.tasks if t.result for c in t.result.capacity if not c.fits],
+        causes=todo_causes(notes),
+    )  # fmt: skip
 
     # 1. What stops the programs from loading at all.
     for task in run.tasks:

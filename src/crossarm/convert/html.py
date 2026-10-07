@@ -65,8 +65,9 @@ def markdown_to_html(markdown: str, title: str) -> str:
     )
 
 
-def markdown_body(markdown: str) -> str:
-    """The HTML of the Markdown subset, without the page around it."""
+def markdown_body(markdown: str, ids: dict[str, str] | None = None) -> str:
+    """The HTML of the Markdown subset, without the page around it. `ids`: heading text -> id, for the
+    headings other parts of a page link to."""
     lines = markdown.splitlines()
     body: list[str] = []
     i = 0
@@ -76,7 +77,10 @@ def markdown_body(markdown: str) -> str:
             i += 1
         elif line.startswith("#"):
             level = len(line) - len(line.lstrip("#"))
-            body.append(f"<h{level}>{inline(line[level:].strip())}</h{level}>")
+            text = line[level:].strip()
+            anchor = (ids or {}).get(text)
+            attribute = f' id="{html.escape(anchor, quote=True)}"' if anchor else ""
+            body.append(f"<h{level}{attribute}>{inline(text)}</h{level}>")
             i += 1
         elif line.startswith("|"):
             rows = []

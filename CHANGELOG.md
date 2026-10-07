@@ -13,6 +13,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   robot's programs (.LS, or .TP decoded by FANUC PrintTP) and `crossarm_points.json`, which every conversion now
   writes; a point touched up keeps its taught value unless it, or its frame, changed in the backup (then it is
   theoretical and listed to touch up again). Measured on ROBOGUIDE (new `taught` probe).
+- The reports open on an analysis: a decision (ready / workable / not ready) by a fixed, printed rule (share of
+  instructions converted, number of blocking causes), the 3 to 7 things to do first, the main TODO causes with an
+  example each, the share converted by area and only the controller resources near their limit. The checklist is
+  folded until opened; the window shows the decision too.
 
 ## 1.5.0 — 2026-10-07
 

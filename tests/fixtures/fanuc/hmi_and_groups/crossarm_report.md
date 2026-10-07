@@ -10,6 +10,17 @@
 > The points are the ABB's, as theoretical points: touch them up on the robot. The path between them
 > is within 10 mm of the ABB's (measured: within 4 mm, corners included).
 
+## Analysis
+
+- **Ready for commissioning: load the programs, set the frames and touch up the points.**
+- Rule: ready when every instruction is converted; workable when at least 85 % of the RAPID instructions are converted and at most 3 causes are blocking; not ready otherwise. Here: 100 % converted, 0 blocking causes.
+- 100 % of the 8 RAPID instructions converted.
+- 1 of 1 programs with no TODO, 0 with TODO (0 TODO).
+
+### What to do first
+
+1. **Load every program before running any**: a CALL to a program the robot does not have fails when it runs. (Checklist: Load the programs.)
+
 ## Summary
 
 - **1 of 1 programs converted with no TODO.**

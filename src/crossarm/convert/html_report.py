@@ -7,8 +7,12 @@ One self-contained page: its style and script are in it, it loads nothing (cells
 reads from file:// in any browser. Without its script every section is still there; the script adds the
 filters, the search and the jumps from a TODO to its place.
 
+    Analysis         the first screen: the decision and the rule it follows, what to do first, where the TODO
+                     come from, the share converted by area, the controller resources near their limit
+                     (crossarm.convert.analysis); the rest of the page is the detail behind it
     Summary          the figures, then the summary of the Markdown report
-    Checklist        commissioning on the FANUC cell, in order, ticked off in the browser (crossarm.convert.checklist)
+    Checklist        commissioning on the FANUC cell, in order, ticked off in the browser (crossarm.convert.checklist);
+                     folded until opened
     Items to review  every TODO and warning, filtered by kind, cause and program, or searched
     RAPID and TP     each program, its RAPID routine and the TP written from it side by side, line by line
                      (crossarm.convert.source_map), the lines left TODO marked with their cause and why
@@ -22,6 +26,8 @@ import html
 import re
 from collections import Counter, defaultdict
 
+from crossarm.convert import analysis
+from crossarm.convert.analysis import capacity_status, near_limit, priority_actions, top_causes, verdict
 from crossarm.convert.checklist import CHECKLIST_CSS, CHECKLIST_JS, checklist_section
 from crossarm.convert.config import ConversionConfig
 from crossarm.convert.coverage import fmt_percent
@@ -207,6 +213,117 @@ def _review_section(result: ConversionResult, anchors: set[tuple[str, int]]) -> 
 
 
 # ---------------------------------------------------------------------------
+# Analysis: the first screen
+# ---------------------------------------------------------------------------
+
+
+def _line_link(program: str, line: int | None, anchors: set[tuple[str, int]], shown: set[str]) -> str:
+    """'PROG l.12', leading to that line when the page shows it."""
+    text = f"{program} l.{line}" if line else program or "whole conversion"
+    if program and line and (program, line) in anchors:
+        return f'<a href="#{_e(line_anchor(program, line))}">{_e(text)}</a>'
+    if program in shown:
+        return f'<a href="#p-{_e(program)}">{_e(text)}</a>'
+    return _e(text)
+
+
+def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[tuple[str, int]],
+                      targets: set[str], checklist_items: int) -> Section:  # fmt: skip
+    """The decision first, then what to do; every figure leads to its detail further down."""
+    decision = verdict(result)
+    coverage = result.coverage
+    programs = len(result.programs)
+    clean = result.clean_programs()
+    warnings = sum(1 for note in result.notes if note.kind == "WARNING")
+    shown = {info.program.name for info in result.programs}
+    stats = [
+        (fmt_percent(coverage.percent) if coverage.total else "—",
+         f"of the {coverage.total:,} RAPID instructions converted" if coverage.total else "no RAPID instruction"),
+        (f"{clean} / {programs}", f"programs with no TODO, {programs - clean} with TODO"),
+        (str(result.todo_count), f"TODO, {warnings} warning{'s' if warnings != 1 else ''}"),
+    ]  # fmt: skip
+    blocking = "".join(f"<li>{_e(cause)}</li>" for cause in sorted(analysis.BLOCKING))
+    why = (f'<details class="why"><summary>How this is decided</summary><p>{_e(analysis.explanation())}</p>'
+           f'<ul class="cols">{blocking}</ul></details>')  # fmt: skip
+    areas = "".join(
+        f'<li title="{share.converted:,} of {share.total:,} converted"><span>{_e(share.area)}</span>'
+        f'<span class="meter ok"><span style="width:{share.percent:g}%"></span></span>'
+        f"<b>{_e(fmt_percent(share.percent))}</b></li>"
+        for share in coverage.shares
+    )
+    body = [
+        "<h2>Analysis</h2>",
+        f'<div class="verdict lv-{decision.level.replace(" ", "-")}"><div class="vmain">',
+        '<div class="vstats">' + "".join(f"<div><b>{_e(v)}</b><span>{_e(label)}</span></div>" for v, label in stats)
+        + "</div>",
+        f'<p class="decision"><span class="vtag">{_e(decision.level)}</span> {_e(decision.sentence)}</p>',
+        f'<p class="rule">{_e(decision.rule)}</p>{why}</div>',
+        (f'<div class="vareas"><h3>Converted by area</h3><ul class="areas">{areas}</ul></div>' if areas else ""),
+        "</div>",
+    ]  # fmt: skip
+
+    actions = []
+    for action in priority_actions(result):
+        href = action.href if action.href[1:] in targets else "#details"
+        cause = f' data-cause="{_e(action.cause)}"' if action.cause and href == "#review" else ""
+        actions.append(f'<li><b>{inline(action.title)}</b><span class="how">: {inline(action.detail)}</span>'
+                       f' <a class="more" href="{_e(href)}"{cause}>{_e(action.label)} →</a></li>')  # fmt: skip
+    causes = []
+    for cause in top_causes(result):
+        tag = ' <span class="tag todo">blocking</span>' if cause.blocking else ""
+        example = cause.example
+        causes.append(
+            f'<li><span><a href="#review" data-cause="{_e(cause.category)}">{_e(cause.category)}</a>{tag}</span>'
+            f'<span class="meter"><span style="width:{max(2, round(cause.share))}%"></span></span>'
+            f'<b>{cause.count}</b><span class="muted">{cause.share:.0f} %</span>'
+            f'<span class="ex">e.g. {_line_link(example.program, example.rapid_line, anchors, shown)}:'
+            f" {inline(_short(example.message.split(' — `')[0]))}</span></li>"
+        )
+    causes_left = len({note.category for note in result.notes if note.kind == "TODO"}) - len(causes)
+    grid = ['<div class="an-grid">']
+    if actions:
+        grid.append(f'<div class="an-box"><h3>What to do first</h3><ol class="actions">{"".join(actions)}</ol></div>')
+    if causes:
+        grid.append(
+            '<div class="an-box"><h3>Where the TODO come from</h3><ul class="top">' + "".join(causes) + "</ul>"
+            + (f'<p class="muted">{causes_left} other cause{"s" if causes_left > 1 else ""}: see'
+               ' <a href="#summary">the summary</a>.</p>' if causes_left > 0 else "")
+            + "</div>"
+        )  # fmt: skip
+    grid.append("</div>")
+    body.append("".join(grid))
+
+    near = near_limit(result.capacity)
+    if near:
+        rows = "".join(
+            f"<tr><td>{_e(c.resource)}</td><td>{c.used}</td><td>{'—' if c.limit is None else c.limit}</td>"
+            f'<td class="{"over" if not c.fits else ""}">{_e(capacity_status(c))}</td></tr>'
+            for c in near
+        )
+        body.append(
+            '<div class="an-box" id="an-capacity"><h3>Controller capacity: near or over the limit</h3>'
+            '<div class="table-wrap"><table><thead><tr><th>Resource</th><th>Used</th><th>Limit</th><th>Status</th>'
+            f"</tr></thead><tbody>{rows}</tbody></table></div>"
+            '<p class="muted">Every resource: <a href="#capacity">controller capacity</a> in the summary.</p></div>'
+        )  # fmt: skip
+    elif result.capacity:
+        body.append('<p class="muted" id="an-capacity">Controller capacity: every resource well within its limit'
+                    ' (<a href="#capacity">the figures</a>).</p>')  # fmt: skip
+    review = sum(1 for _ in result.notes)
+    links = [
+        ("#ck-fold", f"The commissioning checklist ({checklist_items} items)"),
+        ("#review", f"Items to review ({review})"),
+        ("#code", "RAPID ↔ TP, program by program"),
+        ("#summary", "Summary figures"),
+        ("#details", "Details: frames, registers, points"),
+    ]
+    body.append('<p class="go">' + " · ".join(f'<a href="{href}">{_e(text)}</a>' for href, text in links
+                                              if href[1:] in targets) + "</p>")  # fmt: skip
+    body.append(f'<div class="notice">{markdown_body(chr(10).join(notice))}</div>')
+    return "analysis", "Analysis", "\n".join(body)
+
+
+# ---------------------------------------------------------------------------
 # Summary, details, page
 # ---------------------------------------------------------------------------
 
@@ -236,23 +353,90 @@ def _summary_section(result: ConversionResult, summary: list[str]) -> Section:
     # The Markdown summary as it is, without its heading: the counts again, coverage by area, assumptions...
     if summary and summary[0].startswith("## "):
         summary = summary[1:]
-    body.append(markdown_body("\n".join(summary)))
+    body.append(markdown_body("\n".join(summary), {"Controller capacity": "capacity"}))
     return "summary", "Summary", "\n".join(body)
 
 
 def _details_section(parts: dict[str, list[str]], extra: str) -> Section:
     keys = ("programs", "frames", "registers", "motion", "points")
     markdown = "\n".join(line for key in keys for line in parts.get(key, ())) + "\n" + extra
-    return "details", "Details", markdown_body(markdown)
+    ids = {"Programs to provide": "provided", "Taught positions (--keep-taught)": "taught"}
+    return "details", "Details", markdown_body(markdown, ids)
+
+
+def _short(text: str, width: int = 110) -> str:
+    return text if len(text) <= width else text[: width - 1].rstrip() + "…"
+
+
+_SOURCES_SHOWN = 6
+
+
+def _header(head: list[str], sources: list[str]) -> str:
+    """The head of the Markdown report, compact: on a large backup its list of sources is folded."""
+    many = len(sources) > _SOURCES_SHOWN
+    if many:
+        short = ", ".join(f"`{s}`" for s in sources[:3]) + f" and {len(sources) - 3} more"
+        head = [f"- Sources: {short}" if line.startswith("- Sources: ") else line for line in head]
+    html_head = markdown_body("\n".join(head))
+    if many:
+        every = ", ".join(f"<code>{_e(s)}</code>" for s in sources)
+        html_head += (f'\n<details class="srcs"><summary>Every source file ({len(sources)})</summary>'
+                      f"<p>{every}</p></details>")  # fmt: skip
+    return html_head
 
 
 _CSS = """
-:root { --row: #fafbfc; --todo-bg: #fff1e5; --warn-bg: #fff8db; --ok: #1a7f37; --mark: #8250df; }
+:root { --row: #fafbfc; --todo-bg: #fff1e5; --warn-bg: #fff8db; --ok: #1a7f37; --mark: #8250df; --bad: #cf222e; }
 @media (prefers-color-scheme: dark) {
-  :root { --row: #11161d; --todo-bg: #3a2414; --warn-bg: #33290f; --ok: #3fb950; --mark: #a371f7; }
+  :root { --row: #11161d; --todo-bg: #3a2414; --warn-bg: #33290f; --ok: #3fb950; --mark: #a371f7; --bad: #f85149; }
 }
-main { max-width: 1400px; }
-header.top h1 { margin-top: 0; }
+main { max-width: 1400px; padding-top: 14px; }
+header.top h1 { margin: 0 0 .15em; font-size: 1.5em; padding-bottom: .15em; }
+header.top ul { list-style: none; padding: 0; margin: .2em 0 .4em; display: flex; flex-wrap: wrap; gap: 0 1.5em;
+  color: var(--muted); font-size: .88em; }
+header.top blockquote { margin: .4em 0; padding: .35em .9em; font-size: .92em; }
+details.srcs { font-size: .85em; color: var(--muted); margin: 0 0 .4em; }
+details.srcs summary { cursor: pointer; }
+#analysis > h2 { margin: .5em 0 0; font-size: 1.2em; border-bottom: 0; }
+.verdict { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: 8px 28px;
+  border: 1px solid var(--line); border-left: 6px solid var(--muted); border-radius: 8px; padding: 12px 18px;
+  background: var(--head); margin: .6em 0 1em; }
+.lv-ready { border-left-color: var(--ok); } .lv-workable { border-left-color: var(--warn); }
+.lv-not-ready { border-left-color: var(--bad); }
+.vstats { display: flex; flex-wrap: wrap; gap: 6px 28px; }
+.vstats b { display: block; font-size: 1.7em; line-height: 1.15; }
+.vstats span { color: var(--muted); font-size: .88em; }
+p.decision { font-size: 1.12em; font-weight: 600; margin: .6em 0 .2em; }
+.vtag { display: inline-block; text-transform: uppercase; font-size: .72em; letter-spacing: .04em; font-weight: 700;
+  padding: .1em .55em; border-radius: 4px; color: #fff; background: var(--muted); vertical-align: .12em; }
+.lv-ready .vtag { background: var(--ok); } .lv-workable .vtag { background: var(--warn); }
+.lv-not-ready .vtag { background: var(--bad); }
+@media (prefers-color-scheme: dark) { .vtag { color: #0d1117; } }
+p.rule { font-size: .86em; color: var(--muted); margin: .2em 0; }
+details.why { font-size: .86em; color: var(--muted); }
+details.why summary { cursor: pointer; }
+ul.cols { columns: 2 16em; margin: .2em 0; }
+.vareas h3, .an-box h3 { margin: 0 0 .4em; font-size: 1em; }
+ul.areas { list-style: none; padding: 0; margin: 0; }
+ul.areas li { display: grid; grid-template-columns: 9.5em 1fr 4em; gap: 8px; align-items: center; font-size: .9em; }
+ul.areas b { text-align: right; font-weight: 600; }
+.meter.ok span { background: var(--ok); }
+.an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; margin: 0 0 1em; }
+.an-box { border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; }
+ol.actions { margin: 0; padding-left: 1.4em; }
+ol.actions li { margin: 0 0 .45em; }
+a.more { white-space: nowrap; font-size: .9em; }
+ol.actions .how { color: var(--muted); font-size: .94em; }
+ul.top { list-style: none; padding: 0; margin: 0; }
+ul.top li { display: grid; grid-template-columns: minmax(0, 1fr) 80px 2.6em 3em; gap: 2px 10px; align-items: center;
+  padding: 3px 0; border-bottom: 1px solid var(--line); }
+ul.top li > b, ul.top li > .muted { text-align: right; }
+ul.top .ex { grid-column: 1 / -1; font-size: .84em; color: var(--muted); overflow-wrap: anywhere; }
+td.over { color: var(--bad); font-weight: 600; }
+p.go { margin: .4em 0 1em; }
+.notice blockquote { font-size: .88em; }
+details.fold > summary { cursor: pointer; font-weight: 600; color: var(--accent); padding: 6px 0; }
+@media (max-width: 760px) { .verdict { grid-template-columns: 1fr; } .an-grid { grid-template-columns: 1fr; } }
 nav.menu { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line);
            padding: 8px 0; display: flex; flex-wrap: wrap; gap: 4px 18px; }
 nav.menu a { color: var(--accent); text-decoration: none; font-weight: 600; }
@@ -309,7 +493,8 @@ tr.flash td { animation: flash 2s ease-out; }
   nav.menu, .bar { display: none !important; }
   main { max-width: none; padding: 0; }
   table.sbs th { position: static; }
-  tr, .card { break-inside: avoid; }
+  tr, .card, .verdict, ol.actions li, ul.top li { break-inside: avoid; }
+  .vtag { color: #fff; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 """
@@ -391,20 +576,26 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     parts = dict(report_parts(result, config, sources, licence))
     anchors: set[tuple[str, int]] = set()
     code = _code_section(result, lead or [], anchors)  # first: the review links to the lines it shows
+    checklist = checklist_section(result, config, anchors, identity=f"{title}|{'|'.join(sources)}", tp=tp,
+                                  tp_where=tp_where)  # fmt: skip
     sections = [
         _summary_section(result, parts["summary"]),
-        checklist_section(result, config, anchors, identity=f"{title}|{'|'.join(sources)}", tp=tp, tp_where=tp_where),
+        checklist,
         _review_section(result, anchors),
         code,
         _details_section(parts, extra),
     ]
+    # Last, but shown first: its links lead to what the other sections hold.
+    targets = {sid for sid, _, _ in sections} | set(re.findall(r'\bid="([^"]+)"', "".join(b for _, _, b in sections)))
+    items = checklist[2].count("<li data-id=")
+    sections.insert(0, _analysis_section(result, parts["notice"], anchors, targets, items))
     menu = "".join(f'<a href="#{_e(sid)}">{_e(label)}</a>' for sid, label, _ in sections)
     page = "\n".join(f'<section id="{_e(sid)}">\n{body}\n</section>' for sid, _, body in sections)
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_e(title)}</title>\n<style>{MARKDOWN_CSS}{_CSS}{CHECKLIST_CSS}</style>\n</head>\n<body><main>\n"
-        f'<header class="top">\n{markdown_body(chr(10).join(parts["head"]))}\n</header>\n'
+        f'<header class="top">\n{_header(parts["head"], sources)}\n</header>\n'
         f'<nav class="menu" aria-label="Sections">{menu}</nav>\n{page}\n'
         f"</main>\n<script>{_JS}{CHECKLIST_JS}</script>\n</body>\n</html>\n"
     )

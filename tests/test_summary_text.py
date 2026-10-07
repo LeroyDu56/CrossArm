@@ -130,6 +130,14 @@ def test_what_blocks_loading_comes_first(tmp_path):
     assert texts[-1].startswith("No FANUC backup was given") and levels[-1] == INFO
 
 
+def test_the_window_gives_the_report_decision_every_task_counted_together(tmp_path, fanuc_robot):
+    over = summarize(pipeline.run([tool_rack(tmp_path, 12, broken=True)], log=quiet, config=no_register_left()))
+    assert over.decision.level == "workable" and over.decision.headline == "Workable with touch-up and planned work."
+    assert over.decision.brief.endswith("blocking causes (here 0).")
+    clean = summarize(pipeline.run([make_backup(tmp_path / "Cell_2026")], log=quiet, fanuc=[fanuc_robot]))
+    assert clean.decision.level == "ready" and clean.decision.headline == "Ready for commissioning."
+
+
 def test_the_main_source_of_manual_work_is_named(tmp_path):
     source = tmp_path / "calls.mod"
     source.write_text("MODULE M\nPROC main()\n  Lift 1;\n  Lift 2;\n  GOTO x;\nENDPROC\nENDMODULE\n", encoding="utf-8")

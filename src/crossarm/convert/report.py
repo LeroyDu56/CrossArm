@@ -9,6 +9,7 @@ RAPID line that still needs manual work.
 """
 
 from crossarm import __version__
+from crossarm.convert.analysis import analysis_markdown
 from crossarm.convert.config import ConversionConfig
 from crossarm.convert.configuration import TOOL_PIN_DEFAULT
 from crossarm.convert.coverage import fmt_percent
@@ -457,8 +458,8 @@ def report_parts(result: ConversionResult, config: ConversionConfig, sources: li
                  licence: "LicenceStatus | None" = None) -> list[tuple[str, list[str]]]:  # fmt: skip
     """The report's sections, in order, as Markdown lines: (key, lines).
 
-    Keys: head, summary, programs, frames, registers, motion, points, review. The Markdown report is
-    them all; the HTML report (crossarm.convert.html_report) shows some of them its own way."""
+    Keys: head, notice, analysis, summary, programs, frames, registers, motion, points, review. The Markdown
+    report is them all; the HTML report (crossarm.convert.html_report) shows some of them its own way."""
     parts: list[tuple[str, list[str]]] = []
     lines = [
         "# CrossArm conversion report",
@@ -476,6 +477,8 @@ def report_parts(result: ConversionResult, config: ConversionConfig, sources: li
             " doing real work, or delivered to a customer — needs a commercial licence"
             f" ({CONTACT}). Every program carries the same mark in its first lines."
         ), ""] if licence is not None and not licence.licensed else []),
+    ]
+    notice = [
         "> The `.LS` files are text listings to load and check in ROBOGUIDE (or convert on the controller).",
         "> They are **not** directly executable: frames, registers, I/O numbers and every TODO below",
         "> must be reviewed by the integrator before running on a robot.",
@@ -483,7 +486,8 @@ def report_parts(result: ConversionResult, config: ConversionConfig, sources: li
         "> is within 10 mm of the ABB's (measured: within 4 mm, corners included).",
         "",
     ]
-    parts += [("head", lines), ("summary", _summary(result))]
+    parts += [("head", lines), ("notice", notice), ("analysis", analysis_markdown(result)),
+              ("summary", _summary(result))]  # fmt: skip
     lines = ["## Programs", ""]
     rows = []
     for info in result.programs:

@@ -35,6 +35,7 @@ from tkinter.scrolledtext import ScrolledText
 from crossarm import __version__, pipeline
 from crossarm._icon import PNG as ICON_PNG
 from crossarm.convert import ConversionConfig
+from crossarm.convert.analysis import NOT_READY, READY, WORKABLE
 from crossarm.convert.coverage import fmt_percent
 from crossarm.fanuc.maketp import TpRequest, check_robot, find_maketp
 from crossarm.fanuc.usage import is_fanuc_input, read_controller
@@ -360,6 +361,10 @@ class App(tk.Tk):
                       padx=(0, 6), pady=(0, 6))  # fmt: skip
             tk.Label(tile, text=str(value), bg=BODY_BG, fg=colour, font=(FONT, 18, "bold")).pack(pady=(6, 0))
             tk.Label(tile, text=caption, bg=BODY_BG, fg=MUTED, font=(FONT, 8)).pack(pady=(0, 6))
+        if summary.decision is not None:  # the report's decision, and the rule it follows
+            colour = {READY: OK, WORKABLE: AMBER, NOT_READY: FAIL}.get(summary.decision.level, TEXT)
+            self._text(panel, summary.decision.headline, bold=True, colour=colour, pad=(0, 2))
+            self._text(panel, summary.decision.brief, size=8, colour=MUTED, pad=(0, 8))
 
         if summary.attention:
             self._text(panel, "What to look at", bold=True, pad=(0, 4))

@@ -527,11 +527,15 @@ def checklist_section(result: ConversionResult, config: ConversionConfig, anchor
         ("<p>What to do on the FANUC cell, in the order it is done, with the values to enter or check and links to"
          " the lines that use them. Tick each item when done: the ticks are kept in this browser, for this report."
          " Print it to tick it on paper.</p>"),
+        # Folded: on a large backup it is hundreds of items, the second thing to read after the analysis.
+        (f'<details class="fold" id="ck-fold"><summary>Show the checklist: <span id="ck-sum">{total} items</span>'
+         f" in {number} group{'s' if number != 1 else ''}</summary>"),
         ('<div class="bar js-only"><span class="meter ck-meter"><span id="ck-meter"></span></span>'
          f' <b id="ck-total">{total} items</b> <label><input id="ck-hide" type="checkbox"> hide the items done</label>'
          ' <button type="button" id="ck-print">Print the checklist</button>'
          ' <button type="button" id="ck-reset">Untick all</button> <span id="ck-store" class="muted"></span></div>'),
         f'<div id="ck" data-key="{key}">' + "".join(groups) + "</div>",
+        "</details>",
     ]  # fmt: skip
     return "checklist", "Checklist", "\n".join(body)
 
@@ -599,6 +603,8 @@ CHECKLIST_JS = r"""
       all += n; done += k;
     });
     d.getElementById('ck-total').textContent = done + ' of ' + all + ' done';
+    var sum = d.getElementById('ck-sum');
+    if (sum) { sum.textContent = done ? done + ' of ' + all + ' items done' : all + ' items'; }
     d.getElementById('ck-meter').style.width = (all ? Math.round(done * 100 / all) : 0) + '%';
   }
   items.forEach(function (li) {
@@ -619,12 +625,17 @@ CHECKLIST_JS = r"""
     try { window.localStorage.removeItem(key); } catch (e) { kept = false; told(); }
     count();
   });
-  var root = d.documentElement;
+  var root = d.documentElement, fold = d.getElementById('ck-fold'), wasOpen = true;
+  // Printed open, folded or not; folded again after, as it was.
+  window.addEventListener('beforeprint', function () { if (fold) { wasOpen = fold.open; fold.open = true; } });
   d.getElementById('ck-print').addEventListener('click', function () {
     root.classList.add('print-ck');
     window.print();
   });
-  window.addEventListener('afterprint', function () { root.classList.remove('print-ck'); });
+  window.addEventListener('afterprint', function () {
+    root.classList.remove('print-ck');
+    if (fold) { fold.open = wasOpen; }
+  });
   told(); count();
 })();
 """
