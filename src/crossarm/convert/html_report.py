@@ -39,6 +39,7 @@ from crossarm.convert.report import report_parts
 from crossarm.convert.source_map import Row, line_anchor, side_by_side, tp_text
 from crossarm.convert.taught_report import TAUGHT_CSS, TAUGHT_JS, taught_section
 from crossarm.convert.translate import ConversionResult, Note, ProgramInfo
+from crossarm.fanuc.ktrans import KarelExport
 from crossarm.fanuc.maketp import TpExport
 from crossarm.licence import LicenceStatus
 
@@ -574,16 +575,17 @@ _JS = r"""
 def build_html_report(result: ConversionResult, config: ConversionConfig, sources: list[str],
                       licence: LicenceStatus | None = None, *, title: str, extra: str = "",
                       lead: list[str] | None = None, tp: TpExport | None = None, tp_where: str = "",
-                      taught_where: str = "") -> str:  # fmt: skip
+                      taught_where: str = "", karel: KarelExport | None = None, karel_where: str = "") -> str:  # fmt: skip
     """The page. `extra`: Markdown the pipeline adds to the report (the .TP export, syntax errors);
     `lead`: the lines the pipeline writes first in each program (the licence mark), numbered before the rest;
     `tp`: the .TP export when one was asked for, in `tp_where` (the TP folder, as the report names it);
-    `taught_where`: the robot's programs read for --keep-taught (result.taught), as the report names them."""
+    `taught_where`: the robot's programs read for --keep-taught (result.taught), as the report names them;
+    `karel`: the KAREL programs written (--karel), in `karel_where`."""
     parts = dict(report_parts(result, config, sources, licence))
     anchors: set[tuple[str, int]] = set()
     code = _code_section(result, lead or [], anchors)  # first: the review links to the lines it shows
     checklist = checklist_section(result, config, anchors, identity=f"{title}|{'|'.join(sources)}", tp=tp,
-                                  tp_where=tp_where)  # fmt: skip
+                                  tp_where=tp_where, karel=karel, karel_where=karel_where)  # fmt: skip
     sections = [
         _summary_section(result, parts["summary"]),
         checklist,

@@ -174,6 +174,10 @@ class ConversionConfig:
     # -> the program and, for one the backup does not declare, the types of its arguments.
     external_routines: dict[str, ProvidedRoutine] = field(default_factory=dict)
 
+    # --karel (not in the mapping file): what TP cannot compute is written as a CALL to a KAREL program of
+    # CrossArm's library (crossarm.karel); a real robot needs the KAREL option (R632).
+    karel: bool = False
+
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
     def free_position_registers(self) -> tuple[list[int], bool]:

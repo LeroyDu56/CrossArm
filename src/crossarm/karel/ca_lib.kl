@@ -1,0 +1,69 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CrossArm KAREL library: routines every CA_ program includes (%INCLUDE ca_lib), after its VAR section.
+-- A CA_ program is called from TP with register NUMBERS: CALL CA_POSEMULT(11,12,13). Anything wrong
+-- (an argument missing or not an integer, a register out of range, of the wrong kind or never set) posts
+-- the controller's own error and aborts the program: the TP program stops on the CALL, nothing goes on
+-- with a wrong value.
+
+ROUTINE ca_stop(code : INTEGER)
+CONST
+  ca_abort = 2  -- POST_ERR severity: abort
+BEGIN
+  POST_ERR(code, '', 0, ca_abort)
+  ABORT
+END ca_stop
+
+-- The integer TP argument n (the number of a register).
+ROUTINE ca_reg_arg(n : INTEGER) : INTEGER
+VAR
+  kind, ival, status : INTEGER
+  rval : REAL
+  sval : STRING[32]
+BEGIN
+  GET_TPE_PRM(n, kind, ival, rval, sval, status)
+  IF status <> 0 THEN
+    ca_stop(status)  -- ROUT-042: TPE parameters do not exist
+  ENDIF
+  IF kind <> 1 THEN
+    ca_stop(17043)  -- ROUT-043: TPE parameter wrong data type
+  ENDIF
+  RETURN (ival)
+END ca_reg_arg
+
+-- The Cartesian position held in PR[reg], as a frame.
+ROUTINE ca_get_pr(reg : INTEGER) : POSITION
+VAR
+  kind, axes, status : INTEGER
+  p : XYZWPREXT
+BEGIN
+  POS_REG_TYPE(reg, 1, kind, axes, status)
+  IF status <> 0 THEN
+    ca_stop(status)
+  ENDIF
+  IF (kind <> 1) AND (kind <> 2) AND (kind <> 6) THEN
+    ca_stop(17032)  -- ROUT-032: position type mismatch (a joint position)
+  ENDIF
+  p = GET_POS_REG(reg, status)
+  IF status <> 0 THEN
+    ca_stop(status)
+  ENDIF
+  IF UNINIT(p) THEN
+    ca_stop(17038)  -- ROUT-038: uninitialized position
+  ENDIF
+  RETURN (p)
+END ca_get_pr
+
+-- PR[reg] set to a frame, as X, Y, Z, W, P, R.
+ROUTINE ca_set_pr(reg : INTEGER; p : POSITION)
+VAR
+  status : INTEGER
+  x : XYZWPR
+BEGIN
+  x = p
+  SET_POS_REG(reg, x, status)
+  IF status <> 0 THEN
+    ca_stop(status)  -- VARS-024: bad register index
+  ENDIF
+END ca_set_pr

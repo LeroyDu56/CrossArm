@@ -10,6 +10,7 @@ Written for someone who has never seen CrossArm and will not read a log:
   3. Your numbering               optional: a mapping file edited from a previous run
   4. Binary .TP programs           optional: FANUC MakeTP (with ROBOGUIDE) writes them for a USB stick
   5. Positions touched up          optional: converting again, the robot's programs keep their touch-ups
+  6. KAREL programs               optional: what TP cannot compute, in CrossArm's KAREL programs (option R632)
   -> Convert                      nothing starts before the user asks
 
 The right-hand panel first explains what the conversion produces, then shows the
@@ -38,6 +39,7 @@ from crossarm._icon import PNG as ICON_PNG
 from crossarm.convert import ConversionConfig
 from crossarm.convert.analysis import NOT_READY, READY, WORKABLE
 from crossarm.convert.coverage import fmt_percent
+from crossarm.fanuc.ktrans import find_ktrans
 from crossarm.fanuc.maketp import TpRequest, check_robot, find_maketp
 from crossarm.fanuc.usage import is_fanuc_input, read_controller
 from crossarm.licence import LICENCE_FILE, LicenceStatus, licence_folder, read_licence
@@ -106,6 +108,9 @@ by FANUC PrintTP with the robot of step 4) and the CrossArm output they were con
 (its crossarm_points.json). A point unchanged in the backup keeps its taught value; one whose \
 ABB position or frame changed gets the new theoretical value, to touch up again. The report \
 lists each point.
+
+What TP cannot compute
+Some RAPID computes poses while it runs (PoseMult of poses the programs change). TP cannot: those lines stay TODO, and the report says how many KAREL would convert. Step 6 writes them as calls to CrossArm's KAREL programs, in a KAREL folder: load each .pc before the programs. The robot needs the KAREL option (R632).
 
 Moves inside routines
 Many backups move through the integrator's own routines (a "MoveL" that also picks a station, \
@@ -261,6 +266,7 @@ class App(tk.Tk):
         # The robot's programs as they are now and the earlier output (--keep-taught), and what was found in them.
         self.keep: list[Path] = []
         self.keep_check: pipeline.KeepCheck | None = None
+        self.karel = tk.BooleanVar(self, value=False)  # --karel
         # Routines making a move and something else: convert their calls as the move? Ticked in the
         # window after a first conversion; overrides the mapping file for this input.
         self.move_choices: dict[str, bool] = {}
@@ -282,6 +288,7 @@ class App(tk.Tk):
     def _styles(self) -> None:
         style = ttk.Style(self)
         style.configure("Card.TButton", background=CARD_BG, font=(FONT, 9))
+        style.configure("Card.TCheckbutton", background=CARD_BG, font=(FONT, 9))
         style.configure("TProgressbar", thickness=6)
 
     def _build(self) -> None:
@@ -353,6 +360,15 @@ class App(tk.Tk):
         self.inputs.append(self.step_keep.button("Files or .zip...", self.pick_keep_files))
         self.inputs.append(self.step_keep.button("Earlier output...", self.pick_keep_output))
         self.clear_keep = self.step_keep.link("Clear", self.forget_keep)
+        self.step_karel = Step(
+            column, 6, "KAREL programs", "optional · robot with the KAREL option (R632)",
+            "What TP cannot compute (poses multiplied at run time) is called in CrossArm's KAREL programs, written "
+            "in a KAREL folder and compiled by FANUC ktrans when ROBOGUIDE is installed.",
+        )  # fmt: skip
+        self.karel_box = ttk.Checkbutton(self.step_karel.buttons, text="Use KAREL programs", variable=self.karel,
+                                         command=self._refresh, style="Card.TCheckbutton")  # fmt: skip
+        self.karel_box.pack(side="left")
+        self.inputs.append(self.karel_box)
 
         action = tk.Frame(left, bg=BODY_BG)
         action.pack(side="bottom", fill="x", pady=(6, 0))  # first: on a short window the steps scroll, not this
@@ -523,6 +539,13 @@ class App(tk.Tk):
             self.step_tp.show("Not set: only .LS programs are written.")
         if not self.keep:
             self.step_keep.show("Not set: every point is written as the ABB's, theoretical.")
+        if self.karel.get():
+            found = find_ktrans()
+            self.step_karel.show("On: the KAREL folder holds the programs called, " + (
+                "compiled by FANUC ktrans." if found else "as .kl to compile (FANUC ktrans not found)."),
+                "ok" if found else "fail")  # fmt: skip
+        else:
+            self.step_karel.show("Off: what TP cannot compute stays TODO; the report says how much KAREL would do.")
 
     def _set_busy(self, text: str) -> None:
         self.busy = True
@@ -716,6 +739,7 @@ class App(tk.Tk):
         tp = TpRequest(self.tp_robot) if self.tp_robot else None
         keep = pipeline.KeepTaught(list(self.keep), mapping) if self.keep else None
         choices = dict(self.move_choices)
+        karel = self.karel.get()
 
         def log(line: str) -> None:
             self.messages.put(("log", line))
@@ -723,6 +747,7 @@ class App(tk.Tk):
         def work():
             config = ConversionConfig.from_mapping_file(mapping) if mapping else ConversionConfig()
             config.move_routines.update(choices)
+            config.karel = karel
             return "done", pipeline.run(source, config=config, log=log, fanuc=list(target) if target else None,
                                         tp=tp, keep=keep)  # fmt: skip
 

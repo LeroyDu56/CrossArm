@@ -6,7 +6,7 @@
     crossarm parse FILE [--format pseudo|json] [-o OUT]
     crossarm stats PATH [PATH ...]
     crossarm convert BACKUP|FILES [-o OUTDIR] [--map mapping.json] [--routine NAME ...] [--fanuc TARGET]
-                     [--tp] [--tp-robot ROBOT]
+                     [--tp] [--tp-robot ROBOT] [--keep-taught PATH] [--karel]
 
 `stats` parses every RAPID file under the given paths and reports what the V1
 parser recognises versus what it leaves as Unsupported — the tool used to decide
@@ -18,6 +18,7 @@ import sys
 import zipfile
 from collections import Counter
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 from crossarm import __version__, pipeline
@@ -93,6 +94,13 @@ def _build_parser() -> argparse.ArgumentParser:
              "touched up there keeps its taught value unless it changed in the backup: then it is theoretical, "
              "listed to touch up again",
     )  # fmt: skip
+    p_conv.add_argument(
+        "--karel", action="store_true",
+        help="write what TP cannot compute (PoseMult of poses computed at run time) as calls to CrossArm's KAREL "
+             "programs, in a KAREL folder, compiled by FANUC ktrans (installed with ROBOGUIDE) when it is there, for "
+             "the --tp-robot robot's software, else the newest version installed. The robot needs the KAREL option "
+             "(R632)",
+    )  # fmt: skip
     p_conv.set_defaults(handler=_cmd_convert)
     return parser
 
@@ -164,6 +172,8 @@ def _cmd_convert(args: argparse.Namespace) -> int:
     except (OSError, ValueError, TypeError) as exc:  # json.JSONDecodeError is a ValueError
         print(f"CrossArm: invalid mapping file {args.map}: {exc}", file=sys.stderr)
         return 2
+    if args.karel:
+        config = replace(config, karel=True)
     try:
         tp = TpRequest(args.tp_robot) if args.tp or args.tp_robot else None
         keep = pipeline.KeepTaught(args.keep_taught, args.map) if args.keep_taught else None

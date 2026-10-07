@@ -16,6 +16,7 @@ Output layout, created next to the input unless an output folder is given:
         *.LS
         crossarm_report.md / .html
       TP/                       when asked: the .TP of every task, made by FANUC MakeTP (fanuc/maketp.py)
+      KAREL/                    --karel: the KAREL library programs the tasks call, .kl and .pc (fanuc/ktrans.py)
 
 Each task folder also holds crossarm_points.json: the points written, for a later conversion keeping the
 positions touched up on the robot (--keep-taught, convert/taught.py).
@@ -48,6 +49,8 @@ from crossarm.convert.taught import (
 )
 from crossarm.convert.taught import report_section as taught_section
 from crossarm.convert.translate import ControllerScope, remark_lines
+from crossarm.fanuc import ktrans
+from crossarm.fanuc.ktrans import KarelExport, KarelRequest
 from crossarm.fanuc.ls_writer import write_ls
 from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
 from crossarm.fanuc.maketp import TpDecoded, TpExport, TpRequest, make_tp, report_section
@@ -73,6 +76,7 @@ class TaskOutput:
     report_html: Path | None = None
     result: ConversionResult | None = None  # the full detail, for a summary on screen
     tp: TpExport | None = None  # the .TP files, when asked for
+    karel: KarelExport | None = None  # --karel: the KAREL programs its programs call
 
 
 @dataclass(frozen=True)
@@ -229,7 +233,8 @@ def _parse_task(task: TaskSource) -> tuple[list[ParseResult], list[str]]:
 def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[str]], folder: Path,
                   config: ConversionConfig, signals, routines, source: Source, log: Log, numbers: ControllerScope,
                   other_tasks: list[str], licence: LicenceStatus,
-                  tp: tuple[TpRequest, Path] | None = None, keeping: _Keeping | None = None) -> TaskOutput:  # fmt: skip
+                  tp: tuple[TpRequest, Path] | None = None, keeping: _Keeping | None = None,
+                  karel: tuple[KarelRequest, Path] | None = None) -> TaskOutput:  # fmt: skip
     out = TaskOutput(task.name, folder)
     parsed, out.syntax_errors = parsed_task
     modules = [p.module for p in parsed if p.module is not None]
@@ -264,10 +269,15 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         if result.setup.program is not None:
             written.append(result.setup.program.name)
         out.tp = make_tp([folder / f"{name}.LS" for name in written], tp[1], tp[0], log)
+    if karel is not None and result.karel_programs:  # the library programs they call, before the .LS on the robot
+        out.karel = ktrans.export(result.karel_programs, karel[1], karel[0], log)
     names = [Path(p.path).name for p in parsed]
     extra = ""  # what this run adds to the report
     if out.tp is not None:
         extra += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
+    karel_where = os.path.relpath(karel[1], folder) if karel else ""
+    if out.karel is not None:
+        extra += ktrans.report_section(out.karel, karel_where)
     # The .md has the taught positions as Markdown; the page builds its own section from result.taught.
     markdown = extra + (taught_section(result.taught, keeping.where) if result.taught is not None and keeping else "")
     if out.syntax_errors:
@@ -279,7 +289,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
     out.report_html = folder / "crossarm_report.html"
     page = build_html_report(result, config, names, licence, title=f"CrossArm - {source.name} - {task.name}",
                              extra=extra, lead=_mark(licence), tp=out.tp,
-                             tp_where=os.path.relpath(tp[1], folder) if tp else "",
+                             tp_where=os.path.relpath(tp[1], folder) if tp else "", karel=out.karel,
+                             karel_where=karel_where,
                              taught_where=keeping.where if keeping is not None else "")  # fmt: skip
     out.report_html.write_text(page, encoding="utf-8")
     # The numbering this run used, ready to edit and feed back with --map.
@@ -297,6 +308,10 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
            if result.coverage.total else ""))  # fmt: skip
     if out.tp is not None:
         log(f"  {task.name}: {out.tp.summary()}")
+    if out.karel is not None:
+        log(f"  {task.name}: {out.karel.summary()}")
+    elif result.karel_todo:
+        log(f"  {task.name}: {result.karel_todo} TODO would be converted with --karel (KAREL option R632)")
     if result.taught is not None:
         log(f"  {task.name}: taught positions: {result.taught.summary()}")
         for point in result.taught.of(AGAIN):
@@ -314,9 +329,11 @@ def run(
     fanuc: list[Path] | None = None,
     tp: TpRequest | None = None,
     keep: KeepTaught | None = None,
+    karel: KarelRequest | None = None,
 ) -> RunOutput:
     """Convert; with `tp`, also write the programs as .TP with FANUC MakeTP (fanuc/maketp.py), in TP/; with `keep`,
-    keep the positions touched up on the robot (convert/taught.py)."""
+    keep the positions touched up on the robot (convert/taught.py). With config.karel, the KAREL programs called are
+    written in KAREL/, compiled as `karel` says (default: for the robot of `tp`, else the newest version installed)."""
     given, lines = list(paths), []
     user_log = log
 
@@ -382,12 +399,16 @@ def run(
         if tp is not None:
             log("Binary .TP programs: made by FANUC MakeTP, which loads each program into the robot's virtual "
                 "controller (a cell open in ROBOGUIDE loses its programs of the same names)")  # fmt: skip
+        if config.karel:
+            karel = karel or KarelRequest(tp.robot if tp is not None else None)
+            log("KAREL: what TP cannot compute is called in CrossArm's KAREL programs (the robot needs the KAREL "
+                "option, R632)")  # fmt: skip
         for task, parsed_task in zip(source.tasks, parsed, strict=True):
             task_folder = folder / task.name if source.kind == "backup" or len(source.tasks) > 1 else folder
             others = [name for name in names if name != task.name]
             tasks.append(_convert_task(task, parsed_task, task_folder, config, signals, routines, source, log, shared,
                                        others, licence, (tp, folder / TP_FOLDER) if tp else None,
-                                       keeping))  # fmt: skip
+                                       keeping, (karel, folder / ktrans.FOLDER) if config.karel and karel else None))  # fmt: skip
         log(f"Output: {folder}")
         # What a user can send when a result looks wrong: stays next to the report.
         (folder / "crossarm_log.txt").write_text(log_text(given, fanuc, lines), encoding="utf-8")

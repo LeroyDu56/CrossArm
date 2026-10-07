@@ -7,6 +7,7 @@ What the integrator does on the FANUC cell, in the order it is done, each item w
 check and links to the lines that use it (their rows in the side-by-side view):
 
     Load the programs     .LS (ASCII Upload, R507) or the .TP of the TP folder; every program before any runs
+    KAREL programs        --karel: the KAREL option (R632), each .pc of the KAREL folder loaded before the .LS
     Programs to provide   the TP or KAREL programs the integrator writes (external_routines): arguments, results
     Frames and tools      SETUP_FRAMES, each UFRAME / UTOOL and its values, what to teach on the robot
     Payloads              each PAYLOAD schedule and its values
@@ -39,8 +40,11 @@ from crossarm.convert.report import payload_rows
 from crossarm.convert.source_map import line_anchor, tp_text
 from crossarm.convert.taught import AGAIN, KEPT, NEW, NOT_READ, THEORETICAL, Taught, foreign_by_program
 from crossarm.convert.translate import Allocation, ConversionResult, FrameInfo, Note, ZoneUse
+from crossarm.fanuc.ktrans import KarelExport, compile_command
 from crossarm.fanuc.maketp import TpExport
 from crossarm.fanuc.tp import CartesianPosition
+from crossarm.karel import PROGRAMS as KAREL_PROGRAMS
+from crossarm.karel import R632
 
 # The TP data a line uses: UFRAME_NUM=2, DO[3:name], PR[98,1]... (remarks left out).
 _USE = re.compile(r"\b(UFRAME_NUM|UTOOL_NUM|PAYLOAD|DO|DI|GO|GI|AO|AI|F|R|SR|PR|TIMER)(?:\[|=)(\d+)")
@@ -182,6 +186,38 @@ def _loading(result: ConversionResult, tp: TpExport | None, tp_where: str) -> tu
              + (" The programs to provide (next group) are loaded too." if result.provided else ""),
     ))  # fmt: skip
     return "", items
+
+
+def _karel(result: ConversionResult, karel: KarelExport | None, where: str, places: _Places) -> tuple[str, list[_Item]]:
+    if karel is None or not karel.written:
+        return "", []
+    items = [_Item(
+        "karel-option", f"The robot has the {R632}",
+        note="Without it the controller does not run KAREL programs: convert again without <code>--karel</code>,"
+             " the lines calling them stay TODO.",
+    )]  # fmt: skip
+    for name in karel.written:
+        program = KAREL_PROGRAMS[name]
+        stem = program.source.rsplit(".", 1)[0]
+        calls = [(info.program.name, info.sources[i] if i < len(info.sources) else None)
+                 for info in result.programs for i, line in enumerate(info.program.lines)
+                 if any(text.startswith(f"CALL {name}(") for text in tp_text(line))]  # fmt: skip
+        compiled = name in karel.compiled
+        why = karel.problem or next((w for n, w in karel.refused if n == name), "")
+        items.append(_Item(
+            f"karel|{name}|{compiled}",
+            f"Load {_code(f'{stem}.pc')} ({_e(name)}) before the programs that call it",
+            values=f"{_code(where or 'KAREL')}: {_e(program.does)}",
+            note=(f"Compiled by FANUC ktrans for {_e(karel.version)}: another software version may refuse it; compile"
+                  f" {_e(program.source)} again for it." if compiled else
+                  f"Not compiled ({_e(why)}): compile it with FANUC ktrans for the robot's version, with"
+                  f" {_code('ca_lib.kl')} in the same folder: {_code(compile_command(karel))}.")
+                 + " A CALL to it before it is loaded stops the program (INTP-222).",
+            links=places.links(calls, "called in"),
+        ))  # fmt: skip
+    intro = ("CrossArm's KAREL programs compute what TP cannot (<code>--karel</code>); the TP programs call them with"
+             " register numbers. They are the same for every conversion: load each once.")  # fmt: skip
+    return intro, items
 
 
 def _provided(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
@@ -533,6 +569,7 @@ def _zone_item(zone: str, uses: list[ZoneUse]) -> _Item:
 
 _GROUPS = (
     ("load", "Load the programs"),
+    ("karel", "KAREL programs"),
     ("provided", "Programs to provide"),
     ("frames", "Frames and tools"),
     ("payloads", "Payloads"),
@@ -546,12 +583,14 @@ _GROUPS = (
 
 
 def checklist_section(result: ConversionResult, config: ConversionConfig, anchors: set[tuple[str, int]], *,
-                      identity: str, tp: TpExport | None = None, tp_where: str = "") -> tuple[str, str, str]:  # fmt: skip
+                      identity: str, tp: TpExport | None = None, tp_where: str = "", karel: KarelExport | None = None,
+                      karel_where: str = "") -> tuple[str, str, str]:  # fmt: skip
     """The section of the page: (id, menu label, HTML). `anchors`: the RAPID lines the page shows (links lead
     there); `identity`: what tells this report from another (the ticks are kept under it)."""
     places = _Places(result, anchors)
     built = {
         "load": _loading(result, tp, tp_where),
+        "karel": _karel(result, karel, karel_where, places),
         "provided": _provided(result, places),
         "frames": _frames(result, config, places),
         "payloads": _payloads(result, config, places),

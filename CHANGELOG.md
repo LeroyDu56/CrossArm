@@ -3,6 +3,14 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- New option `--karel` (off by default; step 6 of the window): a pose computed at run time is kept in a
+  position register and `PoseMult` of such poses becomes `CALL CA_POSEMULT(a,b,c)`, a program of CrossArm's
+  own KAREL library, written in a `KAREL` folder and compiled by FANUC ktrans when it is installed. The robot
+  needs the KAREL option (R632). Without the option nothing changes; the report says how many TODO it would
+  convert.
+
 ## 1.6.0 — 2026-10-07
 
 For converting again a program already commissioned, and for the routines CrossArm cannot write. A routine

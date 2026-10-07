@@ -59,6 +59,7 @@ def app(window, monkeypatch):
     window.source = window.target = window.mapping = window.last = window.log_window = window.tp_robot = None
     window.move_choices = {}
     window.keep, window.keep_check = [], None
+    window.karel.set(False)
     window.busy = window.convert_after_inspection = False
     window.step_source.status.config(text="")
     window._show_what_you_get()
@@ -130,6 +131,28 @@ def test_convert_shows_the_result_in_plain_words(app, module, fanuc_robot):
     assert ["3", "2", "3"] == [t for t in shown if t.isdigit()]  # programs, ready as is, items to review
     assert any(t.startswith("Numbers already used on the FANUC robot were left free") for t in shown)
     assert app.convert_button.cget("text") == "Convert again"
+
+
+def test_the_karel_step_is_a_box_converting_with_karel(app, tmp_path, monkeypatch):
+    from crossarm import gui
+    from crossarm.fanuc import ktrans
+
+    assert app.step_karel.status.cget("text").startswith("○  Off: what TP cannot compute stays TODO")
+    monkeypatch.setattr(gui, "find_ktrans", lambda: None)
+    monkeypatch.setattr(ktrans, "find_ktrans", lambda: None)
+    app.karel.set(True)
+    app._refresh()
+    assert app.step_karel.status.cget("text") == "✖  On: the KAREL folder holds the programs called, as .kl to compile" \
+                                                  " (FANUC ktrans not found)."  # fmt: skip
+    rapid = tmp_path / "KP.mod"
+    rapid.write_text("MODULE KP\n  VAR pose pA;\n  VAR num n:=5;\n  PROC Main()\n    n:=n+1;\n"
+                     "    pA:=[[n,0,100],[1,0,0,0]];\n    pA:=PoseMult(pA,pA);\n  ENDPROC\nENDMODULE\n", encoding="ascii")
+    app.choose_source([rapid])
+    settle(app)
+    app.convert()
+    settle(app)
+    assert (tmp_path / "crossarm_KP" / "KAREL" / "ca_posemult.kl").is_file()
+    assert any(t.startswith("KAREL programs CA_POSEMULT in the KAREL folder") for t in texts(app.right))
 
 
 def test_warnings_are_drawn_without_error(app, tmp_path):

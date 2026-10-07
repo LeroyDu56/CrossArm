@@ -414,6 +414,16 @@ def test_the_mapping_1_2_wrote_given_back_gives_the_same_numbers(tmp_path, fixtu
     assert numbers(result.folder) == numbers(LOOSE_1_2)
 
 
+def test_the_mapping_1_2_wrote_given_back_with_karel_gives_the_same_numbers(tmp_path, fixtures_dir, evaluation):
+    """--karel adds numbers (poses kept in position registers), never moves those of an earlier mapping file."""
+    project = loose_project(tmp_path / "project", fixtures_dir)
+    config = ConversionConfig.from_mapping_file(LOOSE_1_2 / "crossarm_mapping.json", timestamp=datetime(2026, 1, 1),
+                                                karel=True)  # fmt: skip
+    result = run([project], config=config, log=lambda _: None)
+    assert programs(result.folder) == programs(LOOSE_1_2)
+    assert numbers(result.folder) == numbers(LOOSE_1_2)
+
+
 def test_the_mapping_written_now_given_back_gives_the_same_files(tmp_path, fixtures_dir, evaluation):
     project = loose_project(tmp_path / "project", fixtures_dir)
     first = run([project], config=ConversionConfig(timestamp=datetime(2026, 1, 1)), log=lambda _: None)

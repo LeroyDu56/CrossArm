@@ -15,6 +15,7 @@ from pathlib import Path
 from crossarm.convert.analysis import Verdict, blocking_causes, decide, todo_causes
 from crossarm.convert.taught import AGAIN, KEPT, POINTS_FILE
 from crossarm.convert.translate import Blocker
+from crossarm.fanuc.ktrans import FOLDER as KAREL_FOLDER
 from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
 from crossarm.fanuc.usage import ControllerUsage
 from crossarm.pipeline import Inspection, KeepCheck, RunOutput
@@ -266,6 +267,19 @@ def summarize(run: RunOutput) -> Summary:
     if made:
         text = f"{plural(made, 'program')} also written as .TP in the {TP_FOLDER} folder, ready to copy to a USB stick."
         attention.append((GOOD, text))
+    # 7. KAREL (--karel): the programs to load first; without it, what it would convert.
+    karel = [t.karel for t in run.tasks if t.karel is not None]
+    names = sorted({name for export in karel for name in export.written})
+    if names:
+        problem = next((e.problem for e in karel if e.problem), "")
+        attention.append((WARN if problem else GOOD,
+                          f"KAREL programs {', '.join(names)} in the {KAREL_FOLDER} folder: load them before the programs;"
+                          f" the robot needs the KAREL option (R632)." + (f" Not compiled: {problem}." if problem else "")))  # fmt: skip
+    would = sum(t.result.karel_todo for t in run.tasks if t.result)
+    if would:
+        text = (f"{plural(would, 'TODO', 'TODO')} would be converted with KAREL programs (step 6, or --karel): the"
+                " robot needs the KAREL option (R632).")  # fmt: skip
+        attention.append((INFO, text))
     return summary
 
 

@@ -308,6 +308,12 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             f"Write and load the {_plural(len(names), 'program')} to provide",
             f"{_names(names, 4)}: CrossArm calls them and does not write them (`external_routines`).",
             "#ck-provided", "Checklist: Programs to provide"))  # fmt: skip
+    if result.karel_programs:
+        names = [f"`{name}`" for name in result.karel_programs]
+        actions.append(Action(
+            f"Load the {_plural(len(names), 'KAREL program')} before the programs that call {'them' if len(names) > 1 else 'it'}",
+            f"{_names(names, 4)}, of CrossArm's KAREL library (`--karel`), in the KAREL folder: the robot needs the"
+            " KAREL option (R632).", "#ck-karel", "Checklist: KAREL programs"))  # fmt: skip
 
     design = []
     for causes, title, how in _DESIGN:
@@ -329,6 +335,12 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             + (f"; and {len(rest) - 3} more" if len(rest) > 3 else "") + ".",
             "#review", "Items to review", rest[0][0])))  # fmt: skip
     actions += [action for _, action in sorted(design, key=lambda x: -x[0])]
+    if result.karel_todo:  # converted without --karel: what it would convert
+        actions.append(Action(
+            "Convert again with `--karel` for the poses computed at run time",
+            f"{_todo(result.karel_todo)} converted then by CrossArm's KAREL programs (PoseMult of poses kept in"
+            " position registers): the robot needs the KAREL option (R632).", "#review", "Items to review",
+            Blocker.RUNTIME_POSITION))  # fmt: skip
 
     errors = [note for cause in sorted(_ERRORS) for note in by_cause.get(cause, [])]
     done.update(_ERRORS)

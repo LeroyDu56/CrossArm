@@ -1,0 +1,22 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CALL CA_POSEMULT(a, b, c): PR[c] = PR[a] : PR[b], RAPID's PoseMult(PR[a], PR[b]) on poses kept in
+-- position registers (PR[b] expressed in the frame PR[a]). Written by CrossArm (--karel).
+PROGRAM ca_posemult
+%NOLOCKGROUP
+%NOBUSYLAMP
+%COMMENT = 'CrossArm PoseMult'
+%ENVIRONMENT REGOPE
+VAR
+  a, b, c : INTEGER
+  pa, pb : POSITION
+%INCLUDE ca_lib
+BEGIN
+  a = ca_reg_arg(1)
+  b = ca_reg_arg(2)
+  c = ca_reg_arg(3)
+  pa = ca_get_pr(a)
+  pb = ca_get_pr(b)
+  ca_set_pr(c, pa : pb)
+END ca_posemult

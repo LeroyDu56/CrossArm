@@ -23,7 +23,7 @@ jobs:
         run: python -m pytest -q
       - name: Build
         # --splash: shown the moment the exe starts, while it unpacks (1 to 2 s with nothing on screen otherwise)
-        run: python -m PyInstaller --onefile --windowed --name CrossArm --icon packaging/crossarm.ico --splash packaging/splash.png --paths src packaging/crossarm_app.py
+        run: python -m PyInstaller --onefile --windowed --name CrossArm --icon packaging/crossarm.ico --splash packaging/splash.png --paths src --add-data "src/crossarm/karel/*.kl:crossarm/karel" packaging/crossarm_app.py
       - name: Smoke test (no window)
         shell: pwsh
         run: |

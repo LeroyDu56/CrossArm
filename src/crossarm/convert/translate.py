@@ -26,6 +26,7 @@ Mapping rules (see the report for the values actually used):
   IF FALSE / WHILE FALSE (code switched off by hand) -> left out, with a remark
 """
 
+import copy
 import dataclasses
 import itertools
 import math
@@ -79,6 +80,7 @@ from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
 from crossarm.convert.interrupts import GAPS, SINGLE_OPTIONS, Interrupt, arming, called_by, changed_by, connected
 from crossarm.convert.interrupts import scan as scan_interrupts
+from crossarm.convert.karel_poses import KarelPoses, karel_candidates, karel_would
 from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
@@ -126,6 +128,8 @@ from crossarm.geometry import (
     rot_z,
     wpr_to_matrix,
 )
+from crossarm.karel import PROGRAMS as KAREL_PROGRAMS
+from crossarm.karel import called as karel_called
 from crossarm.rapid import nodes as n
 from crossarm.rapid.eio import Signal
 from crossarm.rapid.to_pseudo import format_expr
@@ -405,6 +409,10 @@ class ConversionResult:
     # The positions taught on the robot kept, or not, from an earlier conversion (crossarm.convert.taught; set by the
     # pipeline when asked: --keep-taught).
     taught: "Taught | None" = None
+    # --karel: the programs of CrossArm's KAREL library the programs call (crossarm.karel). Without it: how many
+    # TODO it would convert (karel_would()).
+    karel_programs: list[str] = field(default_factory=list)
+    karel_todo: int = 0
 
     @property
     def todo_count(self) -> int:
@@ -878,6 +886,8 @@ class Converter:
         everything = [r for m in self.modules for r in m.routines]
         self.interrupts = scan_interrupts(everything, self.procs, set(self.move_routines))
         self.runtime_points = find_runtime_points(self, everything)
+        if self.config.karel:  # the library's programs: a routine of the same name is renamed
+            self.shared.program_names.update(KAREL_PROGRAMS)
         selected: list[tuple[n.Module, n.Routine]] = []
         skipped: list[n.Routine] = []
         for module in self.modules:
@@ -948,6 +958,9 @@ class Converter:
         # A routine wrapping a move is counted where it is called, as a FUNC is: not as a routine left out.
         left_out = [r for r in skipped if r.name.upper() not in self.move_routines]
         res.coverage = measure([r for _, r in selected], left_out, self.not_converted, declared, set(self.move_routines))
+        if self.config.karel:
+            res.karel_programs = karel_called(line.text for info in res.programs for line in info.program.lines
+                                              if isinstance(line, Instruction))  # fmt: skip
         return res
 
     def _report_provided(self, selected: list[n.Routine]) -> None:
@@ -1994,7 +2007,7 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator(RuntimePoints, RoutineCalls):
+class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -4772,4 +4785,14 @@ def convert(
     program_modules: set[str] | None = None,
     shared: ControllerScope | None = None,
 ) -> ConversionResult:
-    return Converter(modules, config, sources, signals, shared).convert(routines, program_modules)
+    config = config or ConversionConfig()
+    result = Converter(modules, config, sources, signals, shared).convert(routines, program_modules)
+    if not config.karel and karel_candidates(modules, result):  # what --karel would convert: the same conversion with it
+        scope = None  # numbered on its own: only its lines are compared, not its numbers
+        if shared is not None:
+            scope = ControllerScope.from_config(config, shared.existing_programs)
+            scope.written = shared.written
+        again = Converter(modules, dataclasses.replace(copy.deepcopy(config), karel=True), sources, signals, scope)
+        result.karel_todo = karel_would(result, again.convert(routines, program_modules))
+    return result
+

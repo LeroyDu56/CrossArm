@@ -50,6 +50,9 @@ crossarm-gui = "crossarm.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+crossarm = ["karel/*.kl"]  # the KAREL library (--karel), read with importlib.resources
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]

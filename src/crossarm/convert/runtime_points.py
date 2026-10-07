@@ -63,13 +63,14 @@ def expr_nodes(node: object) -> Iterable[object]:
 def find_runtime_points(c: "Converter", routines: list[n.Routine]) -> dict[str, str]:
     """The robtargets and jointtargets (not arrays, not CONST) some assignment gives a value only known at run
     time, and their type: kept in a position register, which every assignment sets and every read reads, in
-    whatever routine.
+    whatever routine. With --karel, the poses too (crossarm.convert.karel_poses).
 
     An assignment is known at run time only when it reads what changes then: data the programs change, a
     routine's own data or parameter, an input or the robot's position (CRobT...), or such a point. One
     reading the point itself and fixed data (`pTmp.trans.z:=pTmp.trans.z-100`) is worked out where it is,
     as before: the point stays a P of each move."""
     assignments: list[tuple[str, n.Assign, set[str], set[str]]] = []  # key, statement, own names, params
+    kept = (*KEPT, "pose") if c.config.karel else KEPT  # a pose: computed by KAREL (convert.karel_poses)
     kinds: dict[str, str] = {}
     for routine in routines:
         own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
@@ -80,7 +81,7 @@ def find_runtime_points(c: "Converter", routines: list[n.Routine]) -> dict[str, 
             if not isinstance(stmt, n.Assign) or not (path := path_of(stmt.target)):
                 continue
             decl = own.get(path[0]) or c.symbols.get_global(path[0])
-            if decl is None or decl.type_name.lower() not in KEPT or decl.dims or decl.storage == "CONST":
+            if decl is None or decl.type_name.lower() not in kept or decl.dims or decl.storage == "CONST":
                 continue
             key = f"{routine.name}.{decl.name}".upper() if path[0] in own else path[0]
             assignments.append((key, stmt, set(own), params))
@@ -194,6 +195,8 @@ class RuntimePoints:
             return
         if self.c.runtime_points.get(key) == "jointtarget":
             self.robot_joints(a, register)
+        elif self.c.runtime_points.get(key) == "pose":
+            self.pose_value(a, register)  # type: ignore[attr-defined]
         else:
             self._runtime_value(a, register, name, turn)
         self.known.pop(f"{name}#UNSET", None)  # set whole: readable again

@@ -1,0 +1,12 @@
+PROGRAM krclear
+%NOLOCKGROUP
+%ENVIRONMENT REGOPE
+-- CrossArm KAREL probe only: CALL KRCLEAR(n) clears PR[n], as on a controller where it was never set.
+VAR
+  kind, n, status : INTEGER
+  r : REAL
+  s : STRING[8]
+BEGIN
+  GET_TPE_PRM(1, kind, n, r, s, status)
+  CLR_POS_REG(n, 0, status)
+END krclear
