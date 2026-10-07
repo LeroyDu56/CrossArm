@@ -3,24 +3,67 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.6.0 — 2026-10-07
 
-- New mapping key `external_routines`: a routine CrossArm cannot write (not in the backup, or using files, sockets
-  or byte buffers) can be a TP or KAREL program the integrator provides. Its calls become `CALL NAME(args)`, the
-  routine is not written, and the report and checklist list each program to provide with its arguments; the
-  mapping file offers the candidates with `"program": null`. Measured on ROBOGUIDE (new `external` probe).
-- Converting again keeps the positions touched up on the robot: `crossarm convert --keep-taught PATH` reads the
-  robot's programs (.LS, or .TP decoded by FANUC PrintTP) and `crossarm_points.json`, which every conversion now
-  writes; a point touched up keeps its taught value unless it, or its frame, changed in the backup (then it is
-  theoretical and listed to touch up again). Measured on ROBOGUIDE (new `taught` probe).
-- The reports open on an analysis: a decision (ready / workable / not ready) by a fixed, printed rule (share of
-  instructions converted, number of blocking causes), the 3 to 7 things to do first, the main TODO causes with an
-  example each, the share converted by area and only the controller resources near their limit. The checklist is
-  folded until opened; the window shows the decision too.
-- The touch-ups kept by `--keep-taught` are shown point by point: a "Taught positions" section in the HTML report
-  (status, distance of the taught point from the theoretical one, why, link to the RAPID line; filters, programs
-  folded), tables in the .md report, the checklist telling points kept (check only) from points to touch up again,
-  and a step 5 in the window that says at once what it found. The window's steps scroll on a small screen.
+For converting again a program already commissioned, and for the routines CrossArm cannot write. A routine
+missing from the backup, or using files, sockets or byte buffers, can be a TP or KAREL program the integrator
+provides, named under a new mapping key, `external_routines`: its calls become `CALL NAME(args)`. Converting
+again keeps the positions touched up on the robot (`--keep-taught`), from `crossarm_points.json`, which every
+conversion now writes. And the reports open on an analysis: a decision by a fixed rule printed with it, and
+the things to do first. Both new forms were measured on ROBOGUIDE, and every controller probe was run again
+for this version. On the three RobotWare backups of the test corpus, the share of RAPID instructions
+converted stays at 87 %, 93 % and 87 %; on public open-source programs it is about 60 % (what that means:
+[docs/validation.md](docs/validation.md#public-programs)). A mapping file written for 1.0 to 1.5 gives the
+same numbers: `external_routines` is a new key, and without it nothing changes. A conversion made before 1.6
+wrote no `crossarm_points.json`: to keep the touch-ups of its programs, convert that old backup again once
+with 1.6, giving it its mapping file, then convert the new backup with `--keep-taught`.
+
+### Mapping file
+- New key `external_routines`: a routine CrossArm cannot write (not in the backup, or using files, sockets
+  or byte buffers, itself or through the routines it calls) can be a TP or KAREL program the integrator
+  provides, `{"WriteLog": {"program": "WRITE_LOG"}}`. Its calls become `CALL WRITE_LOG(args)`, the arguments
+  passed as to the routines CrossArm converts, the num RAPID reads back read from a register after the call;
+  the routine is not written. The report ("Programs to provide") and the checklist list each program with its
+  arguments in order (`AR[1]`, `AR[2]`...) and their RAPID types. `"arguments": ["num", "string", "INOUT num"]`
+  types those of a routine the backup does not declare. The mapping file CrossArm writes lists the candidates
+  with `"program": null` and why: they activate nothing until a program name is filled in. A function used in
+  an expression stays TODO (TP gives no value back to an expression), as do arguments TP cannot pass (a point,
+  a speed, a zone, a record, an array). Measured on ROBOGUIDE (new `external` probe): a `.LS` calling a program
+  the robot does not have loads, and stops on that `CALL` when run (INTP-222); with the programs, each gets
+  what the call passes.
+
+### Converting again
+- `crossarm convert --keep-taught PATH` (repeatable) keeps the positions touched up on the robot: it reads the
+  robot's programs as they are now (folder, `.zip`, `.LS`, or `.TP` decoded by FANUC PrintTP, installed with
+  ROBOGUIDE, with the robot of `--tp-robot`) and the `crossarm_points.json` of the earlier conversion (in the
+  paths given, or next to the `--map` file). A point touched up keeps its taught value unless its ABB position or
+  one of its frames changed: then it is theoretical again and listed to touch up again. Each point is kept,
+  touch up again, theoretical, new, gone or not read; same point within 0.01 mm and 0.01°. Points of arrays kept
+  in position registers and frames touched up on the robot are not read. Measured on ROBOGUIDE (new `taught`
+  probe): a point touched up, the backup changed and converted again, the robot goes to the touch-up kept and
+  to the new point, from the `.LS` and from the `.TP`.
+- Every conversion writes `crossarm_points.json` next to its programs: each point written, named by the RAPID
+  it came from, with its `P[n]`, its frames and its theoretical value. A conversion made before 1.6 has none:
+  convert that old backup again once to get one.
+- Step 5 of the window, "Positions touched up on the robot" (Robot programs... / Files or .zip... / Earlier
+  output... / Clear), does the same and says at once what it found. The window's steps scroll on a small
+  screen, Convert staying at the bottom.
+
+### Report
+- The reports open on an analysis: a decision (ready / workable / not ready) by a fixed rule, printed under it
+  with the figures it was applied to: ready when everything is converted, workable from 85 % of the RAPID
+  instructions converted and at most 3 blocking causes (what the robot measures or computes while it runs,
+  interrupts, searches...: work needing a solution designed on the FANUC side), not ready otherwise. Then the
+  3 to 7 things to do first, the main TODO causes with an example each, the share converted by area, and only
+  the controller resources over or near their limit. The checklist is folded until opened; the window shows
+  the decision under its tiles.
+- The touch-ups kept by `--keep-taught` are shown point by point: a "Taught positions" section in the HTML
+  report (status, distance of the taught point from the theoretical one, why, link to the RAPID line; filters,
+  programs folded), tables in the .md report, the checklist telling points kept (check only) from points to
+  touch up again, and the window's result saying how many were kept and how many to touch up again.
+
+### Fixes
+- The window's result tiles are laid out two per row: the converted share ("77.6 % converted") was cut off.
 
 ## 1.5.0 — 2026-10-07
 

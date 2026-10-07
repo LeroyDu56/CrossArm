@@ -15,7 +15,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on both simulators: the 2 added in 1.5 and the 10 closest to what 1.5 changed run again on ROBOGUIDE for this version, the 17 others for 1.3.0 or 1.4.0, their programs unchanged since | 29 of 29 give what was measured |
+| The controller probes, all run again for this version on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1) | 31 of 31 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -41,6 +41,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Routines given their speed and zone, run on both controllers | the time of the same moves written with constants, to 5 ms |
 | Binary `.TP` made by FANUC MakeTP from the `.LS`, loaded and run on ROBOGUIDE | the values RAPID computes; decoded back, the lines of the `.LS` |
 | Jointtargets read on the robot (`CJointT`), kept in joint position registers, run on both controllers | the ABB axes, within 0.01° |
+| Calls to programs the integrator provides (`external_routines`), run on ROBOGUIDE | each program given what the call passes, the num read back; without them, the caller loads and stops on the `CALL` |
+| Points touched up on ROBOGUIDE, the backup changed and converted again with `--keep-taught`, run | the touch-up kept where the point did not change, the new point where it did, within 0.001 mm |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -73,6 +75,11 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 29. [Waits with a time flag, run](#29-waits-with-a-time-flag-run)
 30. [A search, run](#30-a-search-run)
 31. [Arrays of bools, run](#31-arrays-of-bools-run)
+32. [Speeds and zones given to a routine, run](#32-speeds-and-zones-given-to-a-routine-run)
+33. [Binary .TP programs made by MakeTP, run](#33-binary-tp-programs-made-by-maketp-run)
+34. [Jointtargets read on the robot, run](#34-jointtargets-read-on-the-robot-run)
+35. [Programs the integrator provides, run](#35-programs-the-integrator-provides-run)
+36. [Converting again, the touch-ups kept, run](#36-converting-again-the-touch-ups-kept-run)
 32. [Speeds and zones given to a routine, run](#32-speeds-and-zones-given-to-a-routine-run)
 33. [Binary .TP programs made by MakeTP, run](#33-binary-tp-programs-made-by-maketp-run)
 34. [Jointtargets read on the robot, run](#34-jointtargets-read-on-the-robot-run)
@@ -299,6 +306,8 @@ the results are read from the virtual controller's `HOME:` folder:
 | speeds and zones given to a routine | 1 register as RAPID computes it, the moves in the time they take with constants ([section 32](#32-speeds-and-zones-given-to-a-routine-run)) |
 | binary `.TP` made by MakeTP | 4 `.TP` loaded, run, registers as RAPID computes them, decoded back to the lines of their `.LS` ([section 33](#33-binary-tp-programs-made-by-maketp-run)) |
 | jointtargets read on the robot | 21 registers within 0.01° of the ABB axes ([section 34](#34-jointtargets-read-on-the-robot-run)) |
+| programs the integrator provides | the caller loads without them and stops on the `CALL` (INTP-222); with them, 6 registers as expected ([section 35](#35-programs-the-integrator-provides-run)) |
+| touch-ups kept when converting again | 2 points touched up, 4 statuses as expected from the `.LS` and from the `.TP`, the robot at each point within 0.001 mm ([section 36](#36-converting-again-the-touch-ups-kept-run)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
 ## 12. Speeds and zones, measured on both robots
@@ -901,3 +910,56 @@ move; ROBOGUIDE reads the target. The joint move back to a register read with an
 alarm (a joint `P[n]` recorded with another tool does: INTP-253). On the way, the probe showed that a bare
 negative constant in a condition, `IF (R[1]>-30)`, loads but stops the program when the line runs (INTP-202):
 CrossArm writes `(-30)` ([section 7](#7-calls-with-arguments-run)). External axes and writing an axis stay TODO.
+
+## 35. Programs the integrator provides, run
+
+A routine CrossArm cannot write, because the backup does not declare it or because it uses files or sockets, can
+be a TP or KAREL program the integrator writes on the FANUC side, named under `external_routines` in the mapping
+file ([user guide](guide.md#programs-you-provide)). CrossArm then writes each call as `CALL NAME(args)`, its
+arguments passed as to the routines it converts ([section 7](#7-calls-with-arguments-run)), and does not write
+the routine.
+
+[tools/make_external_probe.py](../tools/make_external_probe.py) converts a module calling three such routines:
+one the backup does not declare (`ProbeAdd 3,-2.5,TRUE`), one writing a file (`ProbeLog "HELLO",nBack`), and one
+writing a file and doubling its `INOUT num` (`ProbeTwice nBack`). CrossArm writes `CALL EXTADD(3,(-2.5),1)`,
+`CALL EXTLOG('HELLO',R[5])`, `CALL EXTTWICE(R[5])` and, after the last, the num read back from the register it
+names for it. The three programs are written by hand, as an integrator would, with no motion group
+(`DEFAULT_GROUP = *`): each copies what it is given (`AR[1]+AR[2]`, `STRLEN AR[1]`, `AR[1]*2`) into registers.
+On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| the caller loaded alone, without the programs | loaded |
+| run alone | stops on the first `CALL`: INTP-222 Call program failed (MEMO-073 Program does not exist) |
+| the programs loaded, run | to the end |
+| `3 + (-2.5)`, `TRUE`, length of `'HELLO'`, the num passed | 0.5, 1, 5, 7 |
+| the `INOUT num` doubled, read back by the caller | 14 |
+| the line after the calls | run once |
+
+A program the robot does not have does not stop the `.LS` loading: the report and the checklist list the
+programs to provide, each with its arguments. A function provided this way cannot give a value to an
+expression (TP gives none back), so a statement using one stays TODO.
+
+## 36. Converting again, the touch-ups kept, run
+
+The points CrossArm writes are theoretical and touched up on the robot at commissioning. Every conversion
+writes `crossarm_points.json`, each point with the RAPID it came from; `crossarm convert --keep-taught`
+reads the robot's programs and that file, and keeps a touch-up where the ABB point and its frames did not
+change ([user guide](guide.md#converting-again-keeping-the-touch-ups)).
+
+[tools/make_taught_probe.py](../tools/make_taught_probe.py) converts a module of three points with a tool and
+a work object, loads it on ROBOGUIDE (R-1000iA/80F, V10.10), runs `SETUP_FRAMES`, and touches up two points
+through the FANUC COM interface, as SHIFT+TOUCHUP does on the pendant (the pose recorded in the point's frames).
+The module then changes, one point moved, one added, and is converted again with `--keep-taught`, from the
+robot's programs read as `.LS` and again as `.TP` decoded by FANUC PrintTP (the same points both ways). The new
+programs are loaded and run, the robot's position read at each point:
+
+| Point | In RAPID, version 1 → 2 | On the robot | Status | The robot at the point, version 2 |
+|---|---|---|---|---|
+| `pKeep` | unchanged | touched up to 104, −150, 197, R −178 | kept | 104, −150, 197, R −178 |
+| `pMove` | y 100 → 120 | touched up to z 205 | touch up again | 150, 120, 200, the new point |
+| `pPlain` | unchanged | as written | theoretical | −50, 0, 250 |
+| `pNew` | added | — | new | 0, −100, 300 |
+
+Each position within 0.001 mm of the one expected (W of 180° and −180° being the same). Points kept in position
+registers (arrays of points, which the report counts) and frames touched up on the robot are not read.

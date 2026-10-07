@@ -1,37 +1,38 @@
-## CrossArm 1.5.0
+## CrossArm 1.6.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review. 1.5 is for a robot that cannot load `.LS` programs, and for the commissioning that
-follows. It converts about 60 % of the instructions of public open-source programs, 87 % to 93 % of our own
-test corpus, written for testing ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
+everything left to review. 1.6 is for converting again a program already commissioned, and for the routines
+CrossArm cannot write. It converts about 60 % of the instructions of public open-source programs, 87 % to 93 %
+of our own test corpus, written for testing ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
 
-**Binary `.TP` programs, for a robot without ASCII Upload.** A FANUC controller without the ASCII Upload
-option loads only `.TP`. `crossarm convert --tp-robot <ROBOGUIDE robot folder>` (or `--tp` with a Setrobot
-`robot.ini`), or step 4 of the window, has FANUC MakeTP, installed with ROBOGUIDE, make a `.TP` of every
-program into a `TP` folder to copy to a USB stick. Optional: without MakeTP, the report says so and nothing
-else changes. Measured on ROBOGUIDE: the `.TP` load and run, and decode back to the lines of their `.LS`.
+**Programs the integrator provides.** A routine CrossArm cannot write (missing from the backup, or using
+files, sockets or byte buffers) can be a TP or KAREL program written on the FANUC side, named under the new
+mapping key `external_routines`: `{"WriteLog": {"program": "WRITE_LOG"}}`. Its calls become
+`CALL WRITE_LOG(args)`, the routine is not written, and the report and checklist list each program to
+provide with its arguments (`AR[1]`, `AR[2]`...) and the num read back. The mapping file CrossArm writes lists
+the candidates with `"program": null`: they activate nothing until a name is filled in. Measured on ROBOGUIDE.
 
-**An interactive report, with a commissioning checklist.** `crossarm_report.html` shows each RAPID routine
-and its TP side by side, line by line, every TODO marked with its cause; the items to review are filtered by
-kind, cause and program, or searched, each leading to its line. A checklist follows the order the cell is
-brought up (loading, frames and tools with their values, payloads, I/O, registers, TODO lines, points to touch
-up, motion to check), each item linked to the lines using it, its ticks kept in the browser, printable. One
-self-contained page: it works offline.
+**Converting again, keeping the touch-ups.** Every conversion now writes `crossarm_points.json`, each point
+written and the RAPID it came from. When the ABB program changes after commissioning,
+`crossarm convert new_backup/ --keep-taught robot_programs/ --keep-taught crossarm_old/`, or step 5 of the
+window, reads the robot's programs as they are now (`.LS`, or `.TP` decoded by FANUC PrintTP) and keeps
+each point touched up there unless its ABB position or its frames changed; those are listed to touch up
+again, with how far the touch-up was. A conversion made before 1.6 has no `crossarm_points.json`: convert
+that old backup again once with 1.6 to get one. Measured on ROBOGUIDE: the robot goes to the touch-up kept
+and to the new point.
 
-**Jointtargets read on the robot.** `j:=CJointT()` is kept in a joint position register (`PR[k]=JPOS`), its
-axes `j.robax.rax_i` read with the measured axis conventions (the ABB values), and `MoveAbsJ j` is `J PR[k]`.
-Measured on both controllers.
+**Reports that open on a decision.** The report opens on an analysis: ready, workable or not ready, by a
+fixed rule printed under it (workable from 85 % of the RAPID instructions converted and at most 3 blocking
+causes), the 3 to 7 things to do first, the main TODO causes, the share converted by area, and only the
+controller resources near their limit. The detail follows; the checklist is folded until opened. The window
+shows the decision too; its steps scroll on a small screen.
 
-**A fix: negative constants in conditions.** A condition with a bare negative constant (`IF R[1]>-30`, a
-`WAIT`, a flag set to a condition, `F[n]=(...)`), as earlier versions wrote it, loads on the controller but
-stops the program with INTP-202 (syntax error) when the line runs. 1.5 writes it `(-30)`, measured to run.
-Convert again any program converted by an earlier version that has such a condition.
+**A fix:** the window's result tiles are laid out two per row: the converted share was cut off.
 
-**Still what 1.x keeps:** a mapping file written for 1.0 to 1.4 gives the same numbers, and the command
-line keeps its options (`--tp` and `--tp-robot` are new). Numbers CrossArm picks by itself can move from one
-version to the next: without a mapping file given back, a jointtarget now kept in a position register can move
-the other position register numbers by one, compared with 1.4. Give a conversion its mapping file back to keep
-them. The whole list:
+**Still what 1.x keeps:** a mapping file written for 1.0 to 1.5 gives the same numbers, and the command
+line keeps its options (`--keep-taught` is new). `external_routines` is a new key: without it, nothing
+changes. Numbers CrossArm picks by itself can move from one version to the next: give a conversion its
+mapping file back to keep them. The whole list:
 [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 See the [README](https://github.com/LeroyDu56/CrossArm#readme), the
@@ -62,8 +63,8 @@ This version becomes Apache 2.0 on 2030-10-07.
 - **double-click** it and choose them in the window.
 
 The `.LS` programs, `SETUP_FRAMES.LS`, the conversion report (`crossarm_report.html`), the editable
-`crossarm_mapping.json` and `crossarm_log.txt` are written to a new `crossarm_<name>` folder next to
-the input, with a `TP` folder of `.TP` programs when step 4 is used. Everything runs locally: no file
+`crossarm_mapping.json`, `crossarm_points.json` and `crossarm_log.txt` are written to a new
+`crossarm_<name>` folder next to the input, with a `TP` folder of `.TP` programs when step 4 is used. Everything runs locally: no file
 leaves the computer.
 
 ## First launch: Windows SmartScreen

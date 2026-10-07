@@ -23,6 +23,14 @@ RAPID computes, and FANUC PrintTP decodes them back to the `/MN` and `/POS` line
 `.LS` of the local test corpus was accepted by MakeTP. A `.TP` is made for the software version of that
 robot; loading it on an older one is not measured.
 
+**Positions touched up, read back.** `crossarm convert --keep-taught` reads the robot's programs as the
+controller exports them: a `.LS` (`-.000` and `.000` for a value that rounds to zero, the date of the
+touch-up in the header) or a `.TP` decoded by FANUC PrintTP, which gives the same `/POS`. Measured on ROBOGUIDE
+(taught probe): a point touched up through the FANUC COM interface (`Positions.Item(n).Record()`, as
+SHIFT+TOUCHUP) is recorded in the frames of its `P[n]`, and read back the same from the `.LS` and from the
+`.TP`. Like MakeTP, PrintTP goes through the virtual controller of a ROBOGUIDE robot: in a cell open in
+ROBOGUIDE, it deletes the program of the same name.
+
 ## File structure
 
 | Element | Emitted as | Status |
@@ -97,6 +105,8 @@ byte). CrossArm does not emit these; the parser keeps them so files survive a ro
 | Wait with a time limit | a loop: `LBL[2]` / `R[4]=TIMER[10]` / `IF (F[1]=OFF AND R[4]<.2) THEN` / `JMP LBL[2]` / `ENDIF`. Decimals below 1 in a condition are stored `.2`, not `0.2`. `$WAITTMOUT=200` loads but stops the program when run: **VARS-010** Variable/field write-protected | ROBOGUIDE (wait probe, run) |
 | Pause / abort | `PAUSE`, `ABORT` | Controller export + ROBOGUIDE |
 | Call with arguments | `CALL ARGRECORD(3,(-2.5),1,1) ;`: one space before `;`, decimals without leading zero (`.5`), arguments read as `AR[n]` in values, `IF (AR[3]=1)`, `FOR R[8:i]=1 TO AR[1]`, `WAIT AR[1]`, and passed on (`CALL X(AR[1],1)`). Text: `CALL FAULT('Pince non ouverte',3) ;`, 38 characters per string at most (39 **refused**, ASBN-092, whatever the line's length), `"`, `,` and `(` inside, an apostrophe **refused**; the routine keeps it (`SR[5]=AR[1]`, `R[7]=STRLEN AR[1]`) but cannot show it (`MESSAGE` takes fixed text; `$UALRM_MSG[1]=AR[1]` runs and leaves it unset) | ROBOGUIDE (argument probe, run: registers as RAPID computes; strings: loaded, `SR` and `STRLEN` read back) |
+| Call to a program the robot does not have | `CALL EXTLOG('HELLO',R[5:nBack]) ;` to a program not loaded: the `.LS` **loads**; run, it stops on that line, **INTP-222** Call program failed (MEMO-073 Program does not exist). Written for a routine the integrator provides (`external_routines`) | ROBOGUIDE (external probe, run) |
+| Program the integrator provides | without a motion group (`DEFAULT_GROUP = *,*,*,*,*`), reading its arguments: `R[1]=AR[1]+AR[2]`, `R[3]=STRLEN AR[1]` of a text argument, `R[7]=AR[1]*2`, then the caller `R[5:nBack]=R[7:value]` after the `CALL`: the values passed, exact (3, `(-2.5)`, 1, `'HELLO'`, a register) | ROBOGUIDE (external probe, run) |
 | Negative constant | `R[20]=(-2.5)`, `R[20]=R[21]*(-2)`, `CALL P((-2.5))`, `FOR R[20]=(-2) TO 2`, and in conditions `IF (R[20]<(-2.5))`, `WAIT (R[20]<(-2.5))`, `F[1]=(R[22]<(-40))`: parentheses. `CALL P(-2.5)` and `FOR R[20]=-2 TO 2` are **refused** (ASBN-092); `R[20]=-2.5` loads but is stored with parentheses; the bare form in a condition, `IF (R[20]<-2.5)`, **loads but stops the program when the line runs** (INTP-202 syntax error): CrossArm 1.4 and earlier wrote it so | ROBOGUIDE (negative-constant probe: load; joints probe: run) |
 | Point worked out at run time | `PR[98]=P[1]`, offsets added component by component, `PR[98,4]=180` / `PR[98,5]=0` / `PR[98,6]=(-90)` for a turn, `PR[97]=LPOS` after `UFRAME_NUM` / `UTOOL_NUM` (for `CRobT()` without `\Tool` and `\WObj`, without them: LPOS reads in the frames selected), `L PR[98] 200mm/sec FINE`. `PR[60]=P[1]` copies the values whatever frames are selected and the P is recorded in (P in UF 2 / UT 3, UF 1 / UT 1 selected: no alarm, the values copied) | ROBOGUIDE (pallet probe, run: the faceplate where the moves written out put it) |
 | Jointtarget in a position register | `PR[99]=JPOS` (a joint position register, the joints exactly), `R[3]=PR[99,2]`, `R[4:Calc1]=PR[99,3]+PR[99,2]` then `R[4:Calc1]=R[4:Calc1]*(-1)`, `R[5]=PR[99,4]*(-1)`, `R[7]=180-PR[99,6]` (rax_3 = −(J3+J2), rax_4/5 = −J4/−J5, rax_6 = 180−J6, or −J6 with `tool_pin` `+x`: the ABB axes), `IF (PR[99,2]>(-30)) THEN` and `,JMP`, `PR[98]=PR[99]`, `J PR[98] 22% FINE` with another `UTOOL` selected than when it was read: no INTP-253, back to the joints read | ROBOGUIDE and RobotStudio (joints probe, run: the ABB axes within 0.01°) |

@@ -41,13 +41,15 @@ overwritten:
 - the report, `crossarm_report.html` (and `.md`): see [reading the report](#reading-the-report);
 - `crossarm_mapping.json`, the numbering used, to edit and give back;
 - `crossarm_log.txt`;
+- `crossarm_points.json`, every point written and the RAPID it came from, so that a later conversion keeps
+  the touch-ups made on the robot ([converting again](#converting-again-keeping-the-touch-ups));
 - when asked for, a `TP` folder of binary `.TP` programs ([binary .TP programs](#binary-tp-programs)).
 
 Everything runs locally: no file leaves the computer.
 
 ## The window
 
-`CrossArm.exe` walks through four steps, and each one says what it found before anything is
+`CrossArm.exe` walks through five steps, and each one says what it found before anything is
 converted:
 
 1. **ABB program to convert**: a backup folder, a `.zip` or RAPID files. CrossArm reports the robot
@@ -59,10 +61,19 @@ converted:
 4. **Binary .TP programs** (optional), for a robot without the ASCII Upload option: the ROBOGUIDE
    robot folder (`...\Robot_1`) of a robot like yours, or a `robot.ini` made by FANUC Setrobot,
    checked as soon as it is chosen ([binary .TP programs](#binary-tp-programs)).
+5. **Positions touched up on the robot** (optional), when converting again a program already
+   commissioned: **Robot programs...** (a folder of the robot's programs, or its backup), **Files or
+   .zip...** (`.LS`, `.TP` or a `.zip`) and **Earlier output...** (the CrossArm output folder those programs
+   were converted into, for its `crossarm_points.json`; a mapping file chosen in step 3 is looked beside
+   too). The step says at once what it found: the programs read, the `.TP` to decode (with the robot of
+   step 4), the points of the earlier conversion. **Clear** empties it
+   ([converting again](#converting-again-keeping-the-touch-ups)).
 
-Then **Convert**. The result says how many programs are ready as is and what to look at first —
-anything that would stop the programs loading or running comes before where the manual work is —
-with the report one click away. **How it works** in the header explains the outputs and the limits
+On a small screen the steps scroll, and **Convert** stays at the bottom. Then **Convert**. The result
+gives the decision of the [analysis](#the-analysis-first) (ready, workable or not ready) under its tiles,
+how many programs are ready as is and what to look at first — anything that would stop the programs
+loading or running comes before where the manual work is — with the touch-ups kept and to redo when step 5
+was used, and the report one click away. **How it works** in the header explains the outputs and the limits
 in plain words. Dropping the backups on the `CrossArm.exe` icon converts them straight away.
 
 The executable is not code-signed. On first launch, SmartScreen may ask for confirmation
@@ -80,6 +91,7 @@ crossarm convert tests/fixtures/rapid/pick_and_place.mod              # -> cross
 crossarm convert path/to/backup.zip --fanuc path/to/fanuc_backup/      # number around the robot in place
 crossarm convert path/to/backup.zip --map mapping.json                 # pin your own numbers
 crossarm convert path/to/backup.zip --tp-robot path/to/Robot_1         # binary .TP too, made by FANUC MakeTP
+crossarm convert new_backup.zip --keep-taught robot/ --keep-taught crossarm_old/   # keep the robot's touch-ups
 crossarm-gui                                                           # the desktop window
 crossarm parse   tests/fixtures/rapid/pick_and_place.mod              # RAPID AST as a readable listing
 crossarm stats   backup/RAPID                                          # parser coverage report
@@ -100,6 +112,43 @@ program of the same name in that cell is then removed. The report lists the `.TP
 MakeTP refused, with its reason; without MakeTP it says so, and the `.LS` are written as usual. Measured
 on ROBOGUIDE: the `.TP` load and run, and decode back to the lines of their `.LS`
 ([validation](validation.md#33-binary-tp-programs-made-by-maketp-run)).
+
+### Converting again: keeping the touch-ups
+
+CrossArm's points are theoretical: they are touched up on the robot at commissioning. When the ABB program
+changes later and the backup is converted again, the new programs would carry theoretical points over every
+one of those touch-ups. `--keep-taught` (step 5 of the window) keeps them.
+
+Every conversion writes `crossarm_points.json` next to its programs: each point written, named by the RAPID
+it came from (routine, expression, and its rank when the routine writes it more than once), with its `P[n]`,
+its frames and its theoretical value, and the values of the frames. A `.LS` alone does not say which `P[n]`
+is which RAPID point, and P numbers move when a routine gains a point. A conversion made before 1.6 wrote no
+such file: convert that old backup once with 1.6, with its mapping file, to get one.
+
+`--keep-taught PATH` is given once per path:
+- the robot's programs as they are now: a folder (a backup of the robot), a `.zip`, `.LS` files, or `.TP`
+  files, which FANUC PrintTP, installed with ROBOGUIDE, decodes with the robot of `--tp-robot` (or the
+  `robot.ini` of the current folder). Like MakeTP, PrintTP deletes a program of the same name in a cell open in
+  ROBOGUIDE: name a robot whose cell is closed;
+- the earlier CrossArm output folder, for its `crossarm_points.json`. Without it, the file is looked for next
+  to the `--map` file; if there is none, CrossArm says what to add.
+
+Each point of the new conversion gets a status, in the report and in the checklist:
+- **kept**: touched up on the robot, and neither its ABB position nor its frames changed: its taught value
+  (configuration and turns included) is written;
+- **touch up again**: touched up, but its ABB position or one of its frames changed: the touch-up no longer
+  fits, the new theoretical value is written, with why and how far the touch-up was from it;
+- **theoretical**: the robot holds it as CrossArm wrote it (not touched up): written theoretical again;
+- **new**: not in the earlier conversion; **gone**: in the earlier conversion, no longer written;
+- **not read**: its program, or that `P[n]`, was not found or not readable among the robot's programs.
+
+Two values are the same point within 0.01 mm and 0.01° (the `.LS` holds three decimals), with the same
+configuration and turns. Not read: the points of arrays kept in position registers (the robot's registers
+are not read, and `SETUP_FRAMES.LS` sets them theoretical again; the report counts them), and frames touched
+up on the robot. Positions in the robot's programs that CrossArm did not write are listed, as the new
+programs do not have them. Measured on ROBOGUIDE: a point touched up, the backup changed and converted
+again, the robot goes to the touch-up kept and to the new point
+([validation](validation.md#36-converting-again-the-touch-ups-kept-run)).
 
 ## What is converted
 
@@ -219,15 +268,21 @@ again on the FANUC with its frame setup (3- or 4-point user frame, 6-point tool 
 
 `crossarm_report.html` is one page, with nothing to install or download: it works offline, in light
 or dark, and prints. Its menu leads to:
+- **Analysis**, first: the decision and what to do first ([the analysis first](#the-analysis-first));
+- **Taught positions**, when converting again with `--keep-taught`: each point kept, to touch up again,
+  new or gone, with how far its touch-up is from the theoretical point and why, filtered by status, the
+  programs folded, each point linked to its RAPID line
+  ([converting again](#converting-again-keeping-the-touch-ups));
 - **Summary**: programs ready as is, the TODO by cause (a cause clicked filters the list below), and
   the share of the RAPID converted;
 - **Checklist**: the commissioning, in the order the cell is brought up: load the programs (`.LS`,
   or the `TP` folder), frames and tools with their values, payloads, I/O to map, registers, flags and
   timers with their initial values, TODO lines to finish by hand, points to touch up, motion to check
-  (each zone's CNT, the speeds), other assumptions. Each item links to the lines that use it. Ticks are
-  kept in the browser, for that report (an item whose values change in a new conversion comes back
-  unticked); "hide the items done", "Untick all", and "Print the checklist" prints it alone, boxes
-  ticked or empty;
+  (each zone's CNT, the speeds), other assumptions, and the programs to provide
+  ([programs you provide](#programs-you-provide)). It is folded until opened, with its number of
+  items. Each item links to the lines that use it. Ticks are kept in the browser, for that report
+  (an item whose values change in a new conversion comes back unticked); "hide the items done",
+  "Untick all", and "Print the checklist" prints it alone, boxes ticked or empty;
 - **Items to review**: every TODO and warning, filtered by kind, cause and program, or searched, each
   leading to its line;
 - **RAPID and TP**: each program, its RAPID routine and its TP side by side, line by line, the TP line
@@ -236,10 +291,31 @@ or dark, and prints. Its menu leads to:
 
 Without JavaScript, the filters and ticks are gone but everything is there.
 
-A large backup produces hundreds of TODO entries that come down to a handful of causes, so the
-report opens with a summary rather than the line-by-line list: how many programs converted with no
-TODO at all, then the causes ranked by how much code each one blocks. Two or three causes often
-account for most of the work left.
+### The analysis first
+
+A large backup produces hundreds of TODO entries that come down to a handful of causes, so the report
+(the `.md` too) opens with an analysis, to read in a minute, before the detail:
+- **the decision**: ready, workable or not ready, in one sentence, with the rule applied and the figures
+  it was applied to printed under it. The rule is fixed, not a judgement: **ready** when every RAPID
+  instruction is converted, nothing is left TODO and nothing is over the controller's capacity;
+  **workable** when at least 85 % of the RAPID instructions are converted and at most 3 TODO causes are
+  blocking; **not ready** otherwise. A cause is blocking when the robot's path or the cell's logic depends
+  on something CrossArm cannot know from the backup: a frame or position measured or built while the robot
+  runs, an interrupt, a search, a stationary tool, a motion TP has no form for, a function provided as a
+  program, a CrossArm internal error. It needs a solution designed on the FANUC side. Every other cause is
+  work to plan, with a known fix the report gives (provide a module, map a signal, write a line by hand,
+  redo an error handler or a dialog the FANUC way). "How this is decided" lists the blocking causes found;
+- **what to do first**: 3 to 7 actions drawn from what is left, each with its detail and a link: the
+  resources over the controller's capacity, routines or data missing from the backup (with the
+  `external_routines` candidates), programs to provide, the blocking causes with their programs, error
+  handlers to redo the FANUC way (not a CrossArm bug), what TP has no instruction for, then the points to
+  touch up again and to touch up;
+- **the main TODO causes**, five at most, each with its count, its share of the TODO and an example;
+- **the share converted by area** (motion, I/O, program flow, data, calls, messages, error handling);
+- **the controller resources** only when one is over its limit or close to it (80 % used).
+
+Links lead to the checklist, the items to review and the programs. The summary that follows ranks every
+cause by how much code it blocks: two or three causes often account for most of the work left.
 
 A TODO count says how many places need work, not how much of the backup is done: one TODO can stand
 for one line or for a whole `IF` block. So the report also counts RAPID instructions, by area
@@ -315,7 +391,8 @@ A mapping file can also be written from scratch, with only the keys you care abo
   "limits": {"UFRAME": 9, "UTOOL": 10, "R": 200, "PR": 100, "F": 1024},
   "reserved": {"DO": [1, 2, 3], "UTOOL": [1]},
   "move_routines": {"MoveL_Side": true},
-  "frame_registers": {"10,-5,215,0,0,25": 95}
+  "frame_registers": {"10,-5,215,0,0,25": 95},
+  "external_routines": {"WriteLog": {"program": "WRITE_LOG"}}
 }
 ```
 
@@ -366,6 +443,47 @@ A mapping file can also be written from scratch, with only the keys you care abo
   [frame the programs compute](#frames-and-points-the-programs-compute), by its value X, Y, Z, W, P, R
   as the report writes it. The generated file lists them; change a number to a register the robot
   does not use.
+- `external_routines` names the TP or KAREL programs you provide in place of routines CrossArm cannot
+  write: see below.
+
+### Programs you provide
+
+Some RAPID routines CrossArm cannot write: one no module of the backup declares (a system module, an
+option, another task holds it), or one that reads or writes files, uses sockets or packs byte buffers,
+itself or through the routines it calls. Such a routine can be a program written on the FANUC side, in TP
+or KAREL, named in the mapping file:
+
+```json
+{
+  "external_routines": {
+    "WriteLog": {"program": "WRITE_LOG"},
+    "GetPart": {"program": "GET_PART", "arguments": ["num", "string", "INOUT num"]}
+  }
+}
+```
+
+Each call is then written `CALL WRITE_LOG(args)`, its arguments passed as CrossArm passes them to the
+routines it converts (numbers, registers, texts up to 38 characters, 1 or 0 for a switch, a frame by its
+number), and the routine is not written. The report has a **Programs to provide** section and the
+checklist a group of the same name: for each program, its arguments in order (`AR[1]`, `AR[2]`...) with
+their RAPID types, the calls, and the num RAPID reads back, which the program writes in the register named
+before it ends (the caller reads it back after the `CALL`, as from the routines CrossArm converts).
+
+- `arguments` is for a routine the backup does not declare, which has no parameter list: its arguments are
+  otherwise typed from what the calls pass. Types: `num`, `bool`, `string`, and `INOUT num` for a num
+  RAPID reads back; `null` where not known. The parameters of a routine the backup declares are read from
+  it: num, bool, string, switch, tool and work object.
+- Every conversion writes the candidates in its mapping file, each with `"program": null` and a `_why`:
+  nothing changes until a program name replaces `null`. Keys starting with `_` are ignored.
+- A program name follows the rules of `programs` (a letter, then letters, digits and `_`, at most
+  `program_name_max_length`), and cannot be a name `programs` gives a program CrossArm writes: the
+  conversion stops with a clear error otherwise.
+- What TP cannot pass stays TODO, with why: a point, a speed or a zone, a record, an array, data passed by
+  reference other than a num. A function (`FUNC`) used in an expression stays TODO too: TP gives no value
+  back to an expression.
+
+A `.LS` calling a program the robot does not have loads; run, it stops on that `CALL` (INTP-222). Measured
+on ROBOGUIDE with three provided programs ([validation](validation.md#35-programs-the-integrator-provides-run)).
 
 ### The FANUC robot in place
 
@@ -462,6 +580,8 @@ flowchart LR
     TR --> REP["crossarm_report.md<br/>frames, payloads, registers, I/O, TODO"]
     TR --> MAP["crossarm_mapping.json<br/>edit, then --map"]
     MAP -. "next run" .-> TR
+    TR --> PTS["crossarm_points.json<br/>points written"]
+    PTS -. "--keep-taught, with the<br/>robot's programs" .-> TR
     LS --> RG["ROBOGUIDE / controller"]
 ```
 
