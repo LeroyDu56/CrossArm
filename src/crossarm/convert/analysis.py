@@ -375,18 +375,31 @@ def priority_actions(result: ConversionResult) -> list[Action]:
     taught = result.taught
     again = taught.of(AGAIN) if taught is not None else []
     if again:
+        per_program = Counter(p.program for p in again)
+        programs = [f"`{name}` ({n})" for name, n in per_program.most_common()]
+        far = max((p.deviation_mm() or 0.0 for p in again), default=0.0)
         last.append(Action(
             f"Touch up again the {_plural(len(again), 'point')} that changed",
-            f"their ABB position or frame changed since the conversion the robot was taught from{_in(p.program for p in again)}.",
+            f"their ABB position or frame changed since the conversion the robot was taught from, in"
+            f" {_names(programs, 4)}" + (f"; the earlier touch-ups are up to {far:.1f} mm from the new points" if far
+                                         else "") + ".",
             "#taught", "Taught positions"))  # fmt: skip
     points = sum(len(info.points) for info in result.programs)
     if points:
         kept = len(taught.of(KEPT)) if taught is not None else 0
-        last.append(Action(
-            f"Touch up the {_plural(points, 'point')} on the robot",
-            "once the frames are set; they are the ABB's, as theoretical points"
-            + (f"; {kept} keep the position touched up on the robot" if kept else "") + ".",
-            "#ck-points", "Checklist: Points to touch up"))  # fmt: skip
+        left = points - kept - len(again)
+        if left:
+            last.append(Action(
+                f"Touch up the {_plural(left, 'point')} on the robot" if not taught else
+                f"Touch up the {_plural(left, 'theoretical point')} on the robot",
+                "once the frames are set; they are the ABB's, as theoretical points"
+                + (f"; {kept} keep the position touched up on the robot: check them only" if kept else "") + ".",
+                "#ck-points", "Checklist: Points to touch up"))  # fmt: skip
+        elif kept:
+            last.append(Action(
+                f"Check the {_plural(kept, 'point')} kept as touched up on the robot",
+                "unchanged in the backup: the programs hold the taught values.",
+                "#ck-points", "Checklist: Points to touch up"))  # fmt: skip
     actions = actions[: MAX_ACTIONS - len(last)] + last
     fillers = []
     if result.setup is not None and result.setup.program is not None:

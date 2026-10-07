@@ -103,8 +103,11 @@ def test_a_point_touched_up_and_unchanged_keeps_its_taught_value_a_changed_one_i
     # what the next conversion compares with stays theoretical
     assert records(result).points[1].value.x == 100.0
     text = report_section(taught, "1 read")
-    assert "- 1 kept as taught on the robot" in text and "### To touch up again" in text
-    assert f"- `{PROGRAM}` P[3] `pMove` (was P[2]): changed in the backup: moved 20.0 mm" in text
+    assert "- 1 kept as touched up on the robot: the program holds the taught value, check only" in text
+    assert "### To touch up again" in text
+    assert f"| `{PROGRAM}` | P[3] (was P[2]) | `pMove` | 20.6 mm, 0.0 deg | changed in the backup: moved 20.0 mm |" in text
+    assert f"| `{PROGRAM}` | P[2] (was P[1]) | `pKeep` | 5.0 mm, 2.0 deg |" in text  # kept: taught vs theoretical
+    assert keep.deviation_deg() == pytest.approx(2.0)
 
 
 def test_a_frame_changed_in_the_backup_makes_its_taught_points_to_touch_up_again(robot_folder):

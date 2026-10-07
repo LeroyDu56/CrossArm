@@ -17,6 +17,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   instructions converted, number of blocking causes), the 3 to 7 things to do first, the main TODO causes with an
   example each, the share converted by area and only the controller resources near their limit. The checklist is
   folded until opened; the window shows the decision too.
+- The touch-ups kept by `--keep-taught` are shown point by point: a "Taught positions" section in the HTML report
+  (status, distance of the taught point from the theoretical one, why, link to the RAPID line; filters, programs
+  folded), tables in the .md report, the checklist telling points kept (check only) from points to touch up again,
+  and a step 5 in the window that says at once what it found. The window's steps scroll on a small screen.
 
 ## 1.5.0 — 2026-10-07
 

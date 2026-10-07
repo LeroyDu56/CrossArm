@@ -10,6 +10,8 @@ filters, the search and the jumps from a TODO to its place.
     Analysis         the first screen: the decision and the rule it follows, what to do first, where the TODO
                      come from, the share converted by area, the controller resources near their limit
                      (crossarm.convert.analysis); the rest of the page is the detail behind it
+    Taught positions with --keep-taught: what became of each point touched up on the robot, program by program
+                     (crossarm.convert.taught_report)
     Summary          the figures, then the summary of the Markdown report
     Checklist        commissioning on the FANUC cell, in order, ticked off in the browser (crossarm.convert.checklist);
                      folded until opened
@@ -35,6 +37,7 @@ from crossarm.convert.html import CSS as MARKDOWN_CSS
 from crossarm.convert.html import inline, markdown_body
 from crossarm.convert.report import report_parts
 from crossarm.convert.source_map import Row, line_anchor, side_by_side, tp_text
+from crossarm.convert.taught_report import TAUGHT_CSS, TAUGHT_JS, taught_section
 from crossarm.convert.translate import ConversionResult, Note, ProgramInfo
 from crossarm.fanuc.maketp import TpExport
 from crossarm.licence import LicenceStatus
@@ -311,6 +314,7 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
                     ' (<a href="#capacity">the figures</a>).</p>')  # fmt: skip
     review = sum(1 for _ in result.notes)
     links = [
+        ("#taught", "Taught positions"),
         ("#ck-fold", f"The commissioning checklist ({checklist_items} items)"),
         ("#review", f"Items to review ({review})"),
         ("#code", "RAPID ↔ TP, program by program"),
@@ -360,7 +364,7 @@ def _summary_section(result: ConversionResult, summary: list[str]) -> Section:
 def _details_section(parts: dict[str, list[str]], extra: str) -> Section:
     keys = ("programs", "frames", "registers", "motion", "points")
     markdown = "\n".join(line for key in keys for line in parts.get(key, ())) + "\n" + extra
-    ids = {"Programs to provide": "provided", "Taught positions (--keep-taught)": "taught"}
+    ids = {"Programs to provide": "provided"}
     return "details", "Details", markdown_body(markdown, ids)
 
 
@@ -569,10 +573,12 @@ _JS = r"""
 
 def build_html_report(result: ConversionResult, config: ConversionConfig, sources: list[str],
                       licence: LicenceStatus | None = None, *, title: str, extra: str = "",
-                      lead: list[str] | None = None, tp: TpExport | None = None, tp_where: str = "") -> str:  # fmt: skip
+                      lead: list[str] | None = None, tp: TpExport | None = None, tp_where: str = "",
+                      taught_where: str = "") -> str:  # fmt: skip
     """The page. `extra`: Markdown the pipeline adds to the report (the .TP export, syntax errors);
     `lead`: the lines the pipeline writes first in each program (the licence mark), numbered before the rest;
-    `tp`: the .TP export when one was asked for, in `tp_where` (the TP folder, as the report names it)."""
+    `tp`: the .TP export when one was asked for, in `tp_where` (the TP folder, as the report names it);
+    `taught_where`: the robot's programs read for --keep-taught (result.taught), as the report names them."""
     parts = dict(report_parts(result, config, sources, licence))
     anchors: set[tuple[str, int]] = set()
     code = _code_section(result, lead or [], anchors)  # first: the review links to the lines it shows
@@ -585,6 +591,9 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
         code,
         _details_section(parts, extra),
     ]
+    taught = result.taught
+    if taught is not None and (taught.points or taught.unread or taught.foreign):  # right after the analysis
+        sections.insert(0, taught_section(result.taught, result, taught_where, anchors))
     # Last, but shown first: its links lead to what the other sections hold.
     targets = {sid for sid, _, _ in sections} | set(re.findall(r'\bid="([^"]+)"', "".join(b for _, _, b in sections)))
     items = checklist[2].count("<li data-id=")
@@ -594,8 +603,8 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>{_e(title)}</title>\n<style>{MARKDOWN_CSS}{_CSS}{CHECKLIST_CSS}</style>\n</head>\n<body><main>\n"
+        f"<title>{_e(title)}</title>\n<style>{MARKDOWN_CSS}{_CSS}{CHECKLIST_CSS}{TAUGHT_CSS}</style>\n</head>\n<body><main>\n"
         f'<header class="top">\n{_header(parts["head"], sources)}\n</header>\n'
         f'<nav class="menu" aria-label="Sections">{menu}</nav>\n{page}\n'
-        f"</main>\n<script>{_JS}{CHECKLIST_JS}</script>\n</body>\n</html>\n"
+        f"</main>\n<script>{_JS}{CHECKLIST_JS}{TAUGHT_JS}</script>\n</body>\n</html>\n"
     )

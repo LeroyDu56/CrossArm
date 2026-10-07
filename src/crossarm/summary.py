@@ -13,10 +13,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from crossarm.convert.analysis import Verdict, blocking_causes, decide, todo_causes
+from crossarm.convert.taught import AGAIN, KEPT, POINTS_FILE
 from crossarm.convert.translate import Blocker
 from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
 from crossarm.fanuc.usage import ControllerUsage
-from crossarm.pipeline import Inspection, RunOutput
+from crossarm.pipeline import Inspection, KeepCheck, RunOutput
 
 RESOURCE_NAMES = {
     "UFRAME": "User frames (UFRAME)", "UTOOL": "Tool frames (UTOOL)", "R": "Registers (R)",
@@ -58,6 +59,58 @@ def describe_controller(usage: ControllerUsage) -> str:
     return text
 
 
+def describe_keep(check: KeepCheck, tp_robot: bool = False) -> tuple[str, bool]:
+    """What the touched-up positions step found, and whether the conversion can keep them:
+    '12 robot programs read, 2 .TP to decode by FANUC PrintTP. Earlier conversion: crossarm_points.json (340 points).'"""
+    found = []
+    if check.programs:
+        found.append(f"{plural(check.programs, 'robot program')} read")
+    if check.tp_files:
+        found.append(f"{plural(check.tp_files, '.TP', '.TP')} to decode by FANUC PrintTP when converting"
+                     + (" (with the robot of step 4)" if tp_robot else ": choose a ROBOGUIDE robot of the same software"
+                        " in step 4 (it also writes the new programs as .TP)"))  # fmt: skip
+    if check.unread:
+        found.append(f"{plural(len(check.unread), 'program')} not readable ({', '.join(sorted(check.unread)[:3])})")
+    text = (", ".join(found) if found else "No robot program found (.LS or .TP)") + "."
+    if check.earlier:
+        points = sum(len(e.points) for e in check.earlier)
+        where = " next to the mapping file of step 3" if check.beside_mapping else ""
+        text += f" Earlier conversion: {POINTS_FILE} found{where} ({plural(points, 'point')})."
+    else:
+        text += (f" No {POINTS_FILE} of an earlier conversion: add the CrossArm output folder the robot's programs"
+                 " were converted into, or choose its crossarm_mapping.json in step 3.")  # fmt: skip
+    usable = bool(check.earlier) and bool(check.programs or (check.tp_files and tp_robot))
+    return text, usable
+
+
+@dataclass(frozen=True)
+class TaughtLine:
+    """What became of the touch-ups (--keep-taught), for the result panel."""
+
+    headline: str  # '12 points kept, 3 to touch up again'
+    detail: str  # what else to know: programs not read, positions the new programs lose; '' when nothing
+    level: str  # WARN: something to do about them; GOOD: every touch-up kept
+
+
+def describe_taught(run: RunOutput) -> TaughtLine | None:
+    """The points kept as touched up and to touch up again, every task together; None without --keep-taught."""
+    every = [t.result.taught for t in run.tasks if t.result and t.result.taught is not None]
+    if not every:
+        return None
+    kept = sum(len(t.of(KEPT)) for t in every)
+    again = sum(len(t.of(AGAIN)) for t in every)
+    unread = sum(len(t.unread) for t in every)
+    foreign = sum(len(t.foreign) for t in every)
+    detail = []
+    if unread:
+        detail.append(f"{plural(unread, 'program')} not read on the robot")
+    if foreign:
+        detail.append(f"{plural(foreign, 'position')} on the robot not in the new programs")
+    return TaughtLine(f"{plural(kept, 'point')} kept, {again} to touch up again",
+                      "; ".join(detail) + (": see the report." if detail else ""),
+                      WARN if again or unread or foreign else GOOD)  # fmt: skip
+
+
 WARN, INFO, GOOD = "warn", "info", "good"
 
 
@@ -74,6 +127,8 @@ class Summary:
     report: Path | None = None
     # The decision, every task counted together, by the rule of the report's analysis (crossarm.convert.analysis).
     decision: Verdict | None = None
+    # With --keep-taught: the points kept as touched up and to touch up again.
+    taught: TaughtLine | None = None
 
 
 def summarize(run: RunOutput) -> Summary:
@@ -90,6 +145,7 @@ def summarize(run: RunOutput) -> Summary:
         over=[c.resource for t in run.tasks if t.result for c in t.result.capacity if not c.fits],
         causes=todo_causes(notes),
     )  # fmt: skip
+    summary.taught = describe_taught(run)
 
     # 1. What stops the programs from loading at all.
     for task in run.tasks:
@@ -214,5 +270,6 @@ def summarize(run: RunOutput) -> Summary:
 
 
 __all__ = [
-    "GOOD", "INFO", "RESOURCE_NAMES", "WARN", "Summary", "describe_controller", "describe_source", "plural", "summarize",
+    "GOOD", "INFO", "RESOURCE_NAMES", "WARN", "Summary", "describe_controller", "describe_keep", "describe_source",
+    "describe_taught", "plural", "summarize",
 ]  # fmt: skip

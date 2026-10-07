@@ -58,6 +58,7 @@ def app(window, monkeypatch):
             child.destroy()
     window.source = window.target = window.mapping = window.last = window.log_window = window.tp_robot = None
     window.move_choices = {}
+    window.keep, window.keep_check = [], None
     window.busy = window.convert_after_inspection = False
     window.step_source.status.config(text="")
     window._show_what_you_get()
@@ -302,3 +303,53 @@ def test_the_tp_step_says_at_once_when_maketp_or_the_robot_is_missing(app, tmp_p
     assert maketp.check_robot(tmp_path) == ""
     app.forget_tp_robot()
     assert app.tp_robot is None
+
+
+def test_step_5_says_what_it_found_and_the_result_how_many_points_were_kept(app, tmp_path):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from make_taught_probe import PROBE, PROGRAM, module
+
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    shutil.copy(PROBE / "results" / f"{PROGRAM}.robot.LS", robot / f"{PROGRAM}.LS")
+    source = tmp_path / "KeepProbe.mod"
+    source.write_bytes(module(2).encode("ascii"))
+    assert app.step_keep.status.cget("text") == "○  Not set: every point is written as the ABB's, theoretical."
+    app.add_keep([robot])
+    settle(app)
+    assert app.step_keep.status.cget("text").startswith("✖  robot: 1 robot program read. No crossarm_points.json")
+    app.add_keep([PROBE / "v1"])  # added to what step 5 holds
+    settle(app)
+    assert app.keep == [robot, PROBE / "v1"]
+    assert app.step_keep.status.cget("text") == (
+        "✔  robot, v1: 1 robot program read. Earlier conversion: crossarm_points.json found (3 points).")
+    app.choose_source([source])
+    settle(app)
+    app.convert()
+    settle(app)
+    shown = texts(app.right)
+    assert "1 point kept, 1 to touch up again" in shown
+    assert app.last is not None and app.last.tasks[0].result.taught is not None
+    app.forget_keep()
+    assert app.keep == [] and "Not set" in app.step_keep.status.cget("text")
+
+
+def test_the_steps_scroll_and_convert_stays_in_view_on_a_short_window(app):
+    from crossarm import gui
+
+    assert gui.fit_height(720, 200, 1150, 1.0) == 924  # grown to every step
+    assert gui.fit_height(720, 200, 728, 1.0) == 688  # a 1366 x 768 screen: within it, the steps scroll
+    assert gui.fit_height(720, -30, 1150, 1.0) == 720
+    app.deiconify()  # withdrawn for the other tests: nothing is laid out unless shown
+    try:
+        app.geometry("1000x520")
+        app.update()
+        assert app.steps.bar.winfo_ismapped()  # the five steps do not fit: they scroll
+        button = app.convert_button
+        assert button.winfo_ismapped()
+        assert button.winfo_rooty() + button.winfo_height() <= app.winfo_rooty() + app.winfo_height()
+    finally:
+        app.withdraw()
+

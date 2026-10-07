@@ -50,7 +50,7 @@ from crossarm.convert.taught import report_section as taught_section
 from crossarm.convert.translate import ControllerScope, remark_lines
 from crossarm.fanuc.ls_writer import write_ls
 from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
-from crossarm.fanuc.maketp import TpExport, TpRequest, make_tp, report_section
+from crossarm.fanuc.maketp import TpDecoded, TpExport, TpRequest, make_tp, report_section
 from crossarm.fanuc.tp import Instruction, Program
 from crossarm.fanuc.usage import RESOURCES, ControllerUsage, is_fanuc_input, read_controller
 from crossarm.licence import LicenceStatus
@@ -81,6 +81,31 @@ class KeepTaught:
 
     paths: list[Path]  # the robot's programs (.LS, .TP, folders, .zip), and the earlier conversion's output
     mapping: Path | None = None  # the --map file: an earlier conversion's crossarm_points.json next to it is found
+
+
+@dataclass
+class KeepCheck:
+    """What --keep-taught was given, looked at before converting: the window says it as soon as it is chosen."""
+
+    programs: int  # the robot's programs read (.LS)
+    tp_files: int  # .TP, decoded by FANUC PrintTP when converting
+    unread: dict[str, str]  # program -> why not read (the .TP left out)
+    earlier: list[PointsFile]  # crossarm_points.json of an earlier conversion
+    beside_mapping: bool = False  # found next to the mapping file, not among the paths
+
+
+_LATER = "decoded when converting"
+
+
+def check_keep(paths: list[Path], mapping: Path | None = None) -> KeepCheck:
+    """The robot's programs and the earlier conversion's points found in what --keep-taught is given, without
+    running FANUC PrintTP (slow: it goes through a virtual controller): the .TP are only counted."""
+    robot = read_robot(paths, decode=lambda files, request: TpDecoded(problem=_LATER))
+    unread = {name: why for name, why in robot.unread.items() if _LATER not in why}
+    earlier, beside = list(robot.earlier), False
+    if not earlier and mapping is not None and (mapping.parent / POINTS_FILE).is_file():
+        earlier, beside = [read_points(mapping.parent / POINTS_FILE)], True
+    return KeepCheck(len(robot.programs), robot.tp_files, unread, earlier, beside)
 
 
 @dataclass
@@ -243,16 +268,19 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
     extra = ""  # what this run adds to the report
     if out.tp is not None:
         extra += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
-    if result.taught is not None and keeping is not None:
-        extra += taught_section(result.taught, keeping.where)
+    # The .md has the taught positions as Markdown; the page builds its own section from result.taught.
+    markdown = extra + (taught_section(result.taught, keeping.where) if result.taught is not None and keeping else "")
     if out.syntax_errors:
-        extra += "\n## Syntax errors (statements skipped by the parser)\n\n"
-        extra += "\n".join(f"- `{e}`" for e in out.syntax_errors) + "\n"
-    (folder / "crossarm_report.md").write_text(build_report(result, config, names, licence) + extra, encoding="utf-8")
+        errors = "\n## Syntax errors (statements skipped by the parser)\n\n"
+        errors += "\n".join(f"- `{e}`" for e in out.syntax_errors) + "\n"
+        extra, markdown = extra + errors, markdown + errors
+    (folder / "crossarm_report.md").write_text(build_report(result, config, names, licence) + markdown,
+                                               encoding="utf-8")  # fmt: skip
     out.report_html = folder / "crossarm_report.html"
     page = build_html_report(result, config, names, licence, title=f"CrossArm - {source.name} - {task.name}",
                              extra=extra, lead=_mark(licence), tp=out.tp,
-                             tp_where=os.path.relpath(tp[1], folder) if tp else "")  # fmt: skip
+                             tp_where=os.path.relpath(tp[1], folder) if tp else "",
+                             taught_where=keeping.where if keeping is not None else "")  # fmt: skip
     out.report_html.write_text(page, encoding="utf-8")
     # The numbering this run used, ready to edit and feed back with --map.
     (folder / "crossarm_mapping.json").write_text(build_mapping(result, config), encoding="utf-8")

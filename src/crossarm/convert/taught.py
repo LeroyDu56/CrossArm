@@ -119,6 +119,38 @@ class TaughtPoint:
             return _distance(self.taught, self.theoretical)
         return None
 
+    def deviation_deg(self) -> float | None:
+        """How far the taught point is turned from the theoretical one of this conversion, in degrees: the angle
+        between the orientations (Cartesian), or the largest joint difference (both in joints)."""
+        a, b = self.taught, self.theoretical
+        if isinstance(a, CartesianPosition) and isinstance(b, CartesianPosition):
+            return _turn((a.w, a.p, a.r), (b.w, b.p, b.r))
+        if isinstance(a, JointPosition) and isinstance(b, JointPosition) and len(a.joints) == len(b.joints):
+            return max((abs(x - y) for x, y in zip(a.joints, b.joints, strict=True)), default=0.0)
+        return None
+
+    def deviation(self) -> str:
+        """'5.0 mm, 2.0 deg' from the theoretical point (taught and theoretical known), '' otherwise."""
+        mm, deg = self.deviation_mm(), self.deviation_deg()
+        if deg is None:
+            return ""
+        if mm is None:
+            return f"joints up to {deg:.1f} deg"
+        return f"{mm:.1f} mm, {deg:.1f} deg"
+
+    @property
+    def where(self) -> str:
+        """'P[3]' or 'P[3] (was P[2])', 'was P[2]' for a point gone."""
+        if self.number is None:
+            return f"was P[{self.previous}]"
+        was = f" (was P[{self.previous}])" if self.previous is not None and self.previous != self.number else ""
+        return f"P[{self.number}]{was}"
+
+    @property
+    def rapid(self) -> str:
+        """The RAPID point, with its rank when the routine writes it more than once: 'pPick', 'pPick #2'."""
+        return self.source + (f" #{self.rank}" if self.rank > 1 else "")
+
 
 @dataclass
 class RobotPrograms:
@@ -150,6 +182,10 @@ class Taught:
     def summary(self) -> str:
         counts = self.counts()
         return ", ".join(f"{n} {status}" for status, n in counts.items() if n) or "no point"
+
+    def programs(self) -> list[str]:
+        """The programs the points are in, in the order they come (a gone point: the earlier program)."""
+        return list(dict.fromkeys(p.program for p in self.points))
 
 
 # ---------------------------------------------------------------------------
@@ -473,36 +509,63 @@ def apply(result: ConversionResult, taught: Taught) -> None:
 # ---------------------------------------------------------------------------
 
 
+RULE = ("A point touched up on the robot keeps its taught value when its theoretical value and its frames did not "
+        "change; when they did, the new theoretical value is written, to touch up again.")
+# What each status means for the integrator, as the reports say it.
+MEANING = {
+    KEPT: "kept as touched up on the robot: the program holds the taught value, check only",
+    AGAIN: "to touch up again: the ABB point or its frame changed, the new theoretical value is written",
+    NEW: "new: not in the earlier conversion, theoretical, to touch up",
+    THEORETICAL: "theoretical: not touched up on the robot, to touch up",
+    GONE: "gone from the backup: no longer written",
+    NOT_READ: "not compared: their program not read on the robot, theoretical",
+}
+
+
+def foreign_by_program(taught: Taught) -> dict[str, list[int]]:
+    """The positions on the robot CrossArm did not write, by program: lost when the new program is loaded."""
+    out: dict[str, list[int]] = {}
+    for name, number in taught.foreign:
+        out.setdefault(name, []).append(number)
+    return out
+
+
+def _cell(text: str) -> str:
+    return text.replace("|", "\\|")
+
+
 def report_section(taught: Taught, robot_from: str) -> str:
-    """The report's part about the taught positions (Markdown, added to the .md and .html reports)."""
+    """The .md report's part about the taught positions: the counts, then the points that need a look (to touch up
+    again, kept, new, gone) as tables; the points theoretical as before are only counted."""
     counts = taught.counts()
     text = "\n## Taught positions (--keep-taught)\n\n"
-    text += (f"Earlier conversion: `{taught.earlier}`; programs on the robot: {robot_from}. A point touched up on "
-             "the robot keeps its taught value when its theoretical value and its frames did not change; when they "
-             "did, the new theoretical value is written, to touch up again.\n\n")  # fmt: skip
-    text += f"- {counts[KEPT]} kept as taught on the robot\n"
-    text += f"- {counts[AGAIN]} to touch up again (theoretical value written)\n"
-    text += f"- {counts[NEW]} new (theoretical)\n"
-    text += f"- {counts[THEORETICAL]} theoretical: not touched up on the robot\n"
-    text += f"- {counts[GONE]} gone from the backup\n"
-    text += f"- {counts[NOT_READ]} not compared: their program not read on the robot (theoretical)\n"
+    text += f"Earlier conversion: `{taught.earlier}`; programs on the robot: {robot_from}. {RULE}\n\n"
+    text += "".join(f"- {counts[status]} {MEANING[status]}\n" for status in (KEPT, AGAIN, NEW, THEORETICAL, GONE, NOT_READ))
     if taught.arrays:
         text += (f"- {taught.arrays} points of arrays kept in position registers: not compared (SETUP_FRAMES sets "
                  "their theoretical values again)\n")  # fmt: skip
 
-    def where(p: TaughtPoint) -> str:
-        was = f" (was P[{p.previous}])" if p.previous is not None and p.previous != p.number else ""
-        rank = f" #{p.rank}" if p.rank > 1 else ""
-        return f"`{p.program}` P[{p.number if p.number is not None else p.previous}] `{p.source}`{rank}{was}"
+    def table(title: str, points: list[TaughtPoint], deviation: str | None, why: bool) -> str:
+        if not points:
+            return ""
+        head = ["Program", "Point", "RAPID point", *([deviation] if deviation else []), *(["Why"] if why else [])]
+        out = f"\n### {title}\n\n| " + " | ".join(head) + " |\n|" + "---|" * len(head) + "\n"
+        for p in points:
+            cells = [f"`{p.program}`", p.where, f"`{_cell(p.rapid)}`", *([p.deviation() or "—"] if deviation else []),
+                     *([_cell(p.why)] if why else [])]  # fmt: skip
+            out += "| " + " | ".join(cells) + " |\n"
+        return out
 
-    if taught.of(AGAIN):
-        text += "\n### To touch up again\n\n" + "".join(f"- {where(p)}: {p.why}\n" for p in taught.of(AGAIN))
-    if taught.of(GONE):
-        text += "\n### Gone from the backup\n\n" + "".join(f"- {where(p)}\n" for p in taught.of(GONE))
+    text += table("To touch up again", taught.of(AGAIN), "Taught, from the new theoretical", True)
+    text += table("Kept as touched up on the robot (check only)", taught.of(KEPT), "Taught, from the theoretical", False)
+    text += table("New (theoretical, to touch up)", taught.of(NEW), None, False)
+    text += table("Gone from the backup", taught.of(GONE), None, False)
     if taught.unread:
-        text += "\n### Programs not read on the robot\n\n"
+        text += "\n### Programs not read on the robot (their points theoretical)\n\n"
         text += "".join(f"- `{name}`: {why}\n" for name, why in sorted(taught.unread.items()))
     if taught.foreign:
-        text += "\n### Positions on the robot CrossArm did not write (not carried over)\n\n"
-        text += "".join(f"- `{name}` P[{number}]\n" for name, number in taught.foreign)
+        text += ("\n### Positions on the robot CrossArm did not write (not carried over: the new program does not "
+                 "have them)\n\n")  # fmt: skip
+        text += "".join(f"- `{name}`: {', '.join(f'P[{n}]' for n in numbers)}\n"
+                        for name, numbers in foreign_by_program(taught).items())  # fmt: skip
     return text

@@ -9,6 +9,7 @@ Written for someone who has never seen CrossArm and will not read a log:
   2. FANUC robot it will run on   optional: its numbers already in use are left free
   3. Your numbering               optional: a mapping file edited from a previous run
   4. Binary .TP programs           optional: FANUC MakeTP (with ROBOGUIDE) writes them for a USB stick
+  5. Positions touched up          optional: converting again, the robot's programs keep their touch-ups
   -> Convert                      nothing starts before the user asks
 
 The right-hand panel first explains what the conversion produces, then shows the
@@ -42,7 +43,16 @@ from crossarm.fanuc.usage import is_fanuc_input, read_controller
 from crossarm.licence import LICENCE_FILE, LicenceStatus, licence_folder, read_licence
 from crossarm.licence import current as current_licence
 from crossarm.rapid import RAPID_SUFFIXES
-from crossarm.summary import GOOD, INFO, WARN, describe_controller, describe_source, plural, summarize
+from crossarm.summary import (
+    GOOD,
+    INFO,
+    WARN,
+    describe_controller,
+    describe_keep,
+    describe_source,
+    plural,
+    summarize,
+)
 from crossarm.support import write_error_report
 
 RAPID_PATTERNS = " ".join(f"*{s}" for s in sorted(RAPID_SUFFIXES))
@@ -89,6 +99,14 @@ a USB stick: choose the ROBOGUIDE robot folder (...\\Robot_1) of a robot like yo
 same software version. MakeTP loads each program into that robot's virtual controller: \
 with its cell open in ROBOGUIDE it is quicker, but a program of the same name there is removed.
 
+Converting again for a robot already commissioned
+The points are touched up on the robot at commissioning. When the ABB program changes later, \
+step 5 keeps those touch-ups: give the robot's programs as they are now (.LS, or .TP decoded \
+by FANUC PrintTP with the robot of step 4) and the CrossArm output they were converted into \
+(its crossarm_points.json). A point unchanged in the backup keeps its taught value; one whose \
+ABB position or frame changed gets the new theoretical value, to touch up again. The report \
+lists each point.
+
 Moves inside routines
 Many backups move through the integrator's own routines (a "MoveL" that also picks a station, \
 checks a zone...). One that only moves is converted as the move. One that also does something \
@@ -131,9 +149,9 @@ class Step:
 
     def __init__(self, parent: tk.Widget, number: int, title: str, tag: str, explanation: str) -> None:
         self.frame = tk.Frame(parent, bg=CARD_BG, highlightthickness=1, highlightbackground=CARD_EDGE)
-        self.frame.pack(fill="x", pady=(0, 10))
+        self.frame.pack(fill="x", pady=(0, 8))
         inner = tk.Frame(self.frame, bg=CARD_BG)
-        inner.pack(fill="x", padx=14, pady=12)
+        inner.pack(fill="x", padx=14, pady=9)
 
         head = tk.Frame(inner, bg=CARD_BG)
         head.pack(fill="x")
@@ -145,11 +163,11 @@ class Step:
         tk.Label(head, text=tag, bg=CARD_BG, fg=MUTED, font=(FONT, 9)).pack(side="left")
 
         text = tk.Label(inner, text=explanation, bg=CARD_BG, fg=MUTED, font=(FONT, 9), justify="left", anchor="w")
-        text.pack(fill="x", pady=(6, 8))
+        text.pack(fill="x", pady=(4, 6))
         self.buttons = tk.Frame(inner, bg=CARD_BG)
         self.buttons.pack(fill="x")
         self.status = tk.Label(inner, bg=CARD_BG, font=(FONT, 9), justify="left", anchor="w")
-        self.status.pack(fill="x", pady=(8, 0))
+        self.status.pack(fill="x", pady=(6, 0))
         # Wrap text at the card's real width, which follows the window.
         inner.bind("<Configure>", lambda e: [w.config(wraplength=max(e.width - 8, 200)) for w in (text, self.status)])
 
@@ -168,6 +186,62 @@ class Step:
         self.status.config(text=f"{mark}  {text}", fg=colour)
 
 
+def work_area(window: tk.Misc) -> tuple[int, int]:
+    """(top, height) of the screen less the taskbar, in the window's pixels."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            rect = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+                return rect.top, rect.bottom - rect.top
+        except (AttributeError, OSError):
+            pass
+    return 0, window.winfo_screenheight() - int(48 * window.winfo_fpixels("1i") / 96)
+
+
+def fit_height(height: int, missing: int, room: int, scale: float) -> int:
+    """The window's height: grown by what its steps miss, within the room the screen leaves under its title bar."""
+    wanted = height + max(missing, 0) + (4 if missing > 0 else 0)
+    return max(int(400 * scale), min(wanted, room - int(40 * scale)))
+
+
+class Scrolled(tk.Frame):
+    """A column that scrolls when the window is too short for it (a small screen, a scaled display): its scroll bar
+    shows only then, and the mouse wheel scrolls it while over it."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent, bg=BODY_BG)
+        self.canvas = tk.Canvas(self, bg=BODY_BG, highlightthickness=0, borderwidth=0)
+        self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.bar.set)
+        self.inner = tk.Frame(self.canvas, bg=BODY_BG)
+        self._item = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner.bind("<Configure>", lambda _: self._fit())
+        self.canvas.bind("<Configure>", self._resized)
+        self.bind_all("<MouseWheel>", self._wheel, add="+")
+
+    def _resized(self, event: tk.Event) -> None:
+        self.canvas.itemconfigure(self._item, width=event.width)
+        self._fit()
+
+    def _fit(self) -> None:
+        self.canvas.configure(scrollregion=(0, 0, self.inner.winfo_reqwidth(), self.inner.winfo_reqheight()))
+        needed = self.inner.winfo_reqheight() > self.canvas.winfo_height() + 1
+        if needed and not self.bar.winfo_ismapped():
+            self.bar.pack(side="right", fill="y", before=self.canvas)
+        elif not needed and self.bar.winfo_ismapped():
+            self.bar.pack_forget()
+            self.canvas.yview_moveto(0)
+
+    def _wheel(self, event: tk.Event) -> None:
+        widget = str(event.widget)
+        if self.bar.winfo_ismapped() and widget.startswith(str(self)):
+            self.canvas.yview_scroll(-1 * (event.delta // 120 or (1 if event.delta > 0 else -1)), "units")
+
+
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -176,13 +250,17 @@ class App(tk.Tk):
         self.iconphoto(True, *self._icons)
         scale = self.winfo_fpixels("1i") / 96  # 1.25 / 1.5 on scaled Windows displays
         self.geometry(f"{int(900 * scale)}x{int(720 * scale)}")
-        self.minsize(int(820 * scale), int(680 * scale))
+        # Smaller than every step: the steps scroll (Scrolled), the Convert button stays in view.
+        self.minsize(int(820 * scale), int(480 * scale))
         self.configure(bg=BODY_BG)
 
         self.source: list[Path] | None = None  # RAPID inputs, FANUC ones set aside
         self.target: list[Path] | None = None  # the FANUC robot the programs will run on
         self.mapping: Path | None = None
         self.tp_robot: Path | None = None  # .TP files too, made by FANUC MakeTP for this robot
+        # The robot's programs as they are now and the earlier output (--keep-taught), and what was found in them.
+        self.keep: list[Path] = []
+        self.keep_check: pipeline.KeepCheck | None = None
         # Routines making a move and something else: convert their calls as the move? Ticked in the
         # window after a first conversion; overrides the mapping file for this input.
         self.move_choices: dict[str, bool] = {}
@@ -196,6 +274,7 @@ class App(tk.Tk):
         self._styles()
         self._build()
         self._refresh()
+        self._fit_height(scale)
         self.after(100, self._poll)
 
     # -- layout -----------------------------------------------------------
@@ -229,12 +308,14 @@ class App(tk.Tk):
         body.pack(fill="both", expand=True, padx=18, pady=16)
         left = tk.Frame(body, bg=BODY_BG)
         left.pack(side="left", fill="both", expand=True)
+        self.steps = Scrolled(left)
+        column = self.steps.inner
         self.right = tk.Frame(body, bg=CARD_BG, highlightthickness=1, highlightbackground=CARD_EDGE, width=330)
         self.right.pack(side="right", fill="y", padx=(14, 0))
         self.right.pack_propagate(False)
 
         self.step_source = Step(
-            left, 1, "ABB program to convert", "required",
+            column, 1, "ABB program to convert", "required",
             "A controller backup (folder or .zip) or RAPID modules. You can also drop them on the CrossArm.exe icon.",
         )  # fmt: skip
         self.inputs = [
@@ -243,29 +324,39 @@ class App(tk.Tk):
             self.step_source.button("RAPID files...", self.pick_files),
         ]
         self.step_target = Step(
-            left, 2, "FANUC robot it will run on", "optional · recommended",
+            column, 2, "FANUC robot it will run on", "optional · recommended",
             "Its backup tells CrossArm which tool frames, registers and I/O are already used on the robot, "
             "so the converted programs leave them alone.",
         )  # fmt: skip
         self.inputs.append(self.step_target.button("FANUC backup folder...", self.pick_target))
         self.clear_target = self.step_target.link("Clear", self.forget_target)
         self.step_mapping = Step(
-            left, 3, "Your numbering", "optional",
+            column, 3, "Your numbering", "optional",
             "The crossarm_mapping.json written by a previous run, edited with your cell's numbers.",
         )  # fmt: skip
         self.inputs.append(self.step_mapping.button("Mapping file...", self.pick_mapping))
         self.clear_mapping = self.step_mapping.link("Clear", self.forget_mapping)
         self.step_tp = Step(
-            left, 4, "Binary .TP programs", "optional",
+            column, 4, "Binary .TP programs", "optional",
             "For a robot without the ASCII Upload option: FANUC MakeTP (installed with ROBOGUIDE) also writes "
             "the programs as .TP, to load from a USB stick. Choose the ROBOGUIDE robot they are made on.",
         )  # fmt: skip
         self.inputs.append(self.step_tp.button("ROBOGUIDE robot folder...", self.pick_tp_robot))
         self.inputs.append(self.step_tp.button("robot.ini...", self.pick_tp_ini))
         self.clear_tp = self.step_tp.link("Clear", self.forget_tp_robot)
+        self.step_keep = Step(
+            column, 5, "Positions touched up on the robot", "optional · converting again",
+            "The robot's programs as they are now (.LS or .TP, folder or .zip) and the CrossArm output they were "
+            "converted into: the points touched up there are kept where the ABB point did not change.",
+        )  # fmt: skip
+        self.inputs.append(self.step_keep.button("Robot programs...", self.pick_keep_folder))
+        self.inputs.append(self.step_keep.button("Files or .zip...", self.pick_keep_files))
+        self.inputs.append(self.step_keep.button("Earlier output...", self.pick_keep_output))
+        self.clear_keep = self.step_keep.link("Clear", self.forget_keep)
 
         action = tk.Frame(left, bg=BODY_BG)
-        action.pack(fill="x", pady=(4, 0))
+        action.pack(side="bottom", fill="x", pady=(6, 0))  # first: on a short window the steps scroll, not this
+        self.steps.pack(side="top", fill="both", expand=True)
         self.convert_button = tk.Button(
             action, text="Convert", command=self.convert, font=(FONT, 11, "bold"), fg="white", bg=PRIMARY,
             activebackground=PRIMARY_HOVER, activeforeground="white", disabledforeground="white",
@@ -279,6 +370,18 @@ class App(tk.Tk):
         self.state_label.pack(side="left", fill="x", expand=True)
 
         self._show_what_you_get()
+
+    def _fit_height(self, scale: float) -> None:
+        """Every step in view when the screen is tall enough (the window grows to them), and never past the taskbar
+        (on a small screen the window shrinks: its steps scroll, the Convert button stays in view)."""
+        self.update()  # the steps laid out at the window's width: their text wrapped as it will be
+        top, room = work_area(self)
+        missing = self.steps.inner.winfo_reqheight() - self.steps.canvas.winfo_height()
+        height = fit_height(self.winfo_height(), missing, room, scale)
+        width = self.winfo_width()
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = top + max(0, (room - height - int(32 * scale)) // 3)
+        self.geometry(f"{width}x{height}+{x}+{y}")
 
     def _panel(self) -> tk.Frame:
         """Empty the right-hand panel and return its content frame."""
@@ -365,6 +468,12 @@ class App(tk.Tk):
             colour = {READY: OK, WORKABLE: AMBER, NOT_READY: FAIL}.get(summary.decision.level, TEXT)
             self._text(panel, summary.decision.headline, bold=True, colour=colour, pad=(0, 2))
             self._text(panel, summary.decision.brief, size=8, colour=MUTED, pad=(0, 8))
+        if summary.taught is not None:  # --keep-taught: what became of the touch-ups
+            taught = summary.taught
+            colour = AMBER if taught.level == WARN else OK
+            self._text(panel, taught.headline, bold=True, colour=colour, pad=(0, 2 if taught.detail else 8))
+            if taught.detail:
+                self._text(panel, taught.detail, size=8, colour=MUTED, pad=(0, 8))
 
         if summary.attention:
             self._text(panel, "What to look at", bold=True, pad=(0, 4))
@@ -392,7 +501,7 @@ class App(tk.Tk):
         for widget in self.inputs:
             widget.config(state="disabled" if self.busy else "normal")
         for link, value in ((self.clear_target, self.target), (self.clear_mapping, self.mapping),
-                            (self.clear_tp, self.tp_robot)):
+                            (self.clear_tp, self.tp_robot), (self.clear_keep, self.keep)):
             if value and not self.busy:
                 link.pack(side="left", padx=(4, 0))
             else:
@@ -412,6 +521,8 @@ class App(tk.Tk):
             self.step_mapping.show("Not set: numbers are allocated automatically.")
         if self.tp_robot is None:
             self.step_tp.show("Not set: only .LS programs are written.")
+        if not self.keep:
+            self.step_keep.show("Not set: every point is written as the ABB's, theoretical.")
 
     def _set_busy(self, text: str) -> None:
         self.busy = True
@@ -511,10 +622,12 @@ class App(tk.Tk):
         self.mapping = Path(path)
         self.step_mapping.show(text, "ok")
         self._refresh()
+        self._check_keep(self.keep)  # an earlier conversion's points may lie next to it
 
     def forget_mapping(self) -> None:
         self.mapping = None
         self._refresh()
+        self._check_keep(self.keep)
 
     # -- step 4: binary .TP programs ----------------------------------------------
 
@@ -539,9 +652,57 @@ class App(tk.Tk):
         self.step_tp.show(f"{robot.name}: .TP files written to a TP folder, about 20 s a program "
                           "(at once while its cell is open in ROBOGUIDE).", "ok")  # fmt: skip
         self._refresh()
+        self._show_keep()  # the robot's .TP are decoded with this robot
 
     def forget_tp_robot(self) -> None:
         self.tp_robot = None
+        self._refresh()
+        self._show_keep()
+
+    # -- step 5: positions touched up on the robot (--keep-taught) -------------------
+
+    def pick_keep_folder(self) -> None:
+        folder = filedialog.askdirectory(title="The robot's programs as they are now (.LS or .TP)")
+        if folder:
+            self.add_keep([Path(folder)])
+
+    def pick_keep_files(self) -> None:
+        files = filedialog.askopenfilenames(title="The robot's programs (.LS, .TP) or a .zip of them", filetypes=[
+            ("Robot programs", "*.ls *.LS *.tp *.TP *.zip"), ("All files", "*.*")])  # fmt: skip
+        if files:
+            self.add_keep([Path(f) for f in files])
+
+    def pick_keep_output(self) -> None:
+        folder = filedialog.askdirectory(title="The CrossArm output the robot's programs were converted into")
+        if folder:
+            self.add_keep([Path(folder)])
+
+    def add_keep(self, paths: list[Path]) -> None:
+        """Add to what step 5 was given, and say at once what is in it."""
+        self._check_keep([*self.keep, *(p for p in paths if p not in self.keep)])
+
+    def _check_keep(self, paths: list[Path]) -> None:
+        if not paths or self.busy:
+            return
+        mapping = self.mapping
+        self.step_keep.show("Reading...", "busy")
+        self._set_busy("Reading the robot's programs...")
+        self._run(lambda: ("kept", (paths, pipeline.check_keep(paths, mapping))), "keep")
+
+    def _keep_checked(self, paths: list[Path], check: pipeline.KeepCheck) -> None:
+        self.keep, self.keep_check = paths, check
+        self._set_idle()
+        self._show_keep()
+
+    def _show_keep(self) -> None:
+        if not self.keep or self.keep_check is None:
+            return
+        text, usable = describe_keep(self.keep_check, self.tp_robot is not None)
+        names = ", ".join(p.name for p in self.keep)
+        self.step_keep.show(f"{names}: {text}", "ok" if usable else "fail")
+
+    def forget_keep(self) -> None:
+        self.keep, self.keep_check = [], None
         self._refresh()
 
     # -- conversion (background thread) -------------------------------------------
@@ -553,6 +714,7 @@ class App(tk.Tk):
         self._set_busy("Converting...")
         source, target, mapping = self.source, self.target, self.mapping
         tp = TpRequest(self.tp_robot) if self.tp_robot else None
+        keep = pipeline.KeepTaught(list(self.keep), mapping) if self.keep else None
         choices = dict(self.move_choices)
 
         def log(line: str) -> None:
@@ -562,7 +724,7 @@ class App(tk.Tk):
             config = ConversionConfig.from_mapping_file(mapping) if mapping else ConversionConfig()
             config.move_routines.update(choices)
             return "done", pipeline.run(source, config=config, log=log, fanuc=list(target) if target else None,
-                                        tp=tp)  # fmt: skip
+                                        tp=tp, keep=keep)  # fmt: skip
 
         self._run(work, "convert")
 
@@ -593,6 +755,8 @@ class App(tk.Tk):
                 self._inspected(*payload)  # type: ignore[misc]
             elif kind == "controller":
                 self._controller_read(*payload)  # type: ignore[misc]
+            elif kind == "kept":
+                self._keep_checked(*payload)  # type: ignore[misc]
             elif kind == "done":
                 self._finished(payload)  # type: ignore[arg-type]
             elif kind == "error":
@@ -606,7 +770,7 @@ class App(tk.Tk):
 
     def _failed(self, stage: str, message: str) -> None:
         self.convert_after_inspection = False
-        step = {"source": self.step_source, "target": self.step_target}.get(stage)
+        step = {"source": self.step_source, "target": self.step_target, "keep": self.step_keep}.get(stage)
         if stage == "source":
             self.source = None
         if step:

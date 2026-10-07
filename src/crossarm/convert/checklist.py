@@ -13,7 +13,9 @@ check and links to the lines that use it (their rows in the side-by-side view):
     I/O                   each DI / DO / GI / GO / AO and the RAPID signal it was
     Registers and flags   R, F, SR, TIMER: free on the controller, initial values to set
     TODO lines            the lines left to write by hand, per program
-    Points                the theoretical points to touch up, the positions kept in registers
+    Points                the theoretical points to touch up, the positions kept in registers; converting again
+                          with --keep-taught: the points kept as touched up (check only), those to touch up again
+                          (why, how far), the positions on the robot the new programs do not have
     Motion                zones and speeds as converted, the moves converted on an assumption
     Other assumptions     every other warning, to check on the cell
 
@@ -26,7 +28,7 @@ whose values changed comes back unticked. Without the script the list is all the
 import hashlib
 import html
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from crossarm.convert.blockers import Blocker
@@ -35,6 +37,7 @@ from crossarm.convert.external import argument_texts, note_texts
 from crossarm.convert.html import inline
 from crossarm.convert.report import payload_rows
 from crossarm.convert.source_map import line_anchor, tp_text
+from crossarm.convert.taught import AGAIN, KEPT, NEW, NOT_READ, THEORETICAL, Taught, foreign_by_program
 from crossarm.convert.translate import Allocation, ConversionResult, FrameInfo, Note, ZoneUse
 from crossarm.fanuc.maketp import TpExport
 from crossarm.fanuc.tp import CartesianPosition
@@ -360,24 +363,87 @@ def _todo(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
     return intro, items
 
 
+def _listed(points: list, more_at: int = 40) -> str:
+    """'P[1] pPick, P[2] pPlace' (escaped), the first `more_at` and how many more."""
+    listed = ", ".join(f"P[{p.number}] {_e(p.source)}" for p in points[:more_at])
+    return listed + (f" and {len(points) - more_at} more" if len(points) > more_at else "")
+
+
+def _theoretical_item(name: str, points: list, places: _Places, why: str = "") -> _Item:
+    """The points of a program to touch up: its id the same with or without --keep-taught for the same points."""
+    frames = sorted({(p.uf, p.ut) for p in points})
+    cartesian = sum(1 for p in points if isinstance(p.value, CartesianPosition))
+    joints = len(points) - cartesian
+    return _Item(
+        f"points|{name}|{len(points)}|" + ",".join(p.source for p in points),
+        f"{_e(name)}.LS: {len(points)} point{'s' if len(points) > 1 else ''}" + (" to touch up" if why else ""),
+        values=_listed(points),
+        note="In " + ", ".join(f"UF {uf} / UT {ut}" for uf, ut in frames)
+             + (f"; {joints} in joints" if joints else "") + "." + (f" {why}" if why else ""),
+        links=f'<a href="#p-{_e(name)}">the program</a>' if name in places.programs else "",
+    )  # fmt: skip
+
+
+def _taught_items(info, taught: Taught, places: _Places) -> list[_Item]:
+    """A program's points converting again (--keep-taught): to touch up again, theoretical (new, never touched up,
+    not compared), kept as touched up (check only)."""
+    name = info.program.name
+    status = {p.number: p for p in taught.points if p.program == name and p.number is not None}
+    again = [status[p.number] for p in info.points if p.number in status and status[p.number].status == AGAIN]
+    kept = [status[p.number] for p in info.points if p.number in status and status[p.number].status == KEPT]
+    plain = [p for p in info.points if p.number not in status or status[p.number].status not in (AGAIN, KEPT)]
+    link = f'<a href="#p-{_e(name)}">the program</a>' if name in places.programs else ""
+    items = []
+    if again:
+        lines = []
+        for p in again:
+            far = f"; the earlier touch-up is {p.deviation()} from it" if p.deviation() else ""
+            lines.append(f"{_e(p.where)} {_e(p.rapid)}: {_e(p.why + far)}")
+        items.append(_Item(
+            f"again|{name}|" + ",".join(f"{p.number}:{p.rapid}:{p.why}" for p in again),
+            f"{_e(name)}.LS: {len(again)} point{'s' if len(again) > 1 else ''} to touch up again",
+            values="<br>".join(lines),
+            note="Touched up on the robot, but the ABB point or its frame changed: the program holds the new"
+                 " theoretical value. Touch it up again.",
+            links="; ".join(x for x in (link, '<a href="#taught">taught positions</a>') if x),
+        ))  # fmt: skip
+    if plain:
+        counts = Counter(status[p.number].status for p in plain if p.number in status)
+        named = ((NEW, "new"), (THEORETICAL, "not touched up on the robot yet"),
+                 (NOT_READ, "not compared: program not read on the robot"))  # fmt: skip
+        why = ", ".join(f"{counts[s]} {what}" for s, what in named if counts[s])
+        items.append(_theoretical_item(name, plain, places, f"Theoretical: {why}." if why else "Theoretical."))
+    if kept:
+        shown = [f"{_e(p.where)} {_e(p.rapid)}" + (f" ({_e(p.deviation())})" if p.deviation() else "") for p in kept]
+        items.append(_Item(
+            f"kept|{name}|" + ",".join(f"{p.number}:{p.rapid}" for p in kept),
+            f"{_e(name)}.LS: {len(kept)} point{'s' if len(kept) > 1 else ''} kept as touched up: check only",
+            values=", ".join(shown[:40]) + (f" and {len(kept) - 40} more" if len(kept) > 40 else ""),
+            note="Touched up on the robot and unchanged in the backup: the program holds the taught value (its"
+                 " distance from the theoretical point in brackets). Check the path, no touch-up needed.",
+            links=link,
+        ))  # fmt: skip
+    return items
+
+
 def _points(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
     items = []
+    taught = result.taught
     for info in result.programs:
         if not info.points:
             continue
-        name = info.program.name
-        frames = sorted({(p.uf, p.ut) for p in info.points})
-        listed = ", ".join(f"P[{p.number}] {_e(p.source)}" for p in info.points[:40])
-        more = len(info.points) - 40
-        cartesian = sum(1 for p in info.points if isinstance(p.value, CartesianPosition))
-        joints = len(info.points) - cartesian
+        if taught is not None:
+            items += _taught_items(info, taught, places)
+        else:
+            items.append(_theoretical_item(info.program.name, list(info.points), places))
+    for name, numbers in foreign_by_program(taught).items() if taught is not None else ():
+        more = f" and {len(numbers) - 40} more" if len(numbers) > 40 else ""
         items.append(_Item(
-            f"points|{name}|{len(info.points)}|" + ",".join(p.source for p in info.points),
-            f"{_e(name)}.LS: {len(info.points)} point{'s' if len(info.points) > 1 else ''}",
-            values=listed + (f" and {more} more" if more > 0 else ""),
-            note="In " + ", ".join(f"UF {uf} / UT {ut}" for uf, ut in frames)
-                 + (f"; {joints} in joints" if joints else "") + ".",
-            links=f'<a href="#p-{_e(name)}">the program</a>' if name in places.programs else "",
+            f"foreign|{name}|" + ",".join(map(str, numbers)),
+            f"{_e(name)}: {len(numbers)} position{'s' if len(numbers) > 1 else ''} on the robot CrossArm did not write",
+            values=", ".join(f"P[{n}]" for n in numbers[:40]) + more,
+            note="Added on the robot: the new program does not have them, loading it removes them. Note them first.",
+            links='<a href="#taught">taught positions</a>',
         ))  # fmt: skip
     for a in result.point_registers:
         items.append(_Item(f"pr|{a.number}|{a.rapid_name}", f"PR[{a.number}] {_code(a.rapid_name)}",
@@ -395,6 +461,10 @@ def _points(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]
     items += _note_items(result, places, _POINT_CAUSES)
     intro = ("The points are the ABB's, as theoretical points: touch them up on the robot, in their user frame and"
              " tool. The target: within 10 mm of the ABB path.")
+    if taught is not None:
+        intro += (" Converted again with the programs on the robot: a point touched up there and unchanged in the"
+                  " backup keeps its taught value (check only); one whose ABB point or frame changed is to touch up"
+                  " again.")  # fmt: skip
     return intro, items
 
 
