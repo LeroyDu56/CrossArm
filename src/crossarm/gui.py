@@ -351,9 +351,13 @@ class App(tk.Tk):
         if summary.converted is not None:
             tile_values.append((fmt_percent(summary.converted), "converted",
                                 OK if summary.converted == 100 else TEXT))  # fmt: skip
-        for value, caption, colour in tile_values:
+        # Two per row, of equal width: four in one row overflow the narrow panel ("77.6 %" was cut off).
+        tiles.columnconfigure((0, 1), weight=1, uniform="tile")
+        for i, (value, caption, colour) in enumerate(tile_values):
             tile = tk.Frame(tiles, bg=BODY_BG)
-            tile.pack(side="left", expand=True, fill="x", padx=(0, 6))
+            last_alone = i == len(tile_values) - 1 and i % 2 == 0
+            tile.grid(row=i // 2, column=i % 2, columnspan=2 if last_alone else 1, sticky="ew",
+                      padx=(0, 6), pady=(0, 6))  # fmt: skip
             tk.Label(tile, text=str(value), bg=BODY_BG, fg=colour, font=(FONT, 18, "bold")).pack(pady=(6, 0))
             tk.Label(tile, text=caption, bg=BODY_BG, fg=MUTED, font=(FONT, 8)).pack(pady=(0, 6))
 
