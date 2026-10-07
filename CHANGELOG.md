@@ -3,7 +3,19 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.5.0 — 2026-10-07
+
+For a robot that cannot load `.LS` programs, and for the commissioning that follows. CrossArm also writes the
+programs as binary `.TP`, made by FANUC MakeTP (installed with ROBOGUIDE), for a controller without the ASCII
+Upload option; its HTML report shows each RAPID routine and its TP side by side, with a commissioning checklist
+to tick. A jointtarget read on the robot (`CJointT()`) is kept in a joint position register, measured on both
+controllers before CrossArm writes it. And a fix: a condition with a negative constant (`IF R[1]>-30`, a `WAIT`,
+a flag set to a condition) was written bare by earlier versions, which the controller loads but stops on when
+the line runs (INTP-202); it is now written `(-30)`, measured to run. On the three RobotWare backups of the test
+corpus, the share of RAPID instructions converted is 87 %, 93 % and 87 %; on public open-source programs it is
+about 60 % (what that means: [docs/validation.md](docs/validation.md#public-programs)). A mapping file written
+for 1.0 to 1.4 gives the same numbers. Without one, a jointtarget now kept in a position register can move the
+other position register numbers CrossArm picks by one, compared with 1.4: give the mapping file back to keep them.
 
 ### Writes
 - Binary `.TP` programs too, for a robot without the ASCII Upload option (`crossarm convert --tp`, `--tp-robot`;
@@ -20,13 +32,17 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 ### Converts
 - A jointtarget read on the robot (`j:=CJointT()`) is kept in a joint position register (`PR[k]=JPOS`): its axes
   `j.robax.rax_i` are read with the measured axis conventions (the ABB values), `MoveAbsJ j` is `J PR[k]`.
-  External axes and writing an axis stay TODO. Measured on both controllers (joints probe).
+  External axes and writing an axis stay TODO. Measured on both controllers (joints probe). Without a mapping
+  file given back, that register is numbered with the others, so the other position registers CrossArm picks
+  can move by one compared with 1.4; a mapping file given back keeps its numbers.
 
 ### Fixes
 - A position register numbered for a point is never one of the block of an array of points the mapping file
   pins (a point new to a mapping file given back could be given one).
-- A negative constant in a condition is written in parentheses (`IF (R[1]<(-2.5))`, `WAIT`, a flag set to a
-  condition): ROBOGUIDE loads the bare form but stops on it when it runs (INTP-202 syntax error).
+- A negative constant in a condition is written in parentheses (`IF (R[1]<(-2.5))`, `WAIT (R[1]>(-30))`, a flag
+  set to a condition, `F[1]=(R[1]<(-40))`). Earlier versions wrote it bare (`IF R[1]>-30`): ROBOGUIDE loads that
+  form, but the program stops on the line when it runs (INTP-202 syntax error). The form in parentheses was
+  measured to run (joints probe).
 
 ## 1.4.0 — 2026-10-06
 

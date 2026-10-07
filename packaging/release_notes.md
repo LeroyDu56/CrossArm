@@ -1,30 +1,37 @@
-## CrossArm 1.4.0
+## CrossArm 1.5.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review. 1.4 converts routines given their speed and zone, and tells what is left apart by
-cause. It converts about 60 % of the instructions of public open-source programs, 86 % to 93 % of our own
+everything left to review. 1.5 is for a robot that cannot load `.LS` programs, and for the commissioning that
+follows. It converts about 60 % of the instructions of public open-source programs, 87 % to 93 % of our own
 test corpus, written for testing ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
 
-**Speeds and zones as parameters.** A routine given its speed and zone (`PROC Approach(robtarget p,speeddata
-v,zonedata z)`) makes its moves with what each call gives it: the call passes the speed and the CNT of each
-corner (`CALL APPROACH(400,9,100)`), the routine moves with them from registers (`L P[1] R[1]mm/sec CNT R[3]`),
-and `fine` given for a zone is a FINE move. Measured on both controllers: the moves take the time they take
-written with constants.
+**Binary `.TP` programs, for a robot without ASCII Upload.** A FANUC controller without the ASCII Upload
+option loads only `.TP`. `crossarm convert --tp-robot <ROBOGUIDE robot folder>` (or `--tp` with a Setrobot
+`robot.ini`), or step 4 of the window, has FANUC MakeTP, installed with ROBOGUIDE, make a `.TP` of every
+program into a `TP` folder to copy to a USB stick. Optional: without MakeTP, the report says so and nothing
+else changes. Measured on ROBOGUIDE: the `.TP` load and run, and decode back to the lines of their `.LS`.
 
-**More converted.** A `byte` kept in a register; a `WaitTime` of a calculation (`WAIT R[n]`); `CRobT()` without
-`\Tool` and `\WObj` read in the frames selected (`PR[k]=LPOS`); a number worked out with RAPID's math
-functions (`Pow`, `Sqrt`, `Sin`...) from data no program changes; a routine with a parameter that is an array
-of two or more dimensions.
+**An interactive report, with a commissioning checklist.** `crossarm_report.html` shows each RAPID routine
+and its TP side by side, line by line, every TODO marked with its cause; the items to review are filtered by
+kind, cause and program, or searched, each leading to its line. A checklist follows the order the cell is
+brought up (loading, frames and tools with their values, payloads, I/O, registers, TODO lines, points to touch
+up, motion to check), each item linked to the lines using it, its ticks kept in the browser, printable. One
+self-contained page: it works offline.
 
-**Causes told apart.** A routine or data no module of the backup declares is "routine or data not in the
-backup", saying what to add. Files, sockets, byte buffers, operator dialogs and positions read on the robot
-are "RAPID instruction without a TP equivalent", with why, also for a call to a routine of the backup that
-uses them, and for its `ERROR` handler: work to redo another way on the FANUC, not a conversion still to
-come.
+**Jointtargets read on the robot.** `j:=CJointT()` is kept in a joint position register (`PR[k]=JPOS`), its
+axes `j.robax.rax_i` read with the measured axis conventions (the ABB values), and `MoveAbsJ j` is `J PR[k]`.
+Measured on both controllers.
 
-**Still what 1.x keeps:** a mapping file written for 1.0 to 1.3 gives the same numbers, and the command
-line keeps its options. Numbers CrossArm picks by itself can move from one version to the next: give a
-conversion its mapping file back to keep them. The whole list:
+**A fix: negative constants in conditions.** A condition with a bare negative constant (`IF R[1]>-30`, a
+`WAIT`, a flag set to a condition, `F[n]=(...)`), as earlier versions wrote it, loads on the controller but
+stops the program with INTP-202 (syntax error) when the line runs. 1.5 writes it `(-30)`, measured to run.
+Convert again any program converted by an earlier version that has such a condition.
+
+**Still what 1.x keeps:** a mapping file written for 1.0 to 1.4 gives the same numbers, and the command
+line keeps its options (`--tp` and `--tp-robot` are new). Numbers CrossArm picks by itself can move from one
+version to the next: without a mapping file given back, a jointtarget now kept in a position register can move
+the other position register numbers by one, compared with 1.4. Give a conversion its mapping file back to keep
+them. The whole list:
 [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 See the [README](https://github.com/LeroyDu56/CrossArm#readme), the
@@ -41,7 +48,7 @@ programs loaded on a real robot, conversions delivered to a customer, or billed
 migration work. See [LICENSING.md](https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md)
 for where the line falls, and write to **enzoleroy56@gmail.com** for a licence.
 
-This version becomes Apache 2.0 on 2030-10-06.
+This version becomes Apache 2.0 on 2030-10-07.
 
 `python_license.txt` next to the executable covers the Python runtime bundled inside it; see
 [THIRD_PARTY_LICENSES.md](https://github.com/LeroyDu56/CrossArm/blob/main/THIRD_PARTY_LICENSES.md).
@@ -56,7 +63,8 @@ This version becomes Apache 2.0 on 2030-10-06.
 
 The `.LS` programs, `SETUP_FRAMES.LS`, the conversion report (`crossarm_report.html`), the editable
 `crossarm_mapping.json` and `crossarm_log.txt` are written to a new `crossarm_<name>` folder next to
-the input. Everything runs locally: no file leaves the computer.
+the input, with a `TP` folder of `.TP` programs when step 4 is used. Everything runs locally: no file
+leaves the computer.
 
 ## First launch: Windows SmartScreen
 

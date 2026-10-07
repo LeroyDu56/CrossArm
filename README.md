@@ -24,7 +24,7 @@ commissioning.
 | | |
 |---|---|
 | **Input** | ABB RobotWare 6 / 7 backup (folder or `.zip`), or RAPID modules (`.mod` `.modx` `.sys` `.sysx` `.prg`) |
-| **Output** | FANUC TP programs as `.LS` text, an HTML conversion report, an editable numbering file |
+| **Output** | FANUC TP programs as `.LS` text (and binary `.TP` through FANUC MakeTP, optional), an interactive HTML report with a commissioning checklist, an editable numbering file |
 | **Optional** | the backup of the FANUC robot the programs will run on, so its numbers and program names are left free |
 | **Runs on** | Windows (`CrossArm.exe`, nothing to install) or any system with Python 3.11+ — entirely offline |
 | **Licence** | Business Source License 1.1: free for evaluation and non-production use ([details](LICENSING.md)) |
@@ -41,12 +41,22 @@ nothing to install.
    program names are left alone, and its speeds and zones are used.
 3. Optionally, **your numbering**: a `crossarm_mapping.json` from a previous run, edited with your
    cell's numbers.
-4. **Convert.** The result says how many programs are ready as is and what to look at first.
+4. Optionally, **binary `.TP` programs**, for a robot without the ASCII Upload option: FANUC MakeTP,
+   installed with ROBOGUIDE, makes them for a ROBOGUIDE robot like yours, in a `TP` folder to copy to a
+   USB stick.
+5. **Convert.** The result says how many programs are ready as is and what to look at first.
 
 The programs, the report and the numbering file land in a new `crossarm_<name>` folder next to the
 input, with `SETUP_FRAMES.LS`, which sets every tool and user frame on the robot. Dropping the
 backups on the icon converts them straight away. From the command line:
-`crossarm convert abb_backup/ --fanuc fanuc_backup/` ([user guide](docs/guide.md#command-line)).
+`crossarm convert abb_backup/ --fanuc fanuc_backup/`, with `--tp-robot <ROBOGUIDE robot folder>` for the
+`.TP` ([user guide](docs/guide.md#command-line)).
+
+The report, `crossarm_report.html`, is one page that works offline: each RAPID routine next to its TP,
+line by line, every TODO marked with its cause; the items to review, filtered or searched, each leading
+to its line; and a commissioning checklist in the order the cell is brought up (frames and tools with
+their values, payloads, I/O, registers, points to touch up, motion to check), its ticks kept in the
+browser, printable.
 
 ## An example
 
@@ -101,8 +111,8 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
 - **Data**: `num` and `bool` to registers and flags, data of the backup's own `RECORD` types field by field
   (a state machine's state in a register named by its path), strings in string registers (texts compared,
   measured, cut and passed on), calculations of any length; points worked out at run
-  time (palletizing: `Offs()` of loop counters, `RelTool()`, `CRobT()`) in position registers; operator
-  messages; comments.
+  time (palletizing: `Offs()` of loop counters, `RelTool()`, `CRobT()`) in position registers, jointtargets
+  read on the robot (`CJointT()`) in joint position registers; operator messages; comments.
 
 Frames and points the programs compute are worked out at conversion time when every value they read
 is fixed; points worked out from data that changes at run time are kept in position registers. Marked
@@ -116,7 +126,7 @@ and a few ABB-specific instructions. The full table is in the [user guide](docs/
 **About 60 % of the instructions, on real programs.** On public open-source RAPID programs of widely
 mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
 depending on the program; programs built around files, sockets, operator dialogs or error handlers
-convert least. On our own test corpus, written for testing, it converts 86 % to 93 %: that figure is
+convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
 higher because we wrote the programs. Converted means written in TP and loaded by the controller
 without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
 
@@ -149,10 +159,10 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 | What | Result |
 |---|---|
 | RAPID instructions converted, public open-source programs (indicative, [why not all](#why-not-100-)) | about 60 %, from about 15 % to all of it per project |
-| RAPID instructions converted, our test corpus, written for testing | 86 % to 93 % |
+| RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on both simulators: the one added in 1.4 run for this version, the 26 others run again for 1.3.0, their programs unchanged since | 27 of 27 give what was measured |
+| The controller probes on both simulators: the 2 added in 1.5 and the 10 closest to what 1.5 changed run again on ROBOGUIDE for this version, the 17 others for 1.3.0 or 1.4.0, their programs unchanged since | 29 of 29 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -178,8 +188,9 @@ that job, and ROBOGUIDE is then the place to check its output before it goes to 
 ### What is a FANUC `.LS` file?
 The text form of a FANUC TP (teach pendant) program: a header, numbered instructions and the
 positions they use. The controller runs the compiled `.TP`; ROBOGUIDE compiles a `.LS` into it, and
-so can a controller that accepts ASCII programs. CrossArm writes `.LS` files and can read them back
-byte for byte.
+so can a controller that accepts ASCII programs (the ASCII Upload option). CrossArm writes `.LS` files
+and can read them back byte for byte; for a controller without that option, it has FANUC MakeTP,
+installed with ROBOGUIDE, make the `.TP` too.
 
 ### Are the converted programs ready to run on the robot?
 No, and CrossArm says so on every report. They are a starting point for commissioning: set the tool
@@ -242,7 +253,7 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 
 Progress is measured as the share of RAPID instructions written as TP: on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)), 86 %, 93 % and 87 %; on public
+controllers ([validation](docs/validation.md#1-the-test-corpus)), 87 %, 93 % and 87 %; on public
 open-source programs, about 60 %. What is left gives the order of the next steps:
 
 1. Values only known at run time, and the conditions on them: what is left of them is spread over
@@ -253,7 +264,8 @@ open-source programs, about 60 %. What is left gives the order of the next steps
 4. Frames and positions measured on the robot (calibration): TP cannot compute a frame, so this needs
    KAREL. Those computed from fixed values, and searches on one edge of an input, are converted.
 
-Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
+Further out: KAREL, as an option, for what TP cannot do; other brands behind the same program model
+(KUKA KRL, Yaskawa INFORM).
 
 ## Documentation
 
@@ -281,8 +293,8 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.4.0 on 2030-10-06,
-v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
+Each released version becomes Apache 2.0 four years after it is published: v1.5.0 on 2030-10-07,
+v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 

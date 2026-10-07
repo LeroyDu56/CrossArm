@@ -12,10 +12,10 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | What | Result |
 |---|---|
 | RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)) | about 60 %, from about 15 % to all of it per project |
-| RAPID instructions converted, our test corpus, written for testing | 86 % to 93 % |
+| RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on both simulators: the one added in 1.4 run for this version, the 26 others run again for 1.3.0, their programs unchanged since | 27 of 27 give what was measured |
+| The controller probes on both simulators: the 2 added in 1.5 and the 10 closest to what 1.5 changed run again on ROBOGUIDE for this version, the 17 others for 1.3.0 or 1.4.0, their programs unchanged since | 29 of 29 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -39,6 +39,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | `SearchL` converted to a skip, run on ROBOGUIDE with the input switched as the TCP passes a point | the point found within 0.1 mm of where the input switched |
 | Arrays of bools kept in flags, run on both controllers | the values RAPID computes |
 | Routines given their speed and zone, run on both controllers | the time of the same moves written with constants, to 5 ms |
+| Binary `.TP` made by FANUC MakeTP from the `.LS`, loaded and run on ROBOGUIDE | the values RAPID computes; decoded back, the lines of the `.LS` |
+| Jointtargets read on the robot (`CJointT`), kept in joint position registers, run on both controllers | the ABB axes, within 0.01° |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -72,6 +74,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 30. [A search, run](#30-a-search-run)
 31. [Arrays of bools, run](#31-arrays-of-bools-run)
 32. [Speeds and zones given to a routine, run](#32-speeds-and-zones-given-to-a-routine-run)
+33. [Binary .TP programs made by MakeTP, run](#33-binary-tp-programs-made-by-maketp-run)
+34. [Jointtargets read on the robot, run](#34-jointtargets-read-on-the-robot-run)
 
 ## 1. The test corpus
 
@@ -99,7 +103,7 @@ Because we wrote the test corpus, it says little about programs we did not write
 run on a second local corpus: RAPID programs published on the Internet under permissive open-source
 licences, read and converted as they are, every program written loaded on ROBOGUIDE. CrossArm converts
 **about 60 %** of their instructions, from about 15 % to all of them depending on the project, where it
-converts 86 % to 93 % of the test corpus. The projects that convert least are built around files,
+converts 87 % to 93 % of the test corpus. The projects that convert least are built around files,
 sockets, operator dialogs and error handlers, or are libraries using data declared in other projects.
 
 What the figure does not say:
@@ -209,9 +213,11 @@ switch arguments (negative and decimal values, switches given or not, arguments 
 parameter the routine changes, a FOR bounded by an argument, a WAIT on one). Run on ROBOGUIDE, it
 leaves every register with the value RAPID computes, and the controller stores the five programs
 line for line as CrossArm writes them. On the way, a probe of negative constants showed the
-controller's own forms: `(-2.5)` in assignments, calculations, FOR bounds and CALL arguments — where
-the bare form is refused — and `-2.5` in conditions. No `.LS` written by a controller had shown one
-before.
+controller's own forms: `(-2.5)` in assignments, calculations, FOR bounds and CALL arguments, where
+the bare form is refused. No `.LS` written by a controller had shown one before. That probe only
+loaded its programs, and it took `-2.5` as the form of conditions; run, in 1.5, a condition with the
+bare form (`IF (R[1]>-30)`, `WAIT`, `F[n]=(...)`) stops the program with INTP-202 (syntax error).
+CrossArm 1.5 writes `(-30)` there too, which runs ([section 34](#34-jointtargets-read-on-the-robot-run)).
 
 **Text arguments.** A string passed in a call (`CALL FAULT('Pince non ouverte')`) reaches the routine
 whole: `SR[5]=AR[1]` holds it, `STRLEN AR[1]` measures it. The controller takes 38 characters per
@@ -257,7 +263,7 @@ frame names aside. Forms that first differed by a space before the `;` are now w
 controller's way.
 
 [tools/probe_all.py](../tools/probe_all.py) then runs the probes again on both simulators with
-nobody at either pendant, in about eighteen minutes. On ROBOGUIDE: FTP to load, the FANUC COM
+nobody at either pendant, in about twenty minutes. On ROBOGUIDE: FTP to load, the FANUC COM
 interface to run, the robot's web pages to read. On RobotStudio, where RobotWare 7 and 8 give a PC
 program no right to load or start programs, a small RAPID module started once
 ([tools/CrossArmServer.mod](../tools/CrossArmServer.mod)) loads and runs each probe module itself, and
@@ -265,7 +271,7 @@ the results are read from the virtual controller's `HOME:` folder:
 
 | Probe | Checked on the controller |
 |---|---|
-| negative constants | the one refused form is still the only one refused |
+| negative constants | the one refused form is still the only one refused (load only: see [section 7](#7-calls-with-arguments-run)) |
 | calls with arguments | 7 registers as RAPID computes them |
 | conditions | 4 registers as RAPID computes them |
 | waits with MaxTime | 3 registers, and 1.47 s of waiting for 1.4 s of MaxTime |
@@ -291,6 +297,8 @@ the results are read from the virtual controller's `HOME:` folder:
 | a search | the point found within 0.1 mm of the switch, `\Sup` on to the point, a pause with the input on at the start ([section 30](#30-a-search-run)) |
 | arrays of bools | 4 registers as RAPID computes them ([section 31](#31-arrays-of-bools-run)) |
 | speeds and zones given to a routine | 1 register as RAPID computes it, the moves in the time they take with constants ([section 32](#32-speeds-and-zones-given-to-a-routine-run)) |
+| binary `.TP` made by MakeTP | 4 `.TP` loaded, run, registers as RAPID computes them, decoded back to the lines of their `.LS` ([section 33](#33-binary-tp-programs-made-by-maketp-run)) |
+| jointtargets read on the robot | 21 registers within 0.01° of the ABB axes ([section 34](#34-jointtargets-read-on-the-robot-run)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
 ## 12. Speeds and zones, measured on both robots
@@ -854,3 +862,42 @@ ROBOGUIDE the converted programs:
 On each controller the routine takes the time of the moves written with constants, to 5 ms: the corner is
 rounded across the lines of the double form. The two robots differ from each other as their moves do
 ([section 12](#12-speeds-and-zones-measured-on-both-robots)); only the pairs on the same controller compare.
+
+## 33. Binary .TP programs made by MakeTP, run
+
+A FANUC controller without the ASCII Upload option loads binary `.TP` programs only. FANUC MakeTP, installed
+with ROBOGUIDE, makes them: it loads the `.LS` into the virtual controller of a ROBOGUIDE robot and saves the
+program it compiles. [tools/make_maketp_probe.py](../tools/make_maketp_probe.py) converts a module that adds in
+a loop, calls a routine at each turn and moves to a joint position, and a routine with a tool and a work object
+so that `SETUP_FRAMES` is written too; CrossArm has MakeTP make a `.TP` of each of the four `.LS`. On ROBOGUIDE
+(R-1000iA/80F, V10.10), each `.TP` is loaded by FTP; the probe program runs and leaves the registers RAPID
+computes (30, 5, 100), and `SETUP_FRAMES` runs to its end. FANUC PrintTP then decodes each `.TP` back to text:
+its `/MN` and `/POS` are the lines of the `.LS`, line for line (the header differs: sizes, dates).
+
+Every `.LS` of the local test corpus, and of the public programs, was accepted by MakeTP. A `.TP` is made for the
+software version of the robot chosen; loading it on a controller with older software is not measured.
+
+## 34. Jointtargets read on the robot, run
+
+A jointtarget read on the robot, `jNow:=CJointT()`, is kept in a joint position register, `PR[k]=JPOS`, and each
+axis read from it with the conventions measured for `MoveAbsJ` ([section 3](#3-arm-configuration-measured-on-both-controllers)),
+the other way round: rax_1 = J1, rax_2 = J2, rax_3 = −(J3+J2), rax_4 = −J4, rax_5 = −J5, rax_6 = 180−J6.
+
+[tools/make_joint_probe.py](../tools/make_joint_probe.py) converts a module that moves to two joint targets,
+reads the joints after each and their six axes, compares them (an `IF` on a negative constant, a calculation on
+rax_3 first, a bool set to a comparison), adds two up, then goes back to the first reading with another tool
+selected (`MoveAbsJ` to the jointtarget read, `J PR[k]`) and reads the joints again. RobotStudio runs the RAPID
+(IRB 6700), ROBOGUIDE the converted program (R-1000iA/80F):
+
+| Total | Written in the targets | RobotStudio | ROBOGUIDE |
+|---|---|---|---|
+| 6 axes after the first move | 10, −20, 30, 40, −50, 60 | each within 0.02° | the same, within 0.00001° |
+| 6 axes after the second move | −30, 15, −10, −100, 70, −150 | each within 0.03° | the same, within 0.00001° |
+| 6 axes back at the first reading, another tool selected | 10, −20, 30, 40, −50, 60 | each within 0.04° | the same, within 0.00001° |
+| `IF rax_2 > -30` and `rax_3 > 25`, a bool `rax_5 < -40`, rax_4 + rax_6 | 11, 1, 100 | 11, 1, 99.98 | 11, 1, 100 |
+
+RobotStudio reads the joints where the robot stopped, a few hundredths of a degree from the target after a fine
+move; ROBOGUIDE reads the target. The joint move back to a register read with another tool selected raises no
+alarm (a joint `P[n]` recorded with another tool does: INTP-253). On the way, the probe showed that a bare
+negative constant in a condition, `IF (R[1]>-30)`, loads but stops the program when the line runs (INTP-202):
+CrossArm writes `(-30)` ([section 7](#7-calls-with-arguments-run)). External axes and writing an axis stay TODO.

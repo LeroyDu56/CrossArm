@@ -38,15 +38,16 @@ overwritten:
 - the `.LS` programs, one per routine;
 - `SETUP_FRAMES.LS`: run once on the robot, it sets every tool and user frame of the report, so none
   has to be typed in on the pendant;
-- the report, `crossarm_report.html` (and `.md`);
+- the report, `crossarm_report.html` (and `.md`): see [reading the report](#reading-the-report);
 - `crossarm_mapping.json`, the numbering used, to edit and give back;
-- `crossarm_log.txt`.
+- `crossarm_log.txt`;
+- when asked for, a `TP` folder of binary `.TP` programs ([binary .TP programs](#binary-tp-programs)).
 
 Everything runs locally: no file leaves the computer.
 
 ## The window
 
-`CrossArm.exe` walks through three steps, and each one says what it found before anything is
+`CrossArm.exe` walks through four steps, and each one says what it found before anything is
 converted:
 
 1. **ABB program to convert**: a backup folder, a `.zip` or RAPID files. CrossArm reports the robot
@@ -55,6 +56,9 @@ converted:
    and program names already used on that robot are left alone.
 3. **Your numbering** (optional): a `crossarm_mapping.json` from a previous run, edited with your
    cell's numbers.
+4. **Binary .TP programs** (optional), for a robot without the ASCII Upload option: the ROBOGUIDE
+   robot folder (`...\Robot_1`) of a robot like yours, or a `robot.ini` made by FANUC Setrobot,
+   checked as soon as it is chosen ([binary .TP programs](#binary-tp-programs)).
 
 Then **Convert**. The result says how many programs are ready as is and what to look at first —
 anything that would stop the programs loading or running comes before where the manual work is —
@@ -75,10 +79,27 @@ pip install -e ".[dev]"
 crossarm convert tests/fixtures/rapid/pick_and_place.mod              # -> crossarm_pick_and_place/
 crossarm convert path/to/backup.zip --fanuc path/to/fanuc_backup/      # number around the robot in place
 crossarm convert path/to/backup.zip --map mapping.json                 # pin your own numbers
+crossarm convert path/to/backup.zip --tp-robot path/to/Robot_1         # binary .TP too, made by FANUC MakeTP
 crossarm-gui                                                           # the desktop window
 crossarm parse   tests/fixtures/rapid/pick_and_place.mod              # RAPID AST as a readable listing
 crossarm stats   backup/RAPID                                          # parser coverage report
 ```
+
+### Binary .TP programs
+
+A FANUC controller loads `.LS` programs only with the ASCII Upload option; without it, it loads the
+binary `.TP`. `--tp` (or step 4 of the window) has FANUC MakeTP, installed with ROBOGUIDE
+(`C:\Program Files (x86)\FANUC\WinOLPC\bin\maketp.exe`), make a `.TP` of every `.LS` written,
+`SETUP_FRAMES` included, into a `TP` folder of the output: copy it to a USB stick and load the programs
+from the FILE menu of the pendant. MakeTP makes them for a robot: `--tp-robot` names a ROBOGUIDE robot
+folder (`...\Robot_1`, or a cell of one robot) or a `robot.ini` made by FANUC Setrobot; `--tp` alone takes
+the `robot.ini` of the current folder. Choose a robot like yours, of the same software version: a
+controller with older software may refuse them (not measured). MakeTP loads each program into that
+robot's virtual controller: about 20 s a program, at once while its cell is open in ROBOGUIDE, but a
+program of the same name in that cell is then removed. The report lists the `.TP` written and any `.LS`
+MakeTP refused, with its reason; without MakeTP it says so, and the `.LS` are written as usual. Measured
+on ROBOGUIDE: the `.TP` load and run, and decode back to the lines of their `.LS`
+([validation](validation.md#33-binary-tp-programs-made-by-maketp-run)).
 
 ## What is converted
 
@@ -129,6 +150,7 @@ crossarm stats   backup/RAPID                                          # parser 
 | calculation of several operations: `nA:=(nB-1)*600+nC*3` | `R[2:Calc1]=R[3]-1`, `R[2:Calc1]=R[2:Calc1]*600`, `R[4:Calc2]=R[5]*3`, `R[1:nA]=R[2:Calc1]+R[4:Calc2]` | One operation per line in scratch registers: TP refuses `+` and `*` in one calculation. In assignments, conditions, arguments and `Offs()` / `RelTool()` offsets; a `WaitUntil` on one stays TODO (worked out once, it would not follow the data) |
 | a number RAPID's math functions work out from data no program changes: `FOR i FROM 1 TO Pow(2, nRings) - 1` | the number: `FOR R[1:i]=1 TO 7` (`nRings` 3) | Worked out once at conversion, as TP has no such function (`Pow`, `Sqrt`, `Exp`, `Sin`, `Cos`, `ATan2`...): a PERS read at its saved value, with a warning. One that reads data the programs change stays TODO, saying where |
 | a point worked out at run time: `pPlace:=Offs(pCorner,(nCol-1)*L,0,nLayer*H)`, `RelTool(pPlace,0,0,0\Rz:=90)`, `CRobT()`, `pPlace.trans.z:=...`, `MoveL Offs(pCorner,nCol*L,0,0)` | `PR[98]=P[1]`, `PR[98,1]=PR[98,1]+R[4:Calc1]`, `PR[98,6]=(-90)`, `PR[97]=LPOS`, `PR[98,3]=...`, `L PR[98]` | A robtarget set from data that changes at run time is kept in a position register every assignment sets and every move reads, in any routine. `RelTool()` of it when its orientation is known at conversion time (after `Offs()` of a fixed point); `CRobT()` in the frames its `\Tool` and `\WObj` name, selected first; without them, in a routine whose moves have not selected frames yet, `PR[k]=LPOS` in the frames selected when it runs, as RAPID reads in the active tool and work object, those of the last move. A point whose assignment stays TODO is never moved to |
+| a jointtarget read on the robot: `jNow:=CJointT()`, `jNow.robax.rax_3`, `MoveAbsJ jNow` | `PR[99]=JPOS`, `R[4:Calc1]=PR[99,3]+PR[99,2]` then `R[4:Calc1]=R[4:Calc1]*(-1)`, `J PR[99]` | Kept in a joint position register. Each axis is read with the measured conventions, the ABB value: rax_1 = J1, rax_2 = J2, rax_3 = −(J3+J2), rax_4 = −J4, rax_5 = −J5, rax_6 = 180−J6 (−J6 with `"tool_pin": "+x"`; the raw FANUC joint with `"joint_mapping": false`), with a warning. `MoveAbsJ` to it is a joint move to the register, whatever tool is selected; a copy is `PR[m]=PR[k]`. External axes, writing an axis and a jointtarget set to a constant stay TODO. Measured on both controllers ([validation](validation.md#34-jointtargets-read-on-the-robot-run)) |
 | `IF FALSE` / `WHILE FALSE`, `TEST` on a constant | a remark | Code switched off by hand: left out, `IF TRUE` converted without a test, a `TEST` on a constant as the branch it takes |
 | comments | `!remark` | Split to 32 characters, accents folded to ASCII |
 
@@ -141,8 +163,8 @@ crossarm stats   backup/RAPID                                          # parser 
 - frames computed from data that changes at run time, with that data and where it changes; `RelTool()` of a
   point whose orientation is only known at run time;
   frames **measured on the robot** (`CRobT`, a calibration), with what reads the robot; a position read on
-  the robot that is not kept in a position register (`jNow:=CJointT()`, a `pos` from `CPos()`), saying what
-  TP reads;
+  the robot that is not kept in a position register (an external axis of a `CJointT()`, a `pos` from
+  `CPos()`), saying what TP reads;
 - payload changes (`tool.tload`), to redo with the FANUC `PAYLOAD[n]` schedules;
 - `AccSet` and `VelSet` that slow the robot down (dropping them would run it faster than the ABB), a
   `SetAO` without its scale; interrupts a condition monitor cannot watch (`ITimer`, `IError`, group and
@@ -194,6 +216,25 @@ it. TP can read the robot's pose (`PR[n]=LPOS`) but not compute a frame from it:
 again on the FANUC with its frame setup (3- or 4-point user frame, 6-point tool frame), or in KAREL.
 
 ## Reading the report
+
+`crossarm_report.html` is one page, with nothing to install or download: it works offline, in light
+or dark, and prints. Its menu leads to:
+- **Summary**: programs ready as is, the TODO by cause (a cause clicked filters the list below), and
+  the share of the RAPID converted;
+- **Checklist**: the commissioning, in the order the cell is brought up: load the programs (`.LS`,
+  or the `TP` folder), frames and tools with their values, payloads, I/O to map, registers, flags and
+  timers with their initial values, TODO lines to finish by hand, points to touch up, motion to check
+  (each zone's CNT, the speeds), other assumptions. Each item links to the lines that use it. Ticks are
+  kept in the browser, for that report (an item whose values change in a new conversion comes back
+  unticked); "hide the items done", "Untick all", and "Print the checklist" prints it alone, boxes
+  ticked or empty;
+- **Items to review**: every TODO and warning, filtered by kind, cause and program, or searched, each
+  leading to its line;
+- **RAPID and TP**: each program, its RAPID routine and its TP side by side, line by line, the TP line
+  numbers those of the `.LS`, the TODO lines marked;
+- **Details**: the rest of the report, as in `crossarm_report.md`, which stays for reading as text.
+
+Without JavaScript, the filters and ticks are gone but everything is there.
 
 A large backup produces hundreds of TODO entries that come down to a handful of causes, so the
 report opens with a summary rather than the line-by-line list: how many programs converted with no
