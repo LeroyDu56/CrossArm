@@ -5,6 +5,7 @@
 the digits the controller runs with, and the largest whole number a line keeps (ROBOGUIDE)."""
 
 import re
+import unicodedata
 from decimal import Decimal
 
 from crossarm.convert.blockers import Blocker, Untranslatable
@@ -45,3 +46,13 @@ def register_value(value: float) -> str:
         raise Untranslatable(f"constant {fmt_number(value)} too large for a TP register: a TP line keeps"
                              f" {REGISTER_MAX} at most", Blocker.VALUE)  # fmt: skip
     return fmt_number(value)
+
+
+# The RAPID types a numeric register holds.
+NUMBER_TYPES = ("num", "byte")
+
+
+def ascii_text(text: str) -> str:
+    """TP files are ASCII: strip accents, replace anything else."""
+    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return folded.replace('"', "'").replace(";", ",")

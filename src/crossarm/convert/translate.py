@@ -31,7 +31,6 @@ import itertools
 import math
 import re
 import traceback
-import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -40,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, fine_given, signature
 from crossarm.convert.blockers import Blocker, Untranslatable
+from crossarm.convert.calls import RoutineCalls
 from crossarm.convert.compute import (
     LAYOUTS,
     PREDEFINED,
@@ -76,7 +76,8 @@ from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, rec
 from crossarm.convert.runtime_points import RuntimePoints, expr_nodes, find_runtime_points
 from crossarm.convert.source_map import SourceTags
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
-from crossarm.convert.tp_numbers import decimal, fmt_number, operand, register_value
+from crossarm.convert.tp_numbers import NUMBER_TYPES as _NUMBERS
+from crossarm.convert.tp_numbers import ascii_text, decimal, fmt_number, operand, register_value
 from crossarm.convert.unsupported import (
     RAPID_DATA,
     RAPID_INSTRUCTIONS,
@@ -135,7 +136,6 @@ NO_LOAD_KG = 0.001  # RAPID's load0 / tool0 placeholder mass: no real payload de
 _NEGATED = {"=": "<>", "<>": "=", "<": ">=", ">=": "<", ">": "<=", "<=": ">"}
 _ARITHMETIC = {"+", "-", "*", "/", "DIV", "MOD"}
 # The data kept in a register: a byte is a whole number from 0 to 255, which R[n] holds as it holds a num.
-_NUMBERS = ("num", "byte")
 _SIGNAL_PREFIX = re.compile(r"^[dD][iIoO](?=[_0-9A-Z])")
 
 
@@ -296,7 +296,6 @@ _TEXT_WORK = frozenset({"STRLEN", "STRMATCH", "STRPART", "NUMTOSTR", "VALTOSTR"}
 # RAPID functions giving a text: an expression using one is a text, converted or not.
 _TEXT_FUNCTIONS = frozenset({"STRPART", "NUMTOSTR", "VALTOSTR", "DNUMTOSTR", "STRMAP", "BYTETOSTR", "ARGNAME",
                              "CTIME", "CDATE", "GETTASKNAME", "GETMECUNITNAME", "ERRSTR", "STRFORMAT"})
-STRING_ARGUMENT_MAX = 38  # characters of a string CALL argument (ROBOGUIDE: 38 loads, 39 is refused)
 PULSE_MAX_S = 25.5  # the longest PULSE a FANUC output takes (ROBOGUIDE: 25.6 is refused, ASBN-092)
 PULSE_DEFAULT_S = 0.2  # RAPID PulseDO without \PLength
 # Lines after which an array index held in a register is worked out again: the program may arrive there from
@@ -599,12 +598,6 @@ class ControllerScope:
 # ---------------------------------------------------------------------------
 # Text helpers
 # ---------------------------------------------------------------------------
-
-
-def ascii_text(text: str) -> str:
-    """TP files are ASCII: strip accents, replace anything else."""
-    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    return folded.replace('"', "'").replace(";", ",")
 
 
 def remark_lines(text: str) -> list[str]:
@@ -1903,7 +1896,7 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator(RuntimePoints):
+class _RoutineTranslator(RuntimePoints, RoutineCalls):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -3289,209 +3282,6 @@ class _RoutineTranslator(RuntimePoints):
                 self.todo(handler, f"ERROR handler of a routine using {why}", Blocker.NO_TP_EQUIVALENT)
                 return
         self.todo(handler, handler.reason, Blocker.rapid(handler.kind))
-
-    def call_with_args(self, call: n.ProcCall, layout: Signature) -> None:
-        """CALL NAME(a,b,...): required arguments in order, then 1 / 0 for every optional switch."""
-        positional = [a for a in call.args if a.name is None]
-        required = list(layout.required)
-        if len(positional) != len(required):
-            raise Untranslatable(f"{len(positional)} arguments given, {call.name} takes {len(required)}", Blocker.CALL_ARGS)
-        given = {a.name.upper(): a for a in call.args if a.name is not None}
-        unknown = set(given) - {s.key for s in layout.slots if s.optional}
-        if unknown:
-            raise Untranslatable(f"{call.name} has no switch \\{min(unknown)}", Blocker.CALL_ARGS)
-        if call.name.upper() in self.c.recursive and any(s.kind == "robtarget" for s in required):
-            raise Untranslatable(f"{call.name} calls itself back and is given points: they travel in position"
-                                 " registers every call under way shares", Blocker.CALL_ARGS)  # fmt: skip
-        if call.name.upper() in self.c.recursive and any(s.fields for s in required if s.kind in ("speeddata", "zonedata")):
-            raise Untranslatable(f"{call.name} calls itself back and is given speeds or zones: they are copied to"
-                                 " registers every call under way shares", Blocker.CALL_ARGS)  # fmt: skip
-        values, points, back = [], [], []
-        name = self.c.program_names[call.name.upper()]
-        returned = {s.key for s in layout.returned()}
-        bound = {s.key: a.value for a, s in zip(positional, required, strict=True)}  # parameter -> what this call passes
-        # The tool and work object this call gives the routine: a point passed with them is recorded in them.
-        framed = [(s, a.value) for a, s in zip(positional, required, strict=True)]
-        framed += [(s, given[s.key].value) for s in layout.slots if s.kind == "wobjdata" and s.key in given]
-        frames = {("UT" if s.kind == "tooldata" else "UF"): value for s, value in framed
-                  if s.kind in ("tooldata", "wobjdata") and isinstance(value, n.Name)
-                  and not (self.args and self.args.frame(value.name))}  # fmt: skip
-        for a, slot in zip(positional, required, strict=True):
-            if slot.kind == "robtarget":
-                points.append(self.point_argument(a.value, slot, layout, call.span.line, frames))
-                if slot.by_reference and slot.key in layout.points_changed:  # VAR, INOUT: the point comes back
-                    back.append(f"{self.point_back(a.value, slot)}={self.c.point_register(f'{layout.routine}.{slot.name}')}")
-            elif slot.kind in ("tooldata", "wobjdata"):
-                values.append(self.frame_argument(a.value, slot, points))
-            elif slot.kind in ("speeddata", "zonedata"):
-                if a.value is None:
-                    raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
-                if slot.key in layout.fine_zones and not self.fine_zone(a.value):
-                    raise Untranslatable(f"argument {slot.name}: {format_expr(a.value)}, where every other call passes"
-                                         f" fine: {layout.routine} writes its moves through it FINE", Blocker.CALL_ARGS)  # fmt: skip
-                values += [self.motion_argument(field, bound, layout.routine) for field in slot.fields]
-            elif slot.kind == "record":
-                if a.value is None:
-                    raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
-                for field in slot.fields:
-                    component = n.Component(a.value.span, a.value, field.name.split(".", 1)[1])
-                    values.append(self.argument(component, field))
-            else:
-                values.append(self.argument(a.value, slot))
-                if slot.key in returned:  # INOUT, VAR, PERS the routine changes: read back after the CALL
-                    copy = self.c.written_register(slot.name, key=f"{name}.{slot.name}")
-                    back.append(f"{self.returned_to(a.value, slot)}={copy}")
-        for slot in layout.slots[len(required):]:
-            arg = given.get(slot.key)
-            if arg is None:
-                values.append("0")  # a switch not given; a work object not given: wobj0, UFRAME 0
-            elif slot.kind == "wobjdata":
-                values.append(self.frame_argument(arg.value, slot, points))
-            elif arg.conditional:  # \Check?Check: passed on only when this routine was given it
-                forwarded = self.args.register(arg.value.name) if self.args and isinstance(arg.value, n.Name) else None
-                if forwarded is None:
-                    raise Untranslatable(f"\\{arg.name}?... does not name a switch of this routine", Blocker.CALL_ARGS)
-                values.append(forwarded)
-            else:
-                values.append("1")
-        for text in filter(None, points):
-            self.emit(text)
-        self.emit(f"CALL {name}({','.join(values)})" if values else f"CALL {name}")
-        for text in back:
-            self.emit(text)
-
-    def fine_zone(self, expr: n.Expr) -> bool:
-        try:
-            return self.c.evaluator.zone(expr).fine
-        except Unresolvable as exc:
-            raise Untranslatable(f"zone {format_expr(expr)}: {exc}", Blocker.CALL_ARGS) from exc
-
-    def motion_argument(self, field, bound: dict[str, n.Expr | None], routine: str) -> str:
-        """The number a speed or a corner of the called routine is passed as: the TCP speed in mm/s, the % of a
-        joint move, or the CNT of the corner, worked out as the move would be written with what this call gives."""
-
-        def passed(expr: n.Expr | None) -> n.Expr | None:  # the routine's own parameter: what this call passes
-            return bound.get(expr.name.upper(), expr) if isinstance(expr, n.Name) else expr
-
-        try:
-            if field.kind != "cnt":
-                return str(self.speed(bound[field.key.split(".")[0]], "J" if field.kind == "speed_joint" else "L")[2])
-            corner = field.corner
-            zone, speed = passed(corner.zone), passed(corner.speed)
-            if self.c.evaluator.zone(zone).fine:
-                if field.fine:
-                    return "101"  # above any CNT: the routine writes this move FINE as well (IF R[m]>100,JMP)
-                if zone is not corner.zone:
-                    raise Untranslatable(f"argument {field.name.split('.')[0]}: fine, where {routine} moves through a "
-                                         "zone given at run time: a TP move is FINE or CNT as written", Blocker.CALL_ARGS)  # fmt: skip
-                return "0"  # a zone written in the routine, fine: the routine writes FINE
-            _, rapid_speed, fanuc_speed = self.speed(speed, corner.motion)
-            return self.termination(zone, speed, corner.motion, rapid_speed, fanuc_speed,
-                                    passed(corner.following)).removeprefix("CNT")  # fmt: skip
-        except Unresolvable as exc:
-            raise Untranslatable(f"argument {field.name}: {exc}", Blocker.CALL_ARGS) from exc
-
-    def frame_argument(self, expr: n.Expr | None, slot, before: list[str]) -> str:
-        """The frame number a tooldata or wobjdata argument is passed as; this routine's own frame parameter as
-        its AR[n]. A frame above what the controller holds is loaded into its slot first (`before`)."""
-        kind = "UT" if slot.kind == "tooldata" else "UF"
-        if isinstance(expr, n.Name) and self.args and (own := self.args.frame(expr.name)):
-            return own
-        number, bank = self.c.selection(kind, self.c.frame_number(kind, expr, self.name, expr.span.line if expr else 0))
-        if bank is not None:
-            before.append(f"{'UTOOL' if kind == 'UT' else 'UFRAME'}[{number}]=PR[{bank}]")
-        return str(number)
-
-    def returned_to(self, expr: n.Expr | None, slot) -> str:
-        """The register a num passed by reference is read back into: the caller's data, or its own copy."""
-        if isinstance(expr, n.Name):
-            key = expr.name.upper()
-            if key in self.copies:
-                return self.copies[key]
-            decl = self.c.symbols.get(expr.name)
-            if key not in self.c.parameters and decl is not None and decl.type_name.lower() in _NUMBERS \
-                    and decl.storage != "CONST" and not decl.dims:
-                return self.c.written_register(expr.name)
-        raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' is passed by reference"
-                             " and changed: it must be num data of the caller", Blocker.CALL_ARGS)  # fmt: skip
-
-    def argument(self, expr: n.Expr | None, slot) -> str:
-        """One TP CALL argument: a constant, a register, or this routine's own AR[n]."""
-        if expr is None:
-            raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
-        if isinstance(expr, n.Name) and expr.name.upper() in self.copies:  # a parameter it changes: its copy
-            return self.copies[expr.name.upper()]
-        if isinstance(expr, n.Name) and self.args and self.args.register(expr.name):
-            return self.args.register(expr.name)  # type: ignore[return-value]
-        if (field := self.component(expr)) is not None:  # a component of this routine's own record parameter
-            return self.args.register(field)  # type: ignore[union-attr, return-value]
-        if slot.kind == "string":
-            return self.text_argument(expr, slot)
-        if slot.kind == "bool":
-            if isinstance(expr, n.Bool):
-                return "1" if expr.value else "0"
-            decl = self.c.symbols.get(expr.name) if isinstance(expr, n.Name) else None
-            if decl is not None and decl.storage == "CONST" and isinstance(decl.init, n.Bool):
-                return "1" if decl.init.value else "0"
-            if isinstance(expr, n.Component):  # a record's bool no program changes: pdHousing.chamfer
-                try:
-                    found = self.c.computer.value(expr).value
-                except Unresolvable:
-                    found = None
-                if isinstance(found, bool):
-                    return "1" if found else "0"
-            raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' must be TRUE, FALSE or a bool "
-                                 "argument (a flag cannot be passed)", Blocker.CALL_ARGS)  # fmt: skip
-        try:
-            text = self.single(expr)
-        except Untranslatable as exc:
-            raise Untranslatable(f"argument {slot.name}: {exc}", Blocker.CALL_ARGS) from exc
-        return decimal(text)  # CALL P(.5), not CALL P(0.5)
-
-    def point_argument(self, expr: n.Expr | None, slot, layout: Signature, line: int,
-                       frames: dict[str, n.Expr] | None = None) -> str:  # fmt: skip
-        """`PR[k]=P[j]` for a robtarget argument: the point worked out here, recorded with the frames the routine
-        moves to it with; `PR[k]=PR[m]` for a point this routine was given itself."""
-        if expr is None:
-            raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
-        register = self.c.point_register(f"{layout.routine}.{slot.name}")
-        if self.passed_point(expr, "CROSSARM.POINT", into=register):  # a parameter, an array element, Offs() of one
-            return ""
-        try:
-            value = self.c.evaluator.robtarget(expr)
-        except Unresolvable as exc:
-            raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' is only known at run time ({exc})",
-                                 Blocker.RUNTIME_POSITION) from exc  # fmt: skip
-        tool, wobj = self.c.point_frames(layout.routine, slot.name)
-        if tool is None and frames:  # moved to with the frames the routine is given: those of this call
-            tool, wobj = frames.get("UT"), wobj or frames.get("UF")
-        if tool is None and self.active_uf is not None and self.active_ut is not None:
-            uf, ut = self.active_uf, self.active_ut  # no routine moves to it: recorded in the frames selected here
-        else:
-            uf = self.c.selection("UF", self.c.frame_number("UF", wobj, self.name, line))
-            ut = self.c.selection("UT", self.c.frame_number("UT", tool or n.Name(expr.span, "tool0"), self.name, line))
-        return f"{register}={self.point(expr, value, uf, ut, line)}"
-
-    def point_back(self, expr: n.Expr | None, slot) -> str:
-        """The position register a point passed by reference is read back into, after the CALL: the caller's own,
-        a point it keeps in a register (a VAR robtarget, or a point parameter of its own it changes)."""
-        if isinstance(expr, n.Name) and (key := self.runtime_key(expr.name)) is not None:
-            return self.c.point_register(key)
-        raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' is changed by the routine:"
-                             " it must be a robtarget of the program (VAR)", Blocker.RUNTIME_POSITION)  # fmt: skip
-
-    def text_argument(self, expr: n.Expr, slot) -> str:
-        """A string argument: text written in the call ('...'), as TP takes it. An apostrophe ends the text
-        on FANUC (ROBOGUIDE refuses l''a): it becomes a backquote. Past 38 characters it is cut, with a warning."""
-        text, dropped = self.split_text(expr)
-        if dropped:  # a text worked out at run time: passed in a string register, which the CALL copies
-            return self.text_source(expr, tuple(k for k in (1, 2) if k not in self.text_slots))
-        text = ascii_text(text).replace("'", "`")
-        if len(text) > STRING_ARGUMENT_MAX:
-            self.c.note(self.name, expr.span.line, "WARNING", f"argument {slot.name} cut to {STRING_ARGUMENT_MAX}"
-                        f" characters (the most a TP string argument takes): '{text}'", Blocker.MESSAGE_CUT)  # fmt: skip
-            text = text[:STRING_ARGUMENT_MAX].rstrip()
-        return f"'{text}'"
 
     def routine_move(self, call: n.ProcCall, routine: MoveRoutine) -> None:
         """A call to a routine wrapping one move, written as that move when that is allowed."""
