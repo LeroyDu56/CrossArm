@@ -3,6 +3,13 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- New mapping key `external_routines`: a routine CrossArm cannot write (not in the backup, or using files, sockets
+  or byte buffers) can be a TP or KAREL program the integrator provides. Its calls become `CALL NAME(args)`, the
+  routine is not written, and the report and checklist list each program to provide with its arguments; the
+  mapping file offers the candidates with `"program": null`. Measured on ROBOGUIDE (new `external` probe).
+
 ## 1.5.0 — 2026-10-07
 
 For a robot that cannot load `.LS` programs, and for the commissioning that follows. CrossArm also writes the

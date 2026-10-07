@@ -48,6 +48,8 @@ probe, everything else in local/logs/probe_all.log):
     pallet       points worked out at run time (Offs of loop counters, RelTool, CRobT): the poses of the moves written out
     io           PulseDO, InvertDO, clocks, SetAO, GripLoad: registers as RAPID computes them, the clock within
                  50 ms, the payload schedule of the tool with the part active
+    external     calls to programs the integrator provides (external_routines): the caller loads without them and
+                 stops on the CALL (INTP-222); with them, the arguments and the num given back as RAPID passes them
     maketp       the .LS made binary .TP by FANUC MakeTP (SETUP_FRAMES too): loaded, run, registers as RAPID
                  computes them, decoded back by PrintTP to the lines of the .LS (skipped without MakeTP)
 
@@ -75,6 +77,7 @@ import make_array_write_probe
 import make_bank_probe
 import make_compute_probe
 import make_condition_probe
+import make_external_probe
 import make_flag_array_probe
 import make_flag_probe
 import make_interrupt_probe
@@ -383,6 +386,18 @@ def probe_movedo() -> str:
     return f"{verdict}DO set {distance:.3f} mm from the FINE point, {delay:.0f} ms after the TCP is within 0.5 mm"
 
 
+def probe_external() -> str:
+    try:
+        found = make_external_probe.measure()
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    problem = make_external_probe.verdict(found)
+    if problem:
+        return f"FAIL {problem}"
+    return (f"caller loads alone, stops on the CALL ({found['alone_alarm']}); with the provided programs"
+            f" {len(make_external_probe.EXPECTED)} registers as RAPID passes them")
+
+
 def probe_search() -> str:
     try:
         found = make_search_probe.read_results("\n".join(make_search_probe.measure()))
@@ -462,6 +477,7 @@ def main() -> int:
               "compute": probe_compute, "select": probe_select, "io": probe_io, "points": probe_points, "arrays": probe_arrays,
               "interrupts": probe_interrupts, "params": probe_params, "records": probe_records, "strings": probe_strings,
               "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "joints": probe_joints, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
+              "external": probe_external,
               "pallet": probe_pallet, "maketp": probe_maketp,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log

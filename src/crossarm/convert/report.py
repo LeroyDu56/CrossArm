@@ -12,6 +12,7 @@ from crossarm import __version__
 from crossarm.convert.config import ConversionConfig
 from crossarm.convert.configuration import TOOL_PIN_DEFAULT
 from crossarm.convert.coverage import fmt_percent
+from crossarm.convert.external import PROVIDED_INTRO, argument_texts, note_texts
 from crossarm.convert.translate import Allocation, ConversionResult, FrameInfo
 from crossarm.fanuc.tp import CartesianPosition
 from crossarm.licence import CONTACT, LicenceStatus
@@ -351,6 +352,32 @@ def _coverage_section(result: ConversionResult) -> list[str]:
     return lines
 
 
+def _provided_section(result: ConversionResult) -> list[str]:
+    """The programs the integrator provides (external_routines), and the routines that could be."""
+    lines: list[str] = []
+    if result.provided:
+        lines += ["### Programs to provide", "", PROVIDED_INTRO, ""]
+        rows = []
+        for use in result.provided:
+            called = [f"{program} l.{line}" for program, line in use.calls]
+            rows.append([
+                f"`{use.program}`", f"{use.module}.{use.routine}" if use.module else use.routine,
+                "; ".join(argument_texts(use)) or "—",
+                _short(", ".join(called), 200) if called else "—",
+                "; ".join(note_texts(use)),
+            ])  # fmt: skip
+        lines += _table(["TP program", "RAPID routine", "Arguments", "Called from", "Note"], rows)
+    if result.provided_candidates:
+        shown = ", ".join(f"{c.name} ({c.why})" for c in result.provided_candidates)
+        lines += [
+            (f"{len(result.provided_candidates)} routine{'s' if len(result.provided_candidates) > 1 else ''} CrossArm"
+             " cannot write could be a TP or KAREL program you provide: name it in `external_routines`"
+             f" (crossarm_mapping.json, `\"program\": null` until then) and convert again. {_short(shown, 400)}."),
+            "",
+        ]  # fmt: skip
+    return lines
+
+
 def _summary(result: ConversionResult) -> list[str]:
     """What to work on next, before the line-by-line detail.
 
@@ -479,6 +506,7 @@ def report_parts(result: ConversionResult, config: ConversionConfig, sources: li
     if result.skipped_routines:
         lines += ["### Routines not converted", ""]
         lines += _table(["RAPID routine", "Reason"], [[f"{m}.{r}", why] for m, r, why in result.skipped_routines])
+    lines += _provided_section(result)
     parts.append(("programs", lines))
 
     lines = [

@@ -137,8 +137,11 @@ def _called(stmt: n.Stmt) -> list[str]:
 class RoutineUse:
     """The files, sockets and byte buffers the backup's routines use, themselves or through the ones they call."""
 
-    def __init__(self, routines: Mapping[str, n.Routine]) -> None:
+    def __init__(self, routines: Mapping[str, n.Routine], provided: Iterable[str] = ()) -> None:
         self.routines = routines  # upper-case name -> PROC or FUNC of the backup
+        # upper-case names of the routines the integrator provides as programs (external_routines): what they
+        # do is theirs, a routine calling one does not use files or sockets through it
+        self.provided = frozenset(provided)
         self._found: dict[str, tuple[tuple[str, ...], str] | None] = {}
         self._raised: dict[str, set[str]] | None = None  # error -> the routines raising it
 
@@ -210,7 +213,7 @@ class RoutineUse:
 
     def _uses(self, key: str) -> tuple[tuple[str, ...], str] | None:
         """(the routines in between, 'Open: why') for the routine `key`; None if it uses none."""
-        if key in self._found or key not in self.routines:
+        if key in self._found or key not in self.routines or key in self.provided:
             return self._found.get(key)
         self._found[key] = None  # a routine calling itself back adds nothing
         for stmt in walk_statements(self.routines[key].body):

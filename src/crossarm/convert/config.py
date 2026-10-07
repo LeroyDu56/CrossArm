@@ -42,6 +42,12 @@ be pinned in a JSON file passed with --map:
   "flag_arrays":     {"bSlotFull": 1001}       the first of the flags an array of bools is kept in
   "programs":        {"PickPart": "PICKPART"}  the TP name of a program CrossArm writes: a routine, an
                                                interrupt's condition program, CROSSARM.TEXT (texts)
+  "external_routines": {"WriteLog": {"program": "WRITE_LOG"}}  a routine the integrator provides as a TP or
+                                               KAREL program: its calls are CALL WRITE_LOG(...), it is not
+                                               written ("program": null: not provided, as CrossArm writes the
+                                               candidates); "arguments": ["num", "string", "INOUT num"] types the
+                                               arguments of one the backup does not declare
+                                               (crossarm.convert.external)
 }
 
 Names are matched case-insensitively, like RAPID.
@@ -54,7 +60,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from crossarm.convert.arguments import MAX_ARGS
 from crossarm.convert.configuration import TOOL_PIN_DEFAULT, TOOL_PINS
+from crossarm.convert.external import ARGUMENT_TYPES, ProvidedRoutine
 from crossarm.convert.motion import M20ID_25, MotionProfile
 
 _MAPPING_KEYS = (
@@ -162,6 +170,9 @@ class ConversionConfig:
     # condition program by the interrupt's (its relay "INTERRUPT.RELAY"), "CROSSARM.TEXT" the program loading
     # texts. Programs already on the robot call these names: a later conversion keeps them.
     programs: dict[str, str] = field(default_factory=dict)
+    # Routines the integrator provides as TP or KAREL programs (crossarm.convert.external), upper-cased RAPID name
+    # -> the program and, for one the backup does not declare, the types of its arguments.
+    external_routines: dict[str, ProvidedRoutine] = field(default_factory=dict)
 
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
@@ -184,7 +195,7 @@ class ConversionConfig:
             "joint_speed_ref_mm_s", "cnt_per_mm", "config_mapping", "joint_mapping", "default_config",
             "program_name_max_length", "tpwrite_values", "tool_pin", "limits", "reserved", "move_routines",
             "zone_mapping", "motion_profile", "frame_registers", "analog_scales", "payloads", "point_registers",
-            "point_arrays", "number_arrays", "flag_arrays", "programs",
+            "point_arrays", "number_arrays", "flag_arrays", "programs", "external_routines",
         }  # fmt: skip
         if unknown:
             raise ValueError(f"unknown keys in mapping file: {', '.join(sorted(unknown))}")
@@ -254,11 +265,50 @@ class ConversionConfig:
         if config.tool_pin not in TOOL_PINS:
             raise ValueError(f"tool_pin: expected '-x' or '+x', got {config.tool_pin!r}")
         for key, name in data.get("programs", {}).items():
-            if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", name.upper()):
-                raise ValueError(f"programs.{key}: expected a TP program name (a letter, then letters, digits"
-                                 f" and _), got {name!r}")  # fmt: skip
-            if len(name) > config.program_name_max_length:
-                raise ValueError(f"programs.{key}: {name} is longer than program_name_max_length"
-                                 f" ({config.program_name_max_length})")  # fmt: skip
-            config.programs[key.upper()] = name.upper()
+            config.programs[key.upper()] = _program_name(f"programs.{key}", name, config.program_name_max_length)
+        external = data.get("external_routines", {})
+        if not isinstance(external, dict):
+            raise TypeError(f'external_routines: expected {{"Routine": {{"program": "NAME"}}}}, got {external!r}')
+        for key, entry in external.items():
+            if key.startswith("_") or entry is None:
+                continue
+            provided = _provided(f"external_routines.{key}", key, entry, config.program_name_max_length)
+            if provided is None:
+                continue  # "program": null, as CrossArm writes a candidate: not provided
+            other = next((k for k, name in config.programs.items() if name == provided.program and k != key.upper()),
+                         None)  # fmt: skip
+            if other is not None:
+                raise ValueError(f"external_routines.{key}: {provided.program} is the name programs gives {other}, a"
+                                 " program CrossArm writes")  # fmt: skip
+            config.external_routines[key.upper()] = provided
         return config
+
+
+def _program_name(where: str, name: object, max_length: int) -> str:
+    """A TP program name from the mapping file, upper case; ValueError saying why when it is not one."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", name.upper()):
+        raise ValueError(f"{where}: expected a TP program name (a letter, then letters, digits and _), got {name!r}")
+    if len(name) > max_length:
+        raise ValueError(f"{where}: {name} is longer than program_name_max_length ({max_length})")
+    return name.upper()
+
+
+def _provided(where: str, key: str, entry: object, max_length: int) -> ProvidedRoutine | None:
+    """An entry of external_routines; None when its program is null (a candidate not provided)."""
+    if not isinstance(entry, dict):
+        raise TypeError(f'{where}: expected {{"program": "NAME"}}, got {entry!r}')
+    fields = {k: v for k, v in entry.items() if not k.startswith("_")}
+    unknown = set(fields) - {"program", "arguments"}
+    if unknown:
+        raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (expected program, arguments)")
+    arguments = fields.get("arguments")
+    if arguments is not None:
+        if not isinstance(arguments, list) or any(a is not None and a not in ARGUMENT_TYPES for a in arguments):
+            raise ValueError(f"{where}.arguments: expected a list of {', '.join(repr(t) for t in ARGUMENT_TYPES)}"
+                             f" or null, got {arguments!r}")  # fmt: skip
+        if len(arguments) > MAX_ARGS:
+            raise ValueError(f"{where}.arguments: {len(arguments)} arguments, a TP CALL takes at most {MAX_ARGS}")
+    if fields.get("program") is None:
+        return None
+    program = _program_name(f"{where}.program", fields["program"], max_length)
+    return ProvidedRoutine(key, program, tuple(arguments) if arguments is not None else None)

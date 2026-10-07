@@ -7,6 +7,7 @@ What the integrator does on the FANUC cell, in the order it is done, each item w
 check and links to the lines that use it (their rows in the side-by-side view):
 
     Load the programs     .LS (ASCII Upload, R507) or the .TP of the TP folder; every program before any runs
+    Programs to provide   the TP or KAREL programs the integrator writes (external_routines): arguments, results
     Frames and tools      SETUP_FRAMES, each UFRAME / UTOOL and its values, what to teach on the robot
     Payloads              each PAYLOAD schedule and its values
     I/O                   each DI / DO / GI / GO / AO and the RAPID signal it was
@@ -30,6 +31,7 @@ from dataclasses import dataclass
 
 from crossarm.convert.blockers import Blocker
 from crossarm.convert.config import ConversionConfig
+from crossarm.convert.external import argument_texts, note_texts
 from crossarm.convert.html import inline
 from crossarm.convert.report import payload_rows
 from crossarm.convert.source_map import line_anchor, tp_text
@@ -173,9 +175,27 @@ def _loading(result: ConversionResult, tp: TpExport | None, tp_where: str) -> tu
         f"Load all {len(every)} programs before running any" if len(every) > 1 else "Load the program",
         values=shown,
         note="A CALL to a program the robot does not have fails when it runs."
-             + (f" {_e(setup)} runs first (frames and tools, below)." if setup else ""),
+             + (f" {_e(setup)} runs first (frames and tools, below)." if setup else "")
+             + (" The programs to provide (next group) are loaded too." if result.provided else ""),
     ))  # fmt: skip
     return "", items
+
+
+def _provided(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
+    items = []
+    for use in result.provided:
+        arguments = argument_texts(use)
+        items.append(_Item(
+            f"provided|{use.program}|{use.routine}|{'|'.join(arguments)}",
+            f"Provide {_code(use.program)}, a TP or KAREL program doing what RAPID {_code(use.routine)} did",
+            values="<br>".join(_e(a) for a in arguments) or ("no argument" if use.arguments is not None else ""),
+            note=_e("; ".join(note_texts(use))),
+            links=places.links(use.calls, "called in"),
+        ))  # fmt: skip
+    intro = ("CrossArm does not write these routines (external_routines in the mapping file): write each program, load"
+             " it with the others. It reads its arguments as <code>AR[1]</code>, <code>AR[2]</code>... and cannot"
+             " change them; a num RAPID reads back is given back in the register named.")  # fmt: skip
+    return intro, items
 
 
 def _frames(result: ConversionResult, config: ConversionConfig, places: _Places) -> tuple[str, list[_Item]]:
@@ -443,6 +463,7 @@ def _zone_item(zone: str, uses: list[ZoneUse]) -> _Item:
 
 _GROUPS = (
     ("load", "Load the programs"),
+    ("provided", "Programs to provide"),
     ("frames", "Frames and tools"),
     ("payloads", "Payloads"),
     ("io", "I/O to map"),
@@ -461,6 +482,7 @@ def checklist_section(result: ConversionResult, config: ConversionConfig, anchor
     places = _Places(result, anchors)
     built = {
         "load": _loading(result, tp, tp_where),
+        "provided": _provided(result, places),
         "frames": _frames(result, config, places),
         "payloads": _payloads(result, config, places),
         "io": _io(result, places),

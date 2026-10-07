@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from crossarm.convert.arguments import Signature
 from crossarm.convert.blockers import Blocker, Untranslatable
+from crossarm.convert.external import ProvidedRoutine, arguments_of, literal_kind, undeclared_layout
+from crossarm.convert.records import nodes
 from crossarm.convert.tp_numbers import NUMBER_TYPES as _NUMBERS
 from crossarm.convert.tp_numbers import ascii_text, decimal
 from crossarm.convert.values import Unresolvable
@@ -24,6 +26,46 @@ class RoutineCalls:
     """The routine translator's part that writes calls with arguments (mixed into it)."""
 
     c: "Converter"
+
+    def provided_call(self, call: n.ProcCall, provided: ProvidedRoutine) -> None:
+        """A call to a routine the integrator provides (external_routines): `CALL PROGRAM(args)`, its arguments as
+        a routine CrossArm converts is given them; what TP cannot pass leaves the call TODO, with why."""
+        use = self.c.provided[call.name.upper()]
+        try:
+            if use.problem:
+                raise Untranslatable(use.problem, Blocker.CALL_ARGS)
+            layout = use.layout
+            if layout is None:  # the backup does not declare it: typed from the mapping file or from this call
+                found = undeclared_layout(call, provided, self.argument_kind)
+                if isinstance(found, str):
+                    raise Untranslatable(found, Blocker.CALL_ARGS)
+                layout = found
+                if use.arguments is None:
+                    use.arguments = arguments_of(layout, False)
+            self.call_with_args(call, layout)
+        except Untranslatable as exc:
+            use.todo[(self.name, call.span.line)] = str(exc)
+            raise Untranslatable(f"{call.name}, provided as {provided.program} (external_routines): {exc}",
+                                 exc.category) from exc  # fmt: skip
+
+    def argument_kind(self, expr: n.Expr) -> str | None:
+        """num, bool or string for what a call passes, as far as it can be told: this routine's own parameter, data of
+        the backup, a constant."""
+        if isinstance(expr, n.Name) and self.args and (kind := self.args.kind(expr.name)) in ("num", "bool", "string"):
+            return kind
+        return literal_kind(expr, self.c.symbols.type_of)
+
+    def provided_function(self, stmt: n.Stmt) -> str | None:
+        """Why a statement using a function the integrator provides stays TODO; None when it uses none."""
+        for node in nodes(stmt):
+            if isinstance(node, n.FuncCall) and (provided := self.c.externals.get(node.name.upper())) is not None:
+                why = (f"{node.name} is a function, provided as {provided.program} (external_routines): a TP CALL"
+                       " gives no value back to an expression")  # fmt: skip
+                use = self.c.provided[node.name.upper()]
+                use.function = True
+                use.todo[(self.name, stmt.span.line)] = why
+                return why
+        return None
 
     def call_with_args(self, call: n.ProcCall, layout: Signature) -> None:
         """CALL NAME(a,b,...): required arguments in order, then 1 / 0 for every optional switch."""

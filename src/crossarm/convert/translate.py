@@ -65,6 +65,15 @@ from crossarm.convert.configuration import (
     tool_on_flange,
 )
 from crossarm.convert.coverage import Coverage, measure
+from crossarm.convert.external import (
+    MISSING_WHY,
+    Candidate,
+    ProvidedProgram,
+    ProvidedRoutine,
+    arguments_of,
+    candidates,
+    declared_layout,
+)
 from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes_on
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
@@ -384,6 +393,10 @@ class ConversionResult:
     program_keys: dict[str, str] = field(default_factory=dict)
     # The RAPID source of each module, by upper-case module name: the report shows it next to the TP.
     rapid_sources: dict[str, list[str]] = field(default_factory=dict)
+    # Routines the integrator provides as TP or KAREL programs (external_routines, crossarm.convert.external): what
+    # each program has to do and where it is called; and the routines CrossArm could not write, which may be.
+    provided: list[ProvidedProgram] = field(default_factory=list)
+    provided_candidates: list[Candidate] = field(default_factory=list)
 
     @property
     def todo_count(self) -> int:
@@ -785,7 +798,13 @@ class Converter:
             routine = next(r for m in modules for r in m.routines if r.kind == "PROC" and r.name.upper() == name)
             self.signatures[name] = signature(routine, records, fine)
         self.procs = {r.name.upper(): r for m in modules for r in m.routines if r.kind == "PROC"}
-        self.routine_use = RoutineUse(self.procs | self.computer.functions)
+        # Routines the integrator provides as programs (external_routines): upper-case name -> the entry, its
+        # record in the result; RAPID's own instructions are not routines (said once, left alone).
+        self.externals: dict[str, ProvidedRoutine] = {}
+        self.provided: dict[str, ProvidedProgram] = {}
+        self.not_written: set[str] = set()  # of which: routines this task would have written
+        self._provided_entries(modules)
+        self.routine_use = RoutineUse(self.procs | self.computer.functions, self.externals)
         self.move_routine_calls: Counter[str] = Counter()
         # Interrupts (crossarm.convert.interrupts): upper-case intnum -> what the programs do with it, set by
         # convert(); the WHEN conditions each is armed on; the data a TRAP changes, never taken as known.
@@ -803,6 +822,37 @@ class Converter:
         self.inliner = Inliner(modules, self._const_bool, self._inlined,
                                lambda name: self.symbols.is_local(name) or name.upper() in self.parameters,
                                self._const_field)  # fmt: skip
+
+    def _provided_entries(self, modules: list[n.Module]) -> None:
+        """The routines of external_routines this backup has or calls: what each program has to do."""
+        declared = {r.name.upper(): (m, r) for m in reversed(modules) for r in m.routines}
+        existing = self.shared.existing_programs
+        for key, entry in self.config.external_routines.items():
+            module, routine = declared.get(key, (None, None))
+            if routine is None and key in RAPID_INSTRUCTIONS:
+                self.note("", None, "WARNING", f"external_routines names {entry.name}, an instruction of RAPID, not a"
+                                               " routine: left out", Blocker.OTHER)  # fmt: skip
+                continue
+            if routine is not None and routine.kind == "TRAP":
+                self.note("", None, "WARNING", f"external_routines names {routine.name}, a TRAP: an interrupt runs it,"
+                                               " no program calls it: left out", Blocker.OTHER)  # fmt: skip
+                continue
+            self.externals[key] = entry
+            use = ProvidedProgram(
+                routine.name if routine is not None else entry.name, entry.program,
+                module.name if module is not None else None,
+                f"{routine.kind} {routine.name}({routine.params})" if routine is not None else "", "",
+                function=routine is not None and routine.kind == "FUNC",
+                on_robot=entry.program in existing if existing else None,
+            )  # fmt: skip
+            if routine is not None and routine.kind == "PROC":
+                layout = declared_layout(routine)
+                if isinstance(layout, str):
+                    use.problem = layout
+                else:
+                    use.layout = layout
+                    use.arguments = arguments_of(layout, True)
+            self.provided[key] = use
 
     def _fine_now(self, expr: n.Expr) -> bool | None:
         """Whether a zone passed to a routine is fine, None when it is not known before the programs are written."""
@@ -833,6 +883,9 @@ class Converter:
                         continue
                 elif is_system:
                     continue  # system modules: data and utilities, converted only on request
+                if routine.name.upper() in self.externals:
+                    self.not_written.add(routine.name.upper())
+                    continue  # the integrator provides it (external_routines): not written
                 reason = self._skip_reason(routine, self.signatures.get(routine.name.upper()))
                 first = next((m for m, r in selected if r.name.upper() == routine.name.upper()), None)
                 if first is not None:  # two LOCAL routines of one name: one program name, one file
@@ -880,6 +933,7 @@ class Converter:
         res.uframes = sorted((f for (k, _), f in self.frames.items() if k == "UF"), key=lambda f: f.number)
         res.utools = sorted((f for (k, _), f in self.frames.items() if k == "UT"), key=lambda f: f.number)
         self.result.records = {owner: (len(r), len(f)) for owner, (r, f) in sorted(self.record_uses.items())}
+        self._report_provided([routine for _, routine in selected])
         self._check_capacity()
         self._report_move_routines()
         declared = {r.name.upper() for m in self.modules for r in m.routines}
@@ -887,6 +941,36 @@ class Converter:
         left_out = [r for r in skipped if r.name.upper() not in self.move_routines]
         res.coverage = measure([r for _, r in selected], left_out, self.not_converted, declared, set(self.move_routines))
         return res
+
+    def _report_provided(self, selected: list[n.Routine]) -> None:
+        """The provided programs this task calls or would have written, with where they are called and the registers
+        they give back in; and the routines CrossArm could not write, as candidates for external_routines."""
+        calls = re.compile(r"^CALL ([A-Z0-9_]+)\b")
+        written: dict[str, list[tuple[str, int]]] = defaultdict(list)
+        for info in self.result.programs:
+            for i, line in enumerate(info.program.lines):
+                found = calls.match(line.text) if isinstance(line, Instruction) else None
+                rapid = info.sources[i] if i < len(info.sources) else None
+                if found is not None and rapid is not None and (info.program.name, rapid) not in written[found[1]]:
+                    written[found[1]].append((info.program.name, rapid))
+        registers = {(a.key or a.rapid_name).upper(): a.number for a in self.result.registers}
+        plain = RoutineUse(self.procs | self.computer.functions) if self.externals else self.routine_use
+        for key, use in self.provided.items():
+            use.calls = list(written.get(use.program, []))
+            if use.module is None:
+                use.why = MISSING_WHY
+            elif (inside := plain.inside(key)) is not None:
+                use.why = f"it calls {inside}"
+            for argument in use.arguments or ():
+                if argument.returned:
+                    slot = argument.name if use.module is not None else f"arg{argument.register[3:-1]}"
+                    if (number := registers.get(f"{use.program}.{slot}".upper())) is not None:
+                        use.returned[argument.name] = number
+            if use.calls or use.todo or key in self.not_written:
+                self.result.provided.append(use)
+        found = candidates(selected, self.procs, {r.name.upper() for m in self.modules for r in m.routines},
+                           RAPID_INSTRUCTIONS, set(self.move_routines), plain._uses, self.symbols.type_of)  # fmt: skip
+        self.result.provided_candidates = [c for c in found if c.name.upper() not in self.externals]
 
     def _plan_slots(self, routines: list[n.Routine]) -> None:
         """Reserve one frame number for the frames above what the controller holds, when there will be some.
@@ -1235,8 +1319,9 @@ class Converter:
                 if not isinstance(stmt, n.ProcCall):
                     continue
                 key = stmt.name.upper()
-                if key in done or key not in by_name or key in self.move_routines:
-                    continue  # a move routine's calls are written as its move, not as a CALL
+                if key in done or key not in by_name or key in self.move_routines or key in self.externals:
+                    continue  # a move routine's calls are written as its move, not as a CALL; a provided one's,
+                    # as a CALL to the integrator's program
                 done.add(key)
                 module, routine = by_name[key]
                 if self._skip_reason(routine, self.signatures.get(key)):
@@ -1501,6 +1586,8 @@ class Converter:
             if name != base:
                 if base == self.config.programs.get(key):
                     why = f"the mapping file gives it {base}, the name of another program of this conversion"
+                elif base in {e.program for e in self.externals.values()}:
+                    why = f"the mapping file gives {base} to a program the integrator provides (external_routines)"
                 elif base in mine:
                     why = "another routine of this task has the same name once shortened"
                 elif base in self.shared.existing_programs:
@@ -1514,6 +1601,8 @@ class Converter:
             self.shared.given_programs.add(name)
             self.result.program_keys[routine.name] = name
             names[key] = name
+        for key, entry in self.externals.items():  # provided: called by the name of the integrator's program
+            names.setdefault(key, entry.program)
         for module in self.modules:  # not written: only called by name
             for routine in module.routines:
                 key = routine.name.upper()
@@ -1538,6 +1627,7 @@ class Converter:
             return pinned, pinned
         start = pinned or base
         others = {name for k, name in self.config.programs.items() if k != key.upper()}
+        others |= {entry.program for entry in self.externals.values()}  # the integrator's programs
         return suffixed(start, taken | others, self.config.program_name_max_length), start
 
     def _name_conditions(self, selected: list[tuple[n.Module, n.Routine]]) -> None:
@@ -2200,6 +2290,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls):
         self._point_keys = {k: v for k, v in self._point_keys.items() if v <= positions}
 
     def stmt(self, s: n.Stmt) -> None:
+        if self.c.externals and (why := self.provided_function(s)) is not None:
+            raise Untranslatable(why, Blocker.PROVIDED_FUNCTION)
         match s:
             case n.Comment(text=text):
                 for remark in remark_lines(text):
@@ -2959,6 +3051,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls):
         elif name in _INTERRUPTS:
             why = _INTERRUPT_GAPS.get(name, "a condition monitor watches digital signals and registers only")
             raise Untranslatable(f"{call.name}: {why}", Blocker.INTERRUPT)
+        elif name in self.c.externals:
+            self.provided_call(call, self.c.externals[name])
         elif name in self.c.move_routines:
             self.routine_move(call, self.c.move_routines[name])
         elif isinstance(self.c.signatures.get(name), Signature) and name in self.c.program_names:

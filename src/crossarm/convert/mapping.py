@@ -76,6 +76,15 @@ PAYLOADS_README = (
     "own (a tool alone is its UTOOL number). Change a number to a schedule the robot does not use (see the "
     "report, 'Payloads to set up')."
 )
+EXTERNAL_ROUTINES_README = (
+    "Routines CrossArm cannot write: not in the backup (a system module, an option, another task), or using files, "
+    "sockets or byte buffers, which TP has none of. Set \"program\" to the name of a TP or KAREL program you "
+    "provide that does the job: each call is then CALL NAME(arguments), the routine is not written, and the report "
+    "lists the arguments the program reads (AR[1], AR[2]...) and the registers it gives a value back in. null: not "
+    "provided, its calls stay TODO. \"arguments\" types the arguments of a routine the backup does not declare "
+    "(num, bool, string, INOUT num: a num given back), as the calls pass them; null where not known. _why: why "
+    "CrossArm does not write it."
+)
 TOOL_PIN_README = (
     "The pin hole of the FANUC flange the tool's guide pin goes in, which the adapter plate decides. "
     "-x: where the ABB pin was, tool frames as they are. +x: the ISO 9409-1 hole, tool frames turned "
@@ -144,4 +153,27 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
     if computed:
         data["_frame_registers"] = FRAME_REGISTERS_README
         data["frame_registers"] = {f.key: f.number for f in computed}
+    external = external_routines(result, config)
+    if external:
+        data["_external_routines"] = EXTERNAL_ROUTINES_README
+        data["external_routines"] = external
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def external_routines(result: ConversionResult, config: ConversionConfig) -> dict[str, dict[str, object]]:
+    """external_routines as the integrator gave it (what this task does not use too: the file may serve another),
+    then each routine CrossArm could not write that is not provided, with "program": null."""
+    out: dict[str, dict[str, object]] = {}
+    for entry in config.external_routines.values():
+        out[entry.name] = {"program": entry.program}
+        if entry.arguments is not None:
+            out[entry.name]["arguments"] = list(entry.arguments)
+    given = {key.upper() for key in out}
+    for candidate in result.provided_candidates:
+        if candidate.name.upper() in given:
+            continue
+        out[candidate.name] = {"program": None}
+        if candidate.arguments is not None:
+            out[candidate.name]["arguments"] = list(candidate.arguments)
+        out[candidate.name]["_why"] = candidate.why
+    return out
