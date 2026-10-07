@@ -1,0 +1,37 @@
+version V10.10-1
+krclear_compiled yes
+krvdefault_compiled yes
+krv1013_compiled yes
+alone_load loaded
+alone_run paused at line 17
+alone_alarm INTP-222 (KRPROBE, 17) Call program failed MEMO-073 Program does not exist STOP.L
+krvdefault_load 550 Program version is too old
+krv1013_load loaded
+ca_posemult_load loaded
+krclear_load loaded
+run done
+krDone 1
+krA 100.000 -50.000 300.000 30.000 -20.000 45.000
+krB 10.000 20.000 30.000 10.000 40.000 -60.000
+krC 96.302 -50.416 337.231 58.386 44.733 24.125
+krD 103.150 -56.681 340.955 62.117 -37.227 65.297
+KRERRRNG_load loaded
+KRERRRNG_run done
+KRERRRNG_alarm VARS-024 Bad variable or register index ABORT.G
+KRERRRNG_after 0
+KRERRTYP_load loaded
+KRERRTYP_run done
+KRERRTYP_alarm ROUT-043 TPE parameter wrong data type ABORT.G
+KRERRTYP_after 0
+KRERRARG_load loaded
+KRERRARG_run done
+KRERRARG_alarm ROUT-042 TPE parameters do not exist ABORT.G
+KRERRARG_after 0
+KRERRJNT_load loaded
+KRERRJNT_run done
+KRERRJNT_alarm ROUT-032 Position type mismach ABORT.G
+KRERRJNT_after 0
+KRERRUNI_load loaded
+KRERRUNI_run done
+KRERRUNI_alarm ROUT-038 Uninitialized TPE position ABORT.G
+KRERRUNI_after 0

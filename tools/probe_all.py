@@ -407,11 +407,10 @@ def probe_external() -> str:
 
 def probe_karel() -> str:
     try:
-        found = make_karel_probe.measure()
+        problem = make_karel_probe.run()  # stores the result, as the probe's own run does
     except RuntimeError as exc:
         return f"FAIL {exc}"
-    problem = make_karel_probe.verdict(found)
-    return f"FAIL {problem}" if problem else make_karel_probe.summary(found)
+    return f"FAIL {problem}" if problem else make_karel_probe.summary(make_karel_probe.stored())
 
 
 def probe_taught() -> str:

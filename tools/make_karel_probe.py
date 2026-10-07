@@ -230,12 +230,18 @@ def compile_all(work: Path) -> dict[str, str]:
 
 
 def alarm(log: str, code: str, after: set[str]) -> str:
-    """The first new error log entry with this code, as 'CODE text SEVERITY', or 'none'."""
+    """The first new error log entry with this code, as 'CODE text [cause] SEVERITY', or 'none'. An ERRALL.LS line
+    is `19735" 07-OCT-26 14:58:36 " INTP-222 (KRPROBE, 17) Call ... " MEMO-073 ... " STOP.L   00000110"    "`:
+    its number, its time, the message, the cause (or nothing), the severity and its flags."""
     for line in log.splitlines():
         entry = line.split('"', 1)[-1]
-        if code in line and entry not in after:
-            parts = [p.strip() for p in line.split('"') if p.strip()]
-            return " ".join(parts[1:4])[:90]
+        if code not in line or entry in after:
+            continue
+        fields = [field.strip() for field in line.split('"')]
+        start = next(i for i, field in enumerate(fields) if code in field)
+        text = " ".join(field for field in fields[start : start + 3] if field)
+        text = re.sub(r"\s+", " ", text[text.index(code) :])
+        return re.sub(r" [0-9A-F]{8}$", "", text).strip()
     return "none"
 
 
@@ -297,6 +303,7 @@ def measure() -> dict[str, str]:
                 _ftp(f"DELE {name.lower()}.tp")
             for name in pcs:
                 _ftp(f"DELE {name}.pc")
+                _ftp(f"DELE {name}.vr")  # its variables, left after the program (the .va view goes with them)
 
 
 def read_pr(posreg: str, number: int) -> str:
@@ -348,6 +355,7 @@ def summary(found: dict[str, str]) -> str:
 
 
 def run() -> str:
+    """Measure, store the result (results/karel_roboguide.txt), check it: '' when as measured."""
     found = measure()
     RESULT.parent.mkdir(parents=True, exist_ok=True)
     RESULT.write_text("".join(f"{k} {v}\n" for k, v in found.items()), encoding="ascii")
@@ -355,8 +363,12 @@ def run() -> str:
     return check()
 
 
+def stored() -> dict[str, str]:
+    return dict(line.split(" ", 1) for line in RESULT.read_text(encoding="ascii").splitlines())
+
+
 def check() -> str:
-    found = dict(line.split(" ", 1) for line in RESULT.read_text(encoding="ascii").splitlines())
+    found = stored()
     problem = verdict(found)
     print(f"FAIL {problem}" if problem else f"karel probe: as measured ({summary(found)})")
     return problem

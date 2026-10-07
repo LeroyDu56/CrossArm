@@ -17,6 +17,7 @@ from make_karel_probe import (
     POSE_C,
     PROBE,
     RESULT,
+    alarm,
     conversion,
     error_programs,
     gap,
@@ -45,6 +46,19 @@ def test_the_programs_written_are_those_of_the_fixture():
     assert f"CALL CA_POSEMULT({numbers['krA']},{numbers['krB']},{numbers['krC']}) ;" in text
     for program in [result.programs[0].program, *error_programs(numbers)]:
         assert write_ls(program) == (PROBE / f"{program.name}.LS").read_bytes().decode("ascii")
+
+
+def test_an_alarm_is_read_from_its_error_log_line():
+    first = ('19728" 07-OCT-26 14:59:04 " VARS-024 Bad variable or register index           " " ABORT.G'
+             '                       00101011"    "')  # fmt: skip
+    second = ('19735" 07-OCT-26 14:58:36 " INTP-222 (KRPROBE, 17) Call program failed        " MEMO-073 Program does'
+              ' not exist                   " STOP.L                        00000110"    "')  # fmt: skip
+    log = f"{first}\n{second}"
+    assert alarm(log, "VARS-024", set()) == "VARS-024 Bad variable or register index ABORT.G"
+    assert alarm(log, "INTP-222 (KRPROBE,", set()) == (
+        "INTP-222 (KRPROBE, 17) Call program failed MEMO-073 Program does not exist STOP.L")
+    earlier = {log.splitlines()[0].split('"', 1)[-1]}
+    assert alarm(log, "VARS-024", earlier) == "none"
 
 
 @pytest.mark.skipif(not RESULT.exists(), reason="KAREL probe not run yet")
