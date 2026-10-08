@@ -469,6 +469,7 @@ class Hole:
     why: str  # "'wJig.uframe' is set at l.46 (left TODO)"
     measured: bool = False
     here: bool = False  # made unknown by the routine (left TODO), not by what the programs may do elsewhere
+    loaded: bool = False  # set at run time and loaded into UFRAME / UTOOL: read back there (convert.frame_writes)
 
     @property
     def rank(self) -> int:

@@ -63,11 +63,14 @@ class FrameFields:
             _stmt, root, new = self._field_value
             self._field_value = None
             self.known[root] = new  # type: ignore[attr-defined]
+            self.known[f"{root}#FRAME"] = why  # type: ignore[attr-defined]  # UFRAME / UTOOL not loaded (frame_writes)
             return True
         found = self.frame_field(stmt)
         if found is None:
             return False
         path, decl = found
+        if path[1] in FRAME_FIELDS[decl.type_name.lower()]:
+            self.known[f"{path[0]}#FRAME"] = why  # type: ignore[attr-defined]  # UFRAME / UTOOL not loaded (frame_writes)
         here = self.known.get(path[0])  # type: ignore[attr-defined]
         if isinstance(here, Unknown):
             return False

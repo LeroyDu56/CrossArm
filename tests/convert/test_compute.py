@@ -206,9 +206,13 @@ def test_a_value_changed_in_a_loop_is_not_known_in_it_nor_after_it():
 def test_a_frame_measured_on_the_robot_is_a_calibration_and_so_is_what_derives_from_it():
     data = BASE + BUILT + HOME + "VAR robtarget pMeas;"
     body = f"pMeas:=CRobT(\\Tool:=tBase);\ntBuilt.tframe.trans:=pMeas.trans;\n{MOVE}"
-    found = todos(run(body, data))  # the point is read (PR[k]=LPOS), the frame is not computed from it
-    assert [c for c, _ in found] == [Blocker.CALIBRATION]
-    assert "'pMeas' is measured on the robot at l.4. TP reads the position (PR[n]=LPOS) but cannot" in found[0][1]
+    result = run(body, data)  # the point is read (PR[k]=LPOS), the tool's x, y, z written over it, then loaded
+    assert not todos(result)
+    lines = [line.text for p in result.programs for line in p.program.lines if hasattr(line, "text")]
+    assert sum(1 for line in lines if line.endswith("=LPOS")) == 1
+    assert any("=UTOOL[" in line for line in lines) and any(line.startswith("UTOOL[") for line in lines)
+    measured = [n for n in result.notes if n.kind == "WARNING" and "computed at run time and loaded" in n.message]
+    assert [n.category for n in measured] == [Blocker.RUNTIME_FRAME]
     extra = MAKE + "\nFUNC pose Measure()\nVAR robtarget p;\np:=CRobT();\nRETURN [p.trans,p.rot];\nENDFUNC"
     ((category, message),) = todos(run(f"tBuilt.tframe:=Measure();\n{MOVE}", extra=extra))
     assert category == Blocker.CALIBRATION and "Measure() (CRobT()) reads the robot's position" in message

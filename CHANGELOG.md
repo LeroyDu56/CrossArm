@@ -9,6 +9,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   longer waits for `robhold` or `tload` to be known, a field every program sets to its declared value
   (`w.oframe := [[0,0,0],[1,0,0,0]]`) does not count as changed, `ufprog` / `ufmec` write nothing (a warning
   when they name a moving work object), and a field left TODO only makes what reads that field TODO.
+- Frames written part by part at run time (`w.uframe.trans := p.trans`, `w.uframe.rot := p.rot`,
+  `t.tframe.trans.z := ...`) and frames copied (`wB.uframe := wA.uframe`, banks past the UFRAME limit) are converted:
+  the frame read back (`PR[k]=UFRAME[n]`), its parts written by TP, then loaded; an oframe other than the identity
+  by KAREL (`--karel`). Measured on ROBOGUIDE (probe `framefield`).
 
 ## 1.7.0 — 2026-10-08
 

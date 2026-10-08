@@ -77,6 +77,7 @@ from crossarm.convert.external import (
     declared_layout,
 )
 from crossarm.convert.frame_fields import FrameFields
+from crossarm.convert.frame_writes import FrameWrites
 from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes_on
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
@@ -2018,7 +2019,7 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields):
+class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -4271,10 +4272,14 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         try:
             root, new = self.c.computer.assigned(a)
         except MeasuredAtRunTime as exc:
+            if is_frame and self.frame_written(a, root_type, remark, True, str(exc)):  # part by part, or copied: frame_writes
+                return
             if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):  # convert.karel_poses
                 return
             raise Untranslatable(self.measured_why(a, root_type, what, exc), Blocker.CALIBRATION) from exc
         except Unresolvable as exc:
+            if is_frame and self.frame_written(a, root_type, remark, self.measured_point(a.value) is not None, str(exc)):
+                return
             if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):
                 return
             if is_frame and (measured := self.measured_point(a.value)) is not None:  # a point set to CRobT()
@@ -4282,6 +4287,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             raise Untranslatable(f"{what} computed from data only known at run time: {exc}", category) from exc
         if is_frame:
             if (hole := self.frame_unknown(a, root_type, root, new)) is not None:  # a field the frame needs
+                if self.oframe_written(a, root_type, remark, new):  # the uframe at run time: frame_writes
+                    return
                 if hole.measured:
                     raise Untranslatable(self.measured_why(a, root_type, what, hole.error()), Blocker.CALIBRATION)
                 raise Untranslatable(f"{what} computed from data only known at run time: {hole.why}", category)
@@ -4298,6 +4305,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 else:
                     self.active_uf = None
                 self.known[root] = new
+                self.known.pop(f"{root}#FRAME", None)  # loaded whole: the robot holds it (frame_writes)
                 return
         self.emit(remark)
         self.known[root] = new

@@ -42,7 +42,7 @@ import re
 from typing import TYPE_CHECKING
 
 from crossarm.convert.blockers import Blocker, Untranslatable
-from crossarm.convert.compute import Typed, Unknown, first_hole, path_of, to_pose
+from crossarm.convert.compute import Typed, Unknown, path_of, to_pose
 from crossarm.convert.configuration import TOOL_PIN_DEFAULT
 from crossarm.convert.tp_numbers import decimal, fmt_number, operand
 from crossarm.convert.values import Unresolvable
@@ -85,6 +85,8 @@ def karel_candidates(modules: list[n.Module], result: "ConversionResult") -> boo
     if any(d.type_name.lower() == "iodev" for d in declared):  # files: convert.karel_files
         return True
     causes = (Blocker.RUNTIME_POSITION, Blocker.RUNTIME_FRAME, Blocker.CALIBRATION)
+    if any(note.kind == "TODO" and "convert with --karel" in note.message for note in result.notes):  # frame_writes
+        return True
     return any(note.kind == "TODO" and note.category in causes and "`" in note.message
                and any(f"{name}(" in note.message.split("`")[1].upper() for name in FUNCTIONS)
                for note in result.notes)  # fmt: skip  # the RAPID statement the TODO quotes
@@ -259,7 +261,7 @@ class KarelPoses:
             other = self.c.computer.value(n.Component(span, root, "oframe")).value if kind == "UF" else None
             fixed = self.c.computer.value(n.Component(span, root, "ufprog")).value if kind == "UF" else True
         except Unresolvable as exc:
-            raise Untranslatable(f"{what}: computed at run time by KAREL when its other fields are known now ({exc})",
+            raise Untranslatable(f"{what}: computed at run time when its other fields are known now ({exc})",
                                  Blocker.RUNTIME_FRAME) from exc  # fmt: skip
         if bool(holder) != (kind == "UT") or not fixed:
             raise Untranslatable(f"{what}: {'stationary tool' if kind == 'UT' else 'robot-held or moving work object'}:"
@@ -282,16 +284,9 @@ class KarelPoses:
         decl = self.c.symbols.get(path[0])
         if decl is None or decl.type_name.lower() != ("tooldata" if kind == "UT" else "wobjdata"):
             return False
-        here = self.scope(path[0])  # type: ignore[attr-defined]
-        if isinstance(here, Unknown):
-            raise Untranslatable(str(here.error(decl.name)), Blocker.RUNTIME_FRAME)
-        if isinstance(here, Typed) and (hole := first_hole(here.value, {path[1]}, decl.type_name.lower())) is not None:
-            raise Untranslatable(hole.why, Blocker.RUNTIME_FRAME)
+        self.frame_kept(kind, path[0])  # type: ignore[attr-defined]  # convert.frame_writes
         _decl, other = self.frame_fields(kind, path[0], expr.span)
-        if other is not None and not _identity(other):
-            raise Untranslatable(f"{format_expr(expr)}: read from UFRAME, which holds uframe x oframe, when the oframe"
-                                 " is the identity", Blocker.RUNTIME_FRAME)  # fmt: skip
-        self.emit(f"{register}={'UTOOL' if kind == 'UT' else 'UFRAME'}[{{{kind}:{path[0]}}}]")  # place_frames()
+        self.frame_into(register, kind, path[0], expr.span, None, to_pose(other) if other is not None else None)  # type: ignore[attr-defined]
         return True
 
     def frame_at_run_time(self, a: n.Assign, root_type: str, remark: str) -> bool:
@@ -324,6 +319,7 @@ class KarelPoses:
             self.active_ut = None  # type: ignore[attr-defined]
         else:
             self.active_uf = None  # type: ignore[attr-defined]
+        self.frame_loaded(kind, path[0], span.line, self.measured_point(a.value) is not None, warn=False)  # type: ignore[attr-defined]
         self.c.warn_once(f"karel-frame|{kind}|{decl.name}", self.name, span.line, f"{what} computed at run time by"
                          " KAREL and loaded where the RAPID sets it: the moves in it go to their points in the new frame,"
                          " with the configuration (and turns) CrossArm worked out for its saved value. A frame turned far"
