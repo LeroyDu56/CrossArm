@@ -825,7 +825,7 @@ class Converter:
         self.not_written: set[str] = set()  # of which: routines this task would have written
         self._provided_entries(modules)
         self.routine_use = RoutineUse(self.procs | self.computer.functions, self.externals,
-                                      KAREL_FILES if self.config.karel else ())
+                                      KAREL_FILES if self.config.karel else (), self.config.karel)
         self.move_routine_calls: Counter[str] = Counter()
         # Interrupts (crossarm.convert.interrupts): upper-case intnum -> what the programs do with it, set by
         # convert(); the WHEN conditions each is armed on; the data a TRAP changes, never taken as known.
@@ -982,6 +982,9 @@ class Converter:
                     written[found[1]].append((info.program.name, rapid))
         registers = {(a.key or a.rapid_name).upper(): a.number for a in self.result.registers}
         plain = RoutineUse(self.procs | self.computer.functions) if self.externals else self.routine_use
+        # the routines to offer: with --karel, one using only files is converted, not offered
+        offered = RoutineUse(self.procs | self.computer.functions, (), KAREL_FILES if self.config.karel else (),
+                             self.config.karel) if self.externals else self.routine_use
         for key, use in self.provided.items():
             use.calls = list(written.get(use.program, []))
             if use.module is None:
@@ -996,7 +999,7 @@ class Converter:
             if use.calls or use.todo or key in self.not_written:
                 self.result.provided.append(use)
         found = candidates(selected, self.procs, {r.name.upper() for m in self.modules for r in m.routines},
-                           RAPID_INSTRUCTIONS, set(self.move_routines), plain._uses, self.symbols.type_of)  # fmt: skip
+                           RAPID_INSTRUCTIONS, set(self.move_routines), offered._uses, self.symbols.type_of)  # fmt: skip
         self.result.provided_candidates = [c for c in found if c.name.upper() not in self.externals]
 
     def _plan_slots(self, routines: list[n.Routine]) -> None:
@@ -2243,7 +2246,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles):
                 # An Unresolvable that reaches here is always a value we could not work out.
                 measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
                 none = no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
-                                         self.c.symbols.type_of, KAREL_FILES if self.c.config.karel else ())
+                                         self.c.symbols.type_of, KAREL_FILES if self.c.config.karel else (),
+                                         self.c.config.karel)
                 text = text_todo(stmt, self.c.procs.keys() | self.c.computer.functions.keys())
                 if none is not None:
                     self.todo(stmt, none, Blocker.NO_TP_EQUIVALENT)

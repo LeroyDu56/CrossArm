@@ -150,5 +150,6 @@ def test_the_window_summary_says_what_karel_did_or_would_do(tmp_path, monkeypatc
     lines = summarize(on).attention
     assert any(kind == WARN and text.startswith("KAREL programs CA_POSEMULT in the KAREL folder") for kind, text in lines)
     off = pipeline.run([tmp_path / "KP.mod"], tmp_path / "off", ConversionConfig(), log=lambda _: None)
-    text = "2 TODO would be converted with KAREL programs (step 6, or --karel): the robot needs the KAREL option (R632)."
+    text = ("2 TODO would be converted with KAREL programs (step 6, or --karel), loaded before the programs: a real robot"
+            " needs the KAREL option (R632).")
     assert (INFO, text) in summarize(off).attention

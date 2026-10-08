@@ -49,6 +49,18 @@ NO_TP_FAMILIES = {
     ),
 }  # fmt: skip
 NO_TP = {name: why for why, names in NO_TP_FAMILIES.items() for name in names}
+_SOCKETS = next(why for why in NO_TP_FAMILIES if why.startswith("sockets"))
+# --karel converts files, not sockets: KAREL socket messaging talks through client tags (Cn:) set up on the robot,
+# which a KAREL program cannot set itself; a socket statement stays TODO, saying so.
+KAREL_SOCKETS = (f"{_SOCKETS}, and --karel does not convert them: KAREL socket messaging needs client tags configured"
+                 " on the robot, which CrossArm does not set up")
+
+
+def why_none(name: str, karel: bool = False) -> str:
+    """Why TP has nothing for RAPID's instruction, function or data type `name` (upper case, in NO_TP); with
+    --karel, sockets say that it does not convert them either."""
+    why = NO_TP[name]
+    return KAREL_SOCKETS if karel and why == _SOCKETS else why
 
 # RAPID's error numbers for files, serial channels and sockets (any ERR_SOCK_... too): an ERROR handler testing only
 # these, or errors of the backup raised only where files or sockets are used, handles what TP has nothing for.
@@ -104,25 +116,27 @@ RAPID_INSTRUCTIONS = frozenset({
 RAPID_DATA = frozenset({"ERRNO", "INTNO", "ROB_ID", "PI"})
 
 
-def no_tp_equivalent(stmt: n.Stmt, routines: Iterable[str], type_of, converted: Iterable[str] = ()) -> str | None:
+def no_tp_equivalent(stmt: n.Stmt, routines: Iterable[str], type_of, converted: Iterable[str] = (),
+                     karel: bool = False) -> str | None:
     """'Write: files and serial channels: ...' when the statement calls an instruction or a function of RAPID
     TP has nothing for, or sets, declares or reads data of such a type; None otherwise. The backup's own routines of
-    the same name are not RAPID's; `converted`: what CrossArm converts after all (--karel: Open, Write...)."""
+    the same name are not RAPID's; `converted`: what CrossArm converts after all (--karel: Open, Write...);
+    `karel`: converting with --karel (sockets say it does not convert them)."""
     skipped = frozenset(converted)
     names: list[str] = [stmt.name] if isinstance(stmt, n.ProcCall) else []
     names += [node.name for node in nodes(stmt) if isinstance(node, n.FuncCall)]
     for name in names:
         if name.upper() in NO_TP and name.upper() not in routines and name.upper() not in skipped:
-            return f"{name}: {NO_TP[name.upper()]}"
+            return f"{name}: {why_none(name.upper(), karel)}"
     typed = stmt.type_name if isinstance(stmt, n.DataDecl) else None
     if isinstance(stmt, n.Assign) and (root := path_of(stmt.target)):
         typed = type_of(root[0])
     if typed is not None and typed.upper() in NO_TP and typed.upper() not in skipped:
-        return f"{typed} data: {NO_TP[typed.upper()]}"
+        return f"{typed} data: {why_none(typed.upper(), karel)}"
     for node in nodes(stmt):  # IF answer=resCancel: what a UIMessageBox or SocketGetStatus gave
         if isinstance(node, n.Name) and (typed := type_of(node.name)) is not None and typed.upper() in NO_TP \
                 and typed.upper() not in skipped:  # fmt: skip
-            return f"{node.name} ({typed} data): {NO_TP[typed.upper()]}"
+            return f"{node.name} ({typed} data): {why_none(typed.upper(), karel)}"
     return None
 
 
@@ -140,12 +154,13 @@ class RoutineUse:
     """The files, sockets and byte buffers the backup's routines use, themselves or through the ones they call."""
 
     def __init__(self, routines: Mapping[str, n.Routine], provided: Iterable[str] = (),
-                 converted: Iterable[str] = ()) -> None:
+                 converted: Iterable[str] = (), karel: bool = False) -> None:
         self.routines = routines  # upper-case name -> PROC or FUNC of the backup
         # upper-case names of the routines the integrator provides as programs (external_routines): what they
         # do is theirs, a routine calling one does not use files or sockets through it
         self.provided = frozenset(provided)
         self.converted = frozenset(converted)  # RAPID's instructions CrossArm converts after all (--karel)
+        self.karel = karel  # converting with --karel: sockets say it does not convert them
         self._found: dict[str, tuple[tuple[str, ...], str] | None] = {}
         self._raised: dict[str, set[str]] | None = None  # error -> the routines raising it
 
@@ -205,7 +220,7 @@ class RoutineUse:
                     continue
                 upper = node.name.upper()
                 if upper not in self.routines and NO_TP.get(upper) in _PASSED_ON:
-                    where = f"{node.name}: {NO_TP[upper]}"
+                    where = f"{node.name}: {why_none(upper, self.karel)}"
                 elif (found := self._uses(upper)) is not None:
                     through, what = found
                     via = f", through {', '.join(through)}," if through else ""
@@ -224,7 +239,7 @@ class RoutineUse:
             for name in _called(stmt):
                 upper = name.upper()
                 if upper not in self.routines and NO_TP.get(upper) in _PASSED_ON and upper not in self.converted:
-                    self._found[key] = ((), f"{name}: {NO_TP[upper]}")
+                    self._found[key] = ((), f"{name}: {why_none(upper, self.karel)}")
                     return self._found[key]
                 if (inner := self._uses(upper)) is not None:
                     self._found[key] = ((self.routines[upper].name, *inner[0]), inner[1])

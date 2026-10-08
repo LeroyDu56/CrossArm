@@ -277,8 +277,8 @@ def summarize(run: RunOutput) -> Summary:
                           f" the robot needs the KAREL option (R632)." + (f" Not compiled: {problem}." if problem else "")))  # fmt: skip
     would = sum(t.result.karel_todo for t in run.tasks if t.result)
     if would:
-        text = (f"{plural(would, 'TODO', 'TODO')} would be converted with KAREL programs (step 6, or --karel): the"
-                " robot needs the KAREL option (R632).")  # fmt: skip
+        text = (f"{plural(would, 'TODO', 'TODO')} would be converted with KAREL programs (step 6, or --karel), loaded"
+                " before the programs: a real robot needs the KAREL option (R632).")  # fmt: skip
         attention.append((INFO, text))
     return summary
 

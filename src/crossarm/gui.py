@@ -212,21 +212,27 @@ def fit_height(height: int, missing: int, room: int, scale: float) -> int:
     return max(int(400 * scale), min(wanted, room - int(40 * scale)))
 
 
+RESULT_WRAP = 272  # the result panel's text, with room for its scroll bar
+
+
 class Scrolled(tk.Frame):
     """A column that scrolls when the window is too short for it (a small screen, a scaled display): its scroll bar
     shows only then, and the mouse wheel scrolls it while over it."""
 
-    def __init__(self, parent: tk.Widget) -> None:
-        super().__init__(parent, bg=BODY_BG)
-        self.canvas = tk.Canvas(self, bg=BODY_BG, highlightthickness=0, borderwidth=0)
+    def __init__(self, parent: tk.Widget, bg: str = BODY_BG, wheel: bool = True) -> None:
+        """`wheel`: bind the mouse wheel for the whole application (once: the steps); else the owner calls
+        wheel()."""
+        super().__init__(parent, bg=bg)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, borderwidth=0)
         self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.bar.set)
-        self.inner = tk.Frame(self.canvas, bg=BODY_BG)
+        self.inner = tk.Frame(self.canvas, bg=bg)
         self._item = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner.bind("<Configure>", lambda _: self._fit())
         self.canvas.bind("<Configure>", self._resized)
-        self.bind_all("<MouseWheel>", self._wheel, add="+")
+        if wheel:
+            self.bind_all("<MouseWheel>", self.wheel, add="+")
 
     def _resized(self, event: tk.Event) -> None:
         self.canvas.itemconfigure(self._item, width=event.width)
@@ -241,9 +247,9 @@ class Scrolled(tk.Frame):
             self.bar.pack_forget()
             self.canvas.yview_moveto(0)
 
-    def _wheel(self, event: tk.Event) -> None:
+    def wheel(self, event: tk.Event) -> None:
         widget = str(event.widget)
-        if self.bar.winfo_ismapped() and widget.startswith(str(self)):
+        if self.winfo_exists() and self.bar.winfo_ismapped() and widget.startswith(str(self)):
             self.canvas.yview_scroll(-1 * (event.delta // 120 or (1 if event.delta > 0 else -1)), "units")
 
 
@@ -320,6 +326,8 @@ class App(tk.Tk):
         self.right = tk.Frame(body, bg=CARD_BG, highlightthickness=1, highlightbackground=CARD_EDGE, width=330)
         self.right.pack(side="right", fill="y", padx=(14, 0))
         self.right.pack_propagate(False)
+        self.results: Scrolled | None = None  # the result panel's lines, scrolled on a short window
+        self.bind_all("<MouseWheel>", lambda e: self.results.wheel(e) if self.results is not None else None, add="+")
 
         self.step_source = Step(
             column, 1, "ABB program to convert", "required",
@@ -361,9 +369,9 @@ class App(tk.Tk):
         self.inputs.append(self.step_keep.button("Earlier output...", self.pick_keep_output))
         self.clear_keep = self.step_keep.link("Clear", self.forget_keep)
         self.step_karel = Step(
-            column, 6, "KAREL programs", "optional · robot with the KAREL option (R632)",
-            "What TP cannot compute (poses multiplied at run time) is called in CrossArm's KAREL programs, written "
-            "in a KAREL folder and compiled by FANUC ktrans when ROBOGUIDE is installed.",
+            column, 6, "KAREL programs", "optional · KAREL option R632",
+            "What TP cannot do (poses computed at run time, text files) is done by CrossArm's KAREL programs, "
+            "written in a KAREL folder and compiled by FANUC ktrans when ROBOGUIDE is installed.",
         )  # fmt: skip
         self.karel_box = ttk.Checkbutton(self.step_karel.buttons, text="Use KAREL programs", variable=self.karel,
                                          command=self._refresh, style="Card.TCheckbutton")  # fmt: skip
@@ -401,6 +409,7 @@ class App(tk.Tk):
 
     def _panel(self) -> tk.Frame:
         """Empty the right-hand panel and return its content frame."""
+        self.results = None
         for child in self.right.winfo_children():
             child.destroy()
         inner = tk.Frame(self.right, bg=CARD_BG)
@@ -408,8 +417,8 @@ class App(tk.Tk):
         return inner
 
     def _text(self, parent: tk.Widget, text: str, *, size: int = 9, bold: bool = False, colour: str = TEXT,
-              pad: tuple[int, int] = (0, 0)) -> tk.Label:  # fmt: skip
-        label = tk.Label(parent, text=text, bg=CARD_BG, fg=colour, justify="left", anchor="w", wraplength=292,
+              pad: tuple[int, int] = (0, 0), wrap: int = 292) -> tk.Label:  # fmt: skip
+        label = tk.Label(parent, text=text, bg=CARD_BG, fg=colour, justify="left", anchor="w", wraplength=wrap,
                          font=(FONT, size, "bold" if bold else "normal"))  # fmt: skip
         label.pack(fill="x", pady=pad)
         return label
@@ -458,8 +467,13 @@ class App(tk.Tk):
                               fg=PRIMARY, font=(FONT, 9, "underline"), cursor="hand2", anchor="w")  # fmt: skip
             choose.pack(side="bottom", fill="x", pady=(0, 8))
             choose.bind("<Button-1>", lambda _: self.choose_move_routines())
-        self._text(panel, "Conversion done", size=11, bold=True)
-        self._text(panel, f"Saved in {summary.folder.name}, next to your input.", colour=MUTED, pad=(0, 10))
+        # The lines scroll on a short window (a small screen): the last ones (KAREL programs to load) stay readable.
+        self.results = Scrolled(panel, bg=CARD_BG, wheel=False)
+        self.results.pack(side="top", fill="both", expand=True)
+        panel = self.results.inner
+        self._text(panel, "Conversion done", size=11, bold=True, wrap=RESULT_WRAP)
+        self._text(panel, f"Saved in {summary.folder.name}, next to your input.", colour=MUTED, pad=(0, 10),
+                   wrap=RESULT_WRAP)
 
         tiles = tk.Frame(panel, bg=CARD_BG)
         tiles.pack(fill="x", pady=(0, 10))
@@ -482,17 +496,18 @@ class App(tk.Tk):
             tk.Label(tile, text=caption, bg=BODY_BG, fg=MUTED, font=(FONT, 8)).pack(pady=(0, 6))
         if summary.decision is not None:  # the report's decision, and the rule it follows
             colour = {READY: OK, WORKABLE: AMBER, NOT_READY: FAIL}.get(summary.decision.level, TEXT)
-            self._text(panel, summary.decision.headline, bold=True, colour=colour, pad=(0, 2))
-            self._text(panel, summary.decision.brief, size=8, colour=MUTED, pad=(0, 8))
+            self._text(panel, summary.decision.headline, bold=True, colour=colour, pad=(0, 2), wrap=RESULT_WRAP)
+            self._text(panel, summary.decision.brief, size=8, colour=MUTED, pad=(0, 8), wrap=RESULT_WRAP)
         if summary.taught is not None:  # --keep-taught: what became of the touch-ups
             taught = summary.taught
             colour = AMBER if taught.level == WARN else OK
-            self._text(panel, taught.headline, bold=True, colour=colour, pad=(0, 2 if taught.detail else 8))
+            self._text(panel, taught.headline, bold=True, colour=colour, pad=(0, 2 if taught.detail else 8),
+                       wrap=RESULT_WRAP)
             if taught.detail:
-                self._text(panel, taught.detail, size=8, colour=MUTED, pad=(0, 8))
+                self._text(panel, taught.detail, size=8, colour=MUTED, pad=(0, 8), wrap=RESULT_WRAP)
 
         if summary.attention:
-            self._text(panel, "What to look at", bold=True, pad=(0, 4))
+            self._text(panel, "What to look at", bold=True, pad=(0, 4), wrap=RESULT_WRAP)
             marks = {WARN: ("⚠", FAIL), INFO: ("•", TEXT), GOOD: ("✔", OK)}
             for level, line in summary.attention:
                 row = tk.Frame(panel, bg=CARD_BG)
@@ -501,7 +516,7 @@ class App(tk.Tk):
                 tk.Label(row, text=mark, bg=CARD_BG, fg=colour, font=(FONT, 9, "bold"), width=2,
                          anchor="n").pack(side="left", anchor="n")  # fmt: skip
                 tk.Label(row, text=line, bg=CARD_BG, fg=TEXT, font=(FONT, 9), justify="left", anchor="w",
-                         wraplength=270).pack(side="left", fill="x")  # fmt: skip
+                         wraplength=RESULT_WRAP - 22).pack(side="left", fill="x")  # fmt: skip
 
     # -- state ----------------------------------------------------------------
 

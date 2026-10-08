@@ -16,6 +16,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - `--karel` writes RAPID's text files: `Open` (`\Write`, `\Append`), `Write` (texts, `\Num`, `\NoNewLine`) and
   `Close` become `CALL CA_FILE(...)`, the iodev a register; the files of `HOME:` are written on `UD1:`, byte for
   byte as RAPID writes them (measured on ROBOGUIDE).
+- With `--karel`, sockets stay TODO and say why (KAREL socket messaging needs client tags configured on the
+  robot, which CrossArm does not set up); the analysis says what `--karel` would convert, files included, and
+  the routines offered for `external_routines` leave out those it converts. The window's result panel scrolls
+  on a small screen.
 
 ## 1.6.0 — 2026-10-07
 

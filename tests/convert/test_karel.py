@@ -155,7 +155,7 @@ def test_report_checklist_and_analysis_with_karel(tmp_path):
 def test_report_and_analysis_without_karel_say_what_it_would_convert():
     result = conversion(False)
     report = build_report(result, ConversionConfig(timestamp=STAMP), ["KP.mod"])
-    assert "Convert again with `--karel` for the poses computed at run time**: 5 TODO" in report
+    assert "Convert again with `--karel` for the poses computed at run time and the text files**: 5 TODO" in report
     page = build_html_report(result, ConversionConfig(timestamp=STAMP), ["KP.mod"], title="t")
     assert 'id="ck-karel"' not in page
 

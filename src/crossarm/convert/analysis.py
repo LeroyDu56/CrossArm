@@ -31,7 +31,7 @@ from crossarm.convert.blockers import Blocker
 from crossarm.convert.coverage import fmt_percent
 from crossarm.convert.taught import AGAIN, KEPT
 from crossarm.convert.translate import Capacity, ConversionResult, Note
-from crossarm.convert.unsupported import NO_TP_FAMILIES
+from crossarm.convert.unsupported import KAREL_SOCKETS, NO_TP_FAMILIES
 
 # ---------------------------------------------------------------------------
 # The rule: its thresholds and the blocking causes, in this one place.
@@ -312,8 +312,9 @@ def priority_actions(result: ConversionResult) -> list[Action]:
         names = [f"`{name}`" for name in result.karel_programs]
         actions.append(Action(
             f"Load the {_plural(len(names), 'KAREL program')} before the programs that call {'them' if len(names) > 1 else 'it'}",
-            f"{_names(names, 4)}, of CrossArm's KAREL library (`--karel`), in the KAREL folder: the robot needs the"
-            " KAREL option (R632).", "#ck-karel", "Checklist: KAREL programs"))  # fmt: skip
+            f"{_names(names, 4)}, of CrossArm's KAREL library (`--karel`): load each .pc of the KAREL folder before"
+            " the .LS (compile the .kl with ktrans first where there is no .pc); a real robot needs the KAREL option"
+            " (R632).", "#ck-karel", "Checklist: KAREL programs"))  # fmt: skip
 
     design = []
     for causes, title, how in _DESIGN:
@@ -336,11 +337,13 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             "#review", "Items to review", rest[0][0])))  # fmt: skip
     actions += [action for _, action in sorted(design, key=lambda x: -x[0])]
     if result.karel_todo:  # converted without --karel: what it would convert
+        sockets = any(note.kind == "TODO" and "sockets:" in note.message for note in result.notes)
         actions.append(Action(
-            "Convert again with `--karel` for the poses computed at run time",
+            "Convert again with `--karel` for the poses computed at run time and the text files",
             f"{_todo(result.karel_todo)} converted then by CrossArm's KAREL programs (PoseMult, PoseInv, RelTool,"
-            " DefFrame of poses kept in position registers, frames loaded from them): the robot needs the KAREL"
-            " option (R632).", "#review", "Items to review",
+            " DefFrame of poses kept in position registers, frames loaded from them; text files written with Open,"
+            " Write, Close on UD1:). Load the KAREL programs (.pc) before the .LS; a real robot needs the KAREL"
+            " option (R632)." + (" Sockets stay TODO with it." if sockets else ""), "#review", "Items to review",
             Blocker.RUNTIME_POSITION))  # fmt: skip
 
     errors = [note for cause in sorted(_ERRORS) for note in by_cause.get(cause, [])]
@@ -359,7 +362,9 @@ def priority_actions(result: ConversionResult) -> list[Action]:
         actions.append(Action(
             "Redo what TP has nothing for on the FANUC side",
             f"{_plural(len(no_tp), 'RAPID instruction')}" + (f" ({_names(kinds, 3)})" if kinds else "")
-            + ": not a CrossArm bug. A TP or KAREL program can stand in for a routine (`external_routines`).",
+            + ": not a CrossArm bug. A TP or KAREL program can stand in for a routine (`external_routines`)."
+            + (" Sockets stay TODO with `--karel`: KAREL socket messaging needs client tags configured on the robot."
+               if any(KAREL_SOCKETS in note.message for note in no_tp) else ""),
             "#review", "Items to review", Blocker.NO_TP_EQUIVALENT))  # fmt: skip
     waiting = [use for use in result.move_routines if not use.converted]
     done.add(Blocker.MOVE_ROUTINE)
