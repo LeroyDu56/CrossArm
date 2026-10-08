@@ -42,7 +42,7 @@ import re
 from typing import TYPE_CHECKING
 
 from crossarm.convert.blockers import Blocker, Untranslatable
-from crossarm.convert.compute import Typed, Unknown, path_of, to_pose
+from crossarm.convert.compute import Typed, Unknown, first_hole, path_of, to_pose
 from crossarm.convert.configuration import TOOL_PIN_DEFAULT
 from crossarm.convert.tp_numbers import decimal, fmt_number, operand
 from crossarm.convert.values import Unresolvable
@@ -285,6 +285,8 @@ class KarelPoses:
         here = self.scope(path[0])  # type: ignore[attr-defined]
         if isinstance(here, Unknown):
             raise Untranslatable(str(here.error(decl.name)), Blocker.RUNTIME_FRAME)
+        if isinstance(here, Typed) and (hole := first_hole(here.value, {path[1]}, decl.type_name.lower())) is not None:
+            raise Untranslatable(hole.why, Blocker.RUNTIME_FRAME)
         _decl, other = self.frame_fields(kind, path[0], expr.span)
         if other is not None and not _identity(other):
             raise Untranslatable(f"{format_expr(expr)}: read from UFRAME, which holds uframe x oframe, when the oframe"

@@ -3,6 +3,13 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- Tools and work objects are followed field by field: a frame computed from `tframe` (or `uframe`, `oframe`) no
+  longer waits for `robhold` or `tload` to be known, a field every program sets to its declared value
+  (`w.oframe := [[0,0,0],[1,0,0,0]]`) does not count as changed, `ufprog` / `ufmec` write nothing (a warning
+  when they name a moving work object), and a field left TODO only makes what reads that field TODO.
+
 ## 1.7.0 — 2026-10-08
 
 For what TP cannot compute. The new option `--karel` (off by default; step 6 of the window) writes some of it

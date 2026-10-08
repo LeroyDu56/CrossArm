@@ -50,6 +50,7 @@ from crossarm.convert.compute import (
     Typed,
     Unknown,
     Written,
+    first_hole,
     fixed_math,
     measured_reason,
     parse_params,
@@ -75,6 +76,7 @@ from crossarm.convert.external import (
     candidates,
     declared_layout,
 )
+from crossarm.convert.frame_fields import FrameFields
 from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes_on
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
@@ -2016,7 +2018,7 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles):
+class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2140,6 +2142,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles):
         found = None if name.upper() in self.c.volatile else self.known.get(name.upper())
         if isinstance(found, Unknown):
             raise found.error(name)
+        if isinstance(found, Typed) and (hole := first_hole(found.value)) is not None:  # a field not known here
+            raise hole.error()
         return found.value if isinstance(found, Typed) else None
 
     def forget(self, stmts: Iterable[n.Stmt], why: Unknown) -> None:
@@ -2193,7 +2197,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles):
         # A search stops on a contact: the point it records is measured on the robot too
         measured = category == Blocker.CALIBRATION or (
             isinstance(stmt, n.ProcCall) and stmt.name.upper() in ("SEARCHL", "SEARCHJ", "SEARCHC"))  # fmt: skip
-        self.forget((stmt,), Unknown(f"is {'measured on the robot' if measured else 'set'} at l.{line} (left TODO)", measured))
+        why = Unknown(f"is {'measured on the robot' if measured else 'set'} at l.{line} (left TODO)", measured)
+        if not self.forget_field(stmt, why):  # a field of a tool or work object: that field alone (frame_fields)
+            self.forget((stmt,), why)
         path = path_of(stmt.target) if isinstance(stmt, n.Assign) else None
         if isinstance(stmt, n.ProcCall) and stmt.name.upper() == "SEARCHL":  # the point it finds
             found = [a.value for a in stmt.args if a.name is None][1:2]
@@ -4260,6 +4266,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles):
         what = f"{'frame' if is_frame else 'position'} {target}"
         line = a.span.line
         remark = ("!" + ascii_text(f"l.{line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip()
+        if is_frame and self.field_without_frame(a, remark):  # ufprog, ufmec, a field kept as declared: no frame
+            return
         try:
             root, new = self.c.computer.assigned(a)
         except MeasuredAtRunTime as exc:
@@ -4273,6 +4281,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles):
                 raise Untranslatable(self.measured_why(a, root_type, what, measured), Blocker.CALIBRATION) from exc
             raise Untranslatable(f"{what} computed from data only known at run time: {exc}", category) from exc
         if is_frame:
+            if (hole := self.frame_unknown(a, root_type, root, new)) is not None:  # a field the frame needs
+                if hole.measured:
+                    raise Untranslatable(self.measured_why(a, root_type, what, hole.error()), Blocker.CALIBRATION)
+                raise Untranslatable(f"{what} computed from data only known at run time: {hole.why}", category)
             kind = "UT" if root_type == "tooldata" else "UF"
             pose = self._fanuc_frame(kind, new, target)
             decl = self.c.symbols.get(root)

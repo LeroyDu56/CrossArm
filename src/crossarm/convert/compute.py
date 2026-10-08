@@ -208,14 +208,17 @@ class Written:
     """Every piece of data the programs can change, with where: one place each is enough to say why."""
 
     places: dict[str, list[tuple[tuple[str, ...], str]]] = field(default_factory=lambda: defaultdict(list))
+    # path -> the value of each assignment to exactly that path (None: changed some other way, by a call...)
+    values: dict[tuple[str, ...], list[n.Expr | None]] = field(default_factory=lambda: defaultdict(list))
     # SetDataVal with a name computed at run time: any data of that type may change (lower-case type -> where);
     # `everything` when not even the type is known.
     types: dict[str, str] = field(default_factory=dict)
     everything: str = ""
 
-    def add(self, path: tuple[str, ...] | None, where: str) -> None:
+    def add(self, path: tuple[str, ...] | None, where: str, value: n.Expr | None = None) -> None:
         if path is not None:
             self.places[path[0]].append((path, where))
+            self.values[path].append(value)
 
     def where(self, path: tuple[str, ...], type_name: str | None = None) -> str | None:
         """Where the programs change this data (or a part of it, or the data it is part of); None: nowhere.
@@ -264,7 +267,7 @@ class Written:
             for stmt in walk_statements(stmts):
                 where = f"{place} l.{stmt.span.line}"
                 if isinstance(stmt, n.Assign):
-                    written.add(path_of(stmt.target), where)
+                    written.add(path_of(stmt.target), where, stmt.value)
                 elif isinstance(stmt, n.ProcCall):
                     if stmt.name.upper() in ("SETDATAVAL", "SETALLDATAVAL"):
                         by_name(stmt, where, local_types)
@@ -452,6 +455,43 @@ class Unknown:
 
 UNKNOWN = Unknown("is set at run time before this point")
 
+# The fields of a tool or a work object, each tracked apart: a frame computed from tframe does not depend on
+# robhold or tload; a field the routine left unknown makes only what reads that field unknown.
+FRAME_RECORDS = frozenset({"tooldata", "wobjdata"})
+FRAME_FIELDS = {"tooldata": frozenset({"ROBHOLD", "TFRAME"}), "wobjdata": frozenset({"ROBHOLD", "UFRAME", "OFRAME"})}
+
+
+@dataclass(frozen=True)
+class Hole:
+    """A field of a tool or work object whose value is not known at this point (left TODO, changed by the programs),
+    inside a value whose other fields are: reading it is Unresolvable, with why."""
+
+    why: str  # "'wJig.uframe' is set at l.46 (left TODO)"
+    measured: bool = False
+    here: bool = False  # made unknown by the routine (left TODO), not by what the programs may do elsewhere
+
+    @property
+    def rank(self) -> int:
+        """Which one says best why a value is not known: measured on the robot, then left TODO here."""
+        return 0 if self.measured else 1 if self.here else 2
+
+    def error(self) -> Unresolvable:
+        return (MeasuredAtRunTime if self.measured else Unresolvable)(self.why)
+
+
+def first_hole(value: Any, fields: Iterable[str] | None = None, type_name: str | None = None) -> Hole | None:
+    """The Hole in a value that says best why (Hole.rank), in these top-level fields of a tooldata / wobjdata only
+    when given; None when there is none."""
+    if fields is not None and type_name in FRAME_RECORDS and isinstance(value, list):
+        names = [f.upper() for f, _ in LAYOUTS[type_name]]
+        value = [v for name, v in zip(names, value, strict=False) if name in fields]
+    if isinstance(value, Hole):
+        return value
+    if isinstance(value, list | tuple):
+        found = [hole for item in value if (hole := first_hole(item)) is not None]
+        return min(found, key=lambda hole: hole.rank) if found else None
+    return None
+
 Scope = Callable[[str], "Typed | Unknown | None"]  # upper-case name -> value, Unknown, or None: not the routine's
 
 PREDEFINED = {
@@ -545,6 +585,7 @@ class Computer:
         self.scope: Scope = lambda name: None  # the routine being converted: its data, set by the converter
         self._frames: list[tuple[dict[str, Typed], set[str], str]] = []  # FUNC calls: data, switches given, name
         self._resolving: set[str] = set()
+        self._invariant: dict[tuple[str, ...], bool] = {}
 
     # -- reading data ----------------------------------------------------------------------------
 
@@ -618,7 +659,7 @@ class Computer:
             raise NotInBackup(name)
         if decl.storage != "CONST":
             where = self.written.where(chain, decl.type_name.lower())
-            if where is not None:
+            if where is not None and not self.invariant(chain):
                 raise Unresolvable(f"'{label}' is changed by the programs ({where})")
         if decl.init is None:
             raise Unresolvable(f"'{name}' has no initial value (set at run time)")
@@ -641,9 +682,13 @@ class Computer:
         current = root
         for step in reversed(steps):
             current = self._step(current, step)
+        if isinstance(current.value, Hole):
+            raise current.value.error()
         return current
 
     def _step(self, current: Typed, step: n.Component | n.Index) -> Typed:
+        if isinstance(current.value, Hole):
+            raise current.value.error()
         if isinstance(step, n.Index):
             if current.dims < len(step.indices):
                 raise Unresolvable("index on data that is not an array")
@@ -827,6 +872,8 @@ class Computer:
                 holder, slot = current.value, int(i) - 1
                 current = Typed(current.value[slot], current.type, current.dims - 1)
             else:
+                if isinstance(current.value, Hole):  # a part of a field not known here: the rest of it is not
+                    raise current.value.error()
                 index, field_type = self.layouts.field(current.type, step.field)
                 holder, slot = current.value, index
                 current = Typed(current.value[index], field_type)
@@ -881,18 +928,19 @@ class Computer:
         if len(chain) == 1:
             type_name = decl.type_name.lower() if decl else known.type  # type: ignore[union-attr]
             return chain[0], Typed(new.value, type_name, len(decl.dims) if decl else known.dims)  # type: ignore[union-attr]
-        root = known if isinstance(known, Typed) else self._all_but(root_expr.name, chain)
+        root = known if isinstance(known, Typed) else self.all_but(root_expr.name, chain)
         return chain[0], self.assign_into(root, assign.target, new)
 
-    def _all_but(self, name: str, chain: tuple[str, ...]) -> Typed:
+    def all_but(self, name: str, chain: tuple[str, ...]) -> Typed:
         """A data's value, read component by component, but for the part being assigned: what the programs do to
-        that part does not matter, the rest must be fixed."""
+        that part does not matter, the rest must be fixed. A field of a tool or work object that is not is a Hole."""
         decl = self.symbols.get(name)
         assert decl is not None
         if "{}" in chain:
             raise Unresolvable(f"'{name}': element of an array assigned")
         type_name = decl.type_name.lower()
         target = Typed(self.layouts.default(type_name), type_name)
+        holes = type_name in FRAME_RECORDS and not decl.dims
 
         def fill(value: list, type_name: str, prefix: tuple[str, ...]) -> None:
             for i, (field_name, field_type) in enumerate(self.layouts.layouts.get(type_name, ())):
@@ -901,11 +949,45 @@ class Computer:
                     continue
                 if chain[: len(path)] == path:
                     fill(value[i], field_type, path)
+                elif holes and len(path) == 2:  # a field of a tool / work object: unknown alone
+                    try:
+                        value[i] = self._read_path(name, path, field_type)
+                    except Unresolvable as exc:
+                        value[i] = Hole(str(exc), isinstance(exc, MeasuredAtRunTime))
                 else:
                     value[i] = self._read_path(name, path, field_type)
 
         fill(target.value, type_name, (chain[0],))
         return target
+
+    def invariant(self, chain: tuple[str, ...]) -> bool:
+        """Whether the field of a tool or work object `chain` reads (or is part of) keeps its declared value: every
+        program writing it sets it, alone, to that same fixed value (`w.oframe := [[0,0,0],[1,0,0,0]]`)."""
+        if len(chain) < 2 or "{}" in chain[:2]:
+            return False
+        path = chain[:2]
+        if path in self._invariant:
+            return self._invariant[path]
+        self._invariant[path] = False  # while it is worked out (a value reading itself)
+        decl = self.symbols.get_global(path[0])
+        written = self.written
+        if decl is None or decl.dims or decl.init is None or decl.type_name.lower() not in FRAME_RECORDS \
+                or written.everything or decl.type_name.lower() in written.types:  # fmt: skip
+            return False
+        writes = [p for p, _ in written.places.get(path[0], ()) if _overlap(p, path)]
+        if not writes or any(p != path for p in writes):
+            return False
+        scope, frames, self.scope, self._frames = self.scope, self._frames, (lambda name: None), []
+        try:
+            index, _type = self.layouts.field(decl.type_name.lower(), path[1])
+            declared = self.value(decl.init).value[index]
+            same = all(value is not None and _equal(self.value(value).value, declared) for value in written.values[path])
+        except (Unresolvable, TypeError, IndexError):
+            same = False
+        finally:
+            self.scope, self._frames = scope, frames
+        self._invariant[path] = same
+        return same
 
     def _read_path(self, name: str, path: tuple[str, ...], type_name: str) -> Any:
         expr: n.Expr = n.Name(n.Span(0, 0), name)
