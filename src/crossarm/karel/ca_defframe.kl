@@ -1,0 +1,51 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CALL CA_DEFFRAME(a, b, d, c, o): PR[c] = RAPID's DefFrame(PR[a], PR[b], PR[d] \Origin:=o): x from PR[a]
+-- towards PR[b], PR[d] on the positive y side of the xy plane; the origin at PR[a] (o = 1), at PR[b] (2), or
+-- on the line through PR[a] and PR[b] where the y axis passes through PR[d] (3). The points are at least
+-- 10 mm apart and PR[d] 10 mm from that line, as FRAME() needs: else the program stops (ROUT-035).
+-- Written by CrossArm (--karel).
+PROGRAM ca_defframe
+%NOLOCKGROUP
+%NOBUSYLAMP
+%COMMENT = 'CrossArm DefFrame'
+%ENVIRONMENT REGOPE
+VAR
+  i1, i2, i3, c, org : INTEGER
+  q1, q2, q3, f : POSITION
+  v12, v13 : VECTOR
+  l12, along, off : REAL
+%INCLUDE ca_lib
+BEGIN
+  i1 = ca_reg_arg(1)
+  i2 = ca_reg_arg(2)
+  i3 = ca_reg_arg(3)
+  c = ca_reg_arg(4)
+  org = ca_reg_arg(5)
+  IF (org < 1) OR (org > 3) THEN
+    ca_stop(17035)  -- ROUT-035: value is out of range
+  ENDIF
+  q1 = ca_get_pr(i1)
+  q2 = ca_get_pr(i2)
+  q3 = ca_get_pr(i3)
+  v12 = q2.location - q1.location
+  v13 = q3.location - q1.location
+  l12 = SQRT(v12 @ v12)
+  IF l12 < 10 THEN
+    ca_stop(17035)
+  ENDIF
+  along = (v13 @ v12) / l12
+  off = (v13 @ v13) - along * along
+  IF off < 100 THEN
+    ca_stop(17035)
+  ENDIF
+  f = FRAME(q1, q2, q3)
+  IF org = 2 THEN
+    f.location = q2.location
+  ENDIF
+  IF org = 3 THEN
+    f.location = q1.location + v12 * (along / l12)
+  ENDIF
+  ca_set_pr(c, f)
+END ca_defframe

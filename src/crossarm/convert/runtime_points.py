@@ -235,6 +235,10 @@ class RuntimePoints:
             self.known[turn] = Typed(tuple(fixed.pose.rot), "orient")
             return
         if self.passed_point(value, "CROSSARM.POINT", into=register) is None:
+            if self.c.config.karel and isinstance(value, n.FuncCall) and value.name.upper() == "RELTOOL" \
+                    and self.pose_function(value) is not None:  # type: ignore[attr-defined]  # fmt: skip
+                self.known[turn] = self.karel_reltool(value, register)  # type: ignore[attr-defined]
+                return
             raise Untranslatable(f"point {format_expr(a.target)} set to {format_expr(value)}: a point kept in a position"
                                  " register is set to a point, Offs() or RelTool() of one, or CRobT()",
                                  Blocker.RUNTIME_POSITION)  # fmt: skip
@@ -342,12 +346,16 @@ class RuntimePoints:
         if source is None:
             return None
         orientation = self.known.get(f"{positional[0].name.upper()}#ROT")
+        if not isinstance(orientation, Typed) and self.c.config.karel:  # by KAREL (convert.karel_poses)
+            return self.karel_reltool(call, register)  # type: ignore[attr-defined]
         if not isinstance(orientation, Typed):
             raise Untranslatable(f"RelTool of {positional[0].name}, whose orientation is only known at run time: TP"
                                  " cannot turn a position register", Blocker.RUNTIME_POSITION)  # fmt: skip
         try:
             turns = {axis: self.c.evaluator.constant_number(v) for axis, v in options.items() if v is not None}
         except Unresolvable as exc:
+            if self.c.config.karel:
+                return self.karel_reltool(call, register)  # type: ignore[attr-defined]
             raise Untranslatable(f"RelTool rotation only known at run time ({exc})", Blocker.RUNTIME_POSITION) from exc
         m = quat_to_matrix(orientation.value)
         from_register = self.c.point_register(source)

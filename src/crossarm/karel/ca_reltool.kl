@@ -1,0 +1,32 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CALL CA_RELTOOL(a, c, dx, dy, dz, rx, ry, rz): PR[c] = RAPID's RelTool(PR[a], dx, dy, dz \Rx \Ry \Rz):
+-- moved along the axes of PR[a], then turned about its own x by rx, y by ry, z by rz (degrees), in that
+-- order. dx...rz: constants or registers R[i]. The configuration is PR[a]'s, as RelTool keeps robconf.
+-- Written by CrossArm (--karel).
+PROGRAM ca_reltool
+%NOLOCKGROUP
+%NOBUSYLAMP
+%COMMENT = 'CrossArm RelTool'
+%ENVIRONMENT REGOPE
+VAR
+  a, c, i : INTEGER
+  d : ARRAY[6] OF REAL
+  pa : POSITION
+  cf : CONFIG
+%INCLUDE ca_lib
+BEGIN
+  a = ca_reg_arg(1)
+  c = ca_reg_arg(2)
+  FOR i = 1 TO 6 DO
+    d[i] = ca_num_arg(i + 2)
+  ENDFOR
+  pa = ca_get_pr(a)
+  cf = pa.config_data
+  pa = pa : ca_frame(d[1], d[2], d[3], 0, 0, 0, cf)
+  pa = pa : ca_frame(0, 0, 0, d[4], 0, 0, cf)
+  pa = pa : ca_frame(0, 0, 0, 0, d[5], 0, cf)
+  pa = pa : ca_frame(0, 0, 0, 0, 0, d[6], cf)
+  ca_set_pr(c, pa)
+END ca_reltool

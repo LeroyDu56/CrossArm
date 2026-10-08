@@ -96,7 +96,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )  # fmt: skip
     p_conv.add_argument(
         "--karel", action="store_true",
-        help="write what TP cannot compute (PoseMult of poses computed at run time) as calls to CrossArm's KAREL "
+        help="write what TP cannot compute (PoseMult, PoseInv, RelTool, DefFrame of poses and points known at run "
+             "time, and the frames loaded from them) as calls to CrossArm's KAREL "
              "programs, in a KAREL folder, compiled by FANUC ktrans (installed with ROBOGUIDE) when it is there, for "
              "the --tp-robot robot's software, else the newest version installed. The robot needs the KAREL option "
              "(R632)",

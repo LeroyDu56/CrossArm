@@ -67,3 +67,59 @@ BEGIN
     ca_stop(status)  -- VARS-024: bad register index
   ENDIF
 END ca_set_pr
+
+-- The numeric TP argument n: an integer or real constant, or the value of a register R[i].
+ROUTINE ca_num_arg(n : INTEGER) : REAL
+VAR
+  kind, ival, status : INTEGER
+  rval : REAL
+  sval : STRING[32]
+BEGIN
+  GET_TPE_PRM(n, kind, ival, rval, sval, status)
+  IF status <> 0 THEN
+    ca_stop(status)  -- ROUT-042: TPE parameters do not exist
+  ENDIF
+  IF kind = 1 THEN
+    rval = ival
+  ELSE
+    IF kind <> 2 THEN
+      ca_stop(17043)  -- ROUT-043: TPE parameter wrong data type
+    ENDIF
+  ENDIF
+  RETURN (rval)
+END ca_num_arg
+
+-- An angle in degrees brought into ]-180, 180], as a position's W, P, R take it.
+ROUTINE ca_wrap(a : REAL) : REAL
+VAR
+  b : REAL
+BEGIN
+  IF ABS(a) > 36000 THEN
+    ca_stop(17035)  -- ROUT-035: value is out of range
+  ENDIF
+  b = a
+  WHILE b > 180 DO
+    b = b - 360
+  ENDWHILE
+  WHILE b <= -180 DO
+    b = b + 360
+  ENDWHILE
+  RETURN (b)
+END ca_wrap
+
+-- The frame moved by x, y, z and turned by W about x, P about y, R about z, with configuration c.
+ROUTINE ca_frame(x, y, z, w, p, r : REAL; c : CONFIG) : POSITION
+VAR
+  t : XYZWPR
+  q : POSITION
+BEGIN
+  t.x = x
+  t.y = y
+  t.z = z
+  t.w = ca_wrap(w)
+  t.p = ca_wrap(p)
+  t.r = ca_wrap(r)
+  t.config_data = c
+  q = t
+  RETURN (q)
+END ca_frame

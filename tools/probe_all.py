@@ -57,6 +57,9 @@ probe, everything else in local/logs/probe_all.log):
                  computes them, decoded back by PrintTP to the lines of the .LS (skipped without MakeTP)
     karel        --karel: CrossArm's KAREL library compiled by ktrans and loaded; a CALL before the .pc stops (INTP-222);
                  PoseMult of poses kept in position registers as RAPID computes it; wrong calls abort on the CALL
+    karelpose    --karel: PoseInv, RelTool, DefFrame by the KAREL library as RAPID computes them; a work object's
+                 uframe set to DefFrame of points read on the robot, a tool's tframe to PoseMult/PoseInv, RelTool of
+                 a point read: loaded into UFRAME / UTOOL, the moves after them where RAPID puts the flange
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool and user frames 1 to 3 and 9, and
@@ -88,6 +91,7 @@ import make_flag_probe
 import make_interrupt_probe
 import make_io_probe
 import make_joint_probe
+import make_karel_pose_probe
 import make_karel_probe
 import make_maketp_probe
 import make_move_do_probe
@@ -413,6 +417,14 @@ def probe_karel() -> str:
     return f"FAIL {problem}" if problem else make_karel_probe.summary(make_karel_probe.stored())
 
 
+def probe_karelpose() -> str:
+    try:
+        problem = make_karel_pose_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_karel_pose_probe.summary(make_karel_pose_probe.stored())
+
+
 def probe_taught() -> str:
     try:
         problem = make_taught_probe.run()
@@ -501,7 +513,7 @@ def main() -> int:
               "interrupts": probe_interrupts, "params": probe_params, "records": probe_records, "strings": probe_strings,
               "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "joints": probe_joints, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
               "external": probe_external, "taught": probe_taught,
-              "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel,
+              "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel, "karelpose": probe_karelpose,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     summary = "--summary" in sys.argv

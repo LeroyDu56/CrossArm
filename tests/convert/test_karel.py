@@ -158,3 +158,19 @@ def test_report_and_analysis_without_karel_say_what_it_would_convert():
     assert "Convert again with `--karel` for the poses computed at run time**: 5 TODO" in report
     page = build_html_report(result, ConversionConfig(timestamp=STAMP), ["KP.mod"], title="t")
     assert 'id="ck-karel"' not in page
+
+
+def test_what_karel_would_convert_is_counted_with_the_programs_named_as_this_tasks():
+    """A task whose program is renamed (an earlier task has a MAIN) counts the same TODO as alone: the conversion
+    made again with --karel names its programs the same way."""
+    from crossarm.convert.translate import ControllerScope
+
+    text = MODULE.replace("    pB:=pC;", "    pB:=pC;\n    pB:=[[0,0,100],[n,0,0,0]];")  # one stays TODO with --karel
+    alone = conversion(False, text)
+    assert 0 < alone.karel_todo < alone.todo_count
+    config = ConversionConfig(timestamp=STAMP)
+    shared = ControllerScope.from_config(config)
+    shared.program_names.add("MAIN")
+    renamed = convert([parse_text(text, path="KP.mod").module], config, sources={"KP": text}, shared=shared)
+    assert renamed.programs[0].program.name != "MAIN"
+    assert renamed.karel_todo == alone.karel_todo

@@ -81,6 +81,7 @@ from crossarm.convert.inline import REAL_CONTROLLER, Inliner
 from crossarm.convert.interrupts import GAPS, SINGLE_OPTIONS, Interrupt, arming, called_by, changed_by, connected
 from crossarm.convert.interrupts import scan as scan_interrupts
 from crossarm.convert.karel_poses import KarelPoses, karel_candidates, karel_would
+from crossarm.convert.karel_poses import place_frames as place_karel_frames
 from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
@@ -935,6 +936,7 @@ class Converter:
         self._number_deferred()
         self._controller_comments()
         self._place_computed()
+        place_karel_frames(self)  # before the registers are numbered: they stay placeholders until then
         self._place_points()
         self._place_number_arrays()
         self._place_payloads()
@@ -4245,16 +4247,20 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses):
                                  " (PAYLOAD[n]) where the RAPID changes it", Blocker.PAYLOAD)  # fmt: skip
         category = _type_blocker(root_type) if isinstance(a.target, n.Name) else _assign_blocker(a.target, self.c.symbols.type_of)
         what = f"{'frame' if is_frame else 'position'} {target}"
+        line = a.span.line
+        remark = ("!" + ascii_text(f"l.{line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip()
         try:
             root, new = self.c.computer.assigned(a)
         except MeasuredAtRunTime as exc:
+            if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):  # convert.karel_poses
+                return
             raise Untranslatable(self.measured_why(a, root_type, what, exc), Blocker.CALIBRATION) from exc
         except Unresolvable as exc:
+            if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):
+                return
             if is_frame and (measured := self.measured_point(a.value)) is not None:  # a point set to CRobT()
                 raise Untranslatable(self.measured_why(a, root_type, what, measured), Blocker.CALIBRATION) from exc
             raise Untranslatable(f"{what} computed from data only known at run time: {exc}", category) from exc
-        line = a.span.line
-        remark = ("!" + ascii_text(f"l.{line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip()
         if is_frame:
             kind = "UT" if root_type == "tooldata" else "UF"
             pose = self._fanuc_frame(kind, new, target)
@@ -4786,12 +4792,14 @@ def convert(
     shared: ControllerScope | None = None,
 ) -> ConversionResult:
     config = config or ConversionConfig()
+    taken = (set(shared.program_names), set(shared.given_programs)) if shared is not None else None
     result = Converter(modules, config, sources, signals, shared).convert(routines, program_modules)
     if not config.karel and karel_candidates(modules, result):  # what --karel would convert: the same conversion with it
         scope = None  # numbered on its own: only its lines are compared, not its numbers
-        if shared is not None:
+        if shared is not None and taken is not None:
             scope = ControllerScope.from_config(config, shared.existing_programs)
             scope.written = shared.written
+            scope.program_names, scope.given_programs = taken  # its programs named as this task's are
         again = Converter(modules, dataclasses.replace(copy.deepcopy(config), karel=True), sources, signals, scope)
         result.karel_todo = karel_would(result, again.convert(routines, program_modules))
     return result

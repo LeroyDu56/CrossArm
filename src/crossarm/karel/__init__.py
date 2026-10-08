@@ -12,7 +12,10 @@ its programs call into the KAREL folder of the output, compiled to .pc by FANUC 
 
 Measured on ROBOGUIDE V10.10 (tools/make_karel_probe.py): a .LS calling a KAREL program the robot does not
 have loads, and stops on the CALL when it runs (INTP-222, MEMO-073); arguments written as integer constants
-reach GET_TPE_PRM as INTEGER; PR[c] = PR[a] : PR[b] is RAPID's PoseMult.
+reach GET_TPE_PRM as INTEGER; PR[c] = PR[a] : PR[b] is RAPID's PoseMult. tools/make_karel_pose_probe.py: CA_POSEINV,
+CA_RELTOOL (arguments R[i] holding a whole or a real number, angles past 180) and CA_DEFFRAME (each origin) give
+RAPID's values within 0.001 mm; points closer than 10 mm, an origin other than 1 to 3 (ROUT-035) and a string
+argument (ROUT-043) abort on the CALL.
 
 Adding a program: write ca_<name>.kl here (%INCLUDE ca_lib after its VAR section, arguments read with
 ca_reg_arg), add it to PROGRAMS, measure it with a probe, then have the converter write its CALL.
@@ -38,6 +41,14 @@ class KarelProgram:
 PROGRAMS = {
     "CA_POSEMULT": KarelProgram("CA_POSEMULT", "ca_posemult.kl", "PR[c] = PR[a] : PR[b], RAPID PoseMult(a, b)",
                                 "a, b, c: position register numbers"),
+    "CA_POSEINV": KarelProgram("CA_POSEINV", "ca_poseinv.kl", "PR[c] = INV(PR[a]), RAPID PoseInv(a)",
+                               "a, c: position register numbers"),
+    "CA_RELTOOL": KarelProgram("CA_RELTOOL", "ca_reltool.kl", "PR[c] = RAPID RelTool(PR[a], dx, dy, dz \\Rx \\Ry \\Rz):"
+                               " moved along PR[a]'s axes, then turned about its x, y, z in that order",
+                               "a, c: position register numbers; dx, dy, dz (mm), rx, ry, rz (degrees): constants"
+                               " or R[i]"),
+    "CA_DEFFRAME": KarelProgram("CA_DEFFRAME", "ca_defframe.kl", "PR[c] = RAPID DefFrame(PR[a], PR[b], PR[d]"
+                                " \\Origin:=o)", "a, b, d, c: position register numbers; o: 1, 2 or 3"),
 }  # fmt: skip
 _CALL = re.compile(r"^CALL (CA_[A-Z0-9_]+)\(")
 

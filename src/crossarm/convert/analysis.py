@@ -338,8 +338,9 @@ def priority_actions(result: ConversionResult) -> list[Action]:
     if result.karel_todo:  # converted without --karel: what it would convert
         actions.append(Action(
             "Convert again with `--karel` for the poses computed at run time",
-            f"{_todo(result.karel_todo)} converted then by CrossArm's KAREL programs (PoseMult of poses kept in"
-            " position registers): the robot needs the KAREL option (R632).", "#review", "Items to review",
+            f"{_todo(result.karel_todo)} converted then by CrossArm's KAREL programs (PoseMult, PoseInv, RelTool,"
+            " DefFrame of poses kept in position registers, frames loaded from them): the robot needs the KAREL"
+            " option (R632).", "#review", "Items to review",
             Blocker.RUNTIME_POSITION))  # fmt: skip
 
     errors = [note for cause in sorted(_ERRORS) for note in by_cause.get(cause, [])]

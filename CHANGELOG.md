@@ -10,6 +10,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   own KAREL library, written in a `KAREL` folder and compiled by FANUC ktrans when it is installed. The robot
   needs the KAREL option (R632). Without the option nothing changes; the report says how many TODO it would
   convert.
+- `--karel` also converts `PoseInv`, `DefFrame` and `RelTool` of a point whose orientation is only known at run
+  time (`CA_POSEINV`, `CA_DEFFRAME`, `CA_RELTOOL`), and a work object's uframe or a tool's tframe calibrated
+  from them, loaded where the RAPID sets it (`UFRAME[n]=PR[k]`, `UTOOL[n]=PR[k]`).
 
 ## 1.6.0 — 2026-10-07
 

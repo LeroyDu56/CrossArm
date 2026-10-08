@@ -1,0 +1,20 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CALL CA_POSEINV(a, c): PR[c] = INV(PR[a]), RAPID's PoseInv(PR[a]) on a pose kept in a position register.
+-- Written by CrossArm (--karel).
+PROGRAM ca_poseinv
+%NOLOCKGROUP
+%NOBUSYLAMP
+%COMMENT = 'CrossArm PoseInv'
+%ENVIRONMENT REGOPE
+VAR
+  a, c : INTEGER
+  pa : POSITION
+%INCLUDE ca_lib
+BEGIN
+  a = ca_reg_arg(1)
+  c = ca_reg_arg(2)
+  pa = ca_get_pr(a)
+  ca_set_pr(c, INV(pa))
+END ca_poseinv
