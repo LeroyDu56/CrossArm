@@ -43,13 +43,15 @@ overwritten:
 - `crossarm_log.txt`;
 - `crossarm_points.json`, every point written and the RAPID it came from, so that a later conversion keeps
   the touch-ups made on the robot ([converting again](#converting-again-keeping-the-touch-ups));
-- when asked for, a `TP` folder of binary `.TP` programs ([binary .TP programs](#binary-tp-programs)).
+- when asked for, a `TP` folder of binary `.TP` programs ([binary .TP programs](#binary-tp-programs));
+- with `--karel`, a `KAREL` folder of CrossArm's KAREL programs the `.LS` call
+  ([KAREL programs](#karel-programs---karel)).
 
 Everything runs locally: no file leaves the computer.
 
 ## The window
 
-`CrossArm.exe` walks through five steps, and each one says what it found before anything is
+`CrossArm.exe` walks through six steps, and each one says what it found before anything is
 converted:
 
 1. **ABB program to convert**: a backup folder, a `.zip` or RAPID files. CrossArm reports the robot
@@ -68,12 +70,15 @@ converted:
    too). The step says at once what it found: the programs read, the `.TP` to decode (with the robot of
    step 4), the points of the earlier conversion. **Clear** empties it
    ([converting again](#converting-again-keeping-the-touch-ups)).
+6. **KAREL programs** (optional): **Use KAREL programs** converts with `--karel`, for what TP cannot
+   compute ([KAREL programs](#karel-programs---karel)). Without it, the result says how many TODO it would
+   convert.
 
 On a small screen the steps scroll, and **Convert** stays at the bottom. Then **Convert**. The result
 gives the decision of the [analysis](#the-analysis-first) (ready, workable or not ready) under its tiles,
 how many programs are ready as is and what to look at first — anything that would stop the programs
 loading or running comes before where the manual work is — with the touch-ups kept and to redo when step 5
-was used, and the report one click away. **How it works** in the header explains the outputs and the limits
+was used, the KAREL programs to load first when step 6 was, and the report one click away. **How it works** in the header explains the outputs and the limits
 in plain words. Dropping the backups on the `CrossArm.exe` icon converts them straight away.
 
 The executable is not code-signed. On first launch, SmartScreen may ask for confirmation
@@ -92,6 +97,7 @@ crossarm convert path/to/backup.zip --fanuc path/to/fanuc_backup/      # number 
 crossarm convert path/to/backup.zip --map mapping.json                 # pin your own numbers
 crossarm convert path/to/backup.zip --tp-robot path/to/Robot_1         # binary .TP too, made by FANUC MakeTP
 crossarm convert new_backup.zip --keep-taught robot/ --keep-taught crossarm_old/   # keep the robot's touch-ups
+crossarm convert path/to/backup.zip --karel                            # what TP cannot compute, in KAREL
 crossarm-gui                                                           # the desktop window
 crossarm parse   tests/fixtures/rapid/pick_and_place.mod              # RAPID AST as a readable listing
 crossarm stats   backup/RAPID                                          # parser coverage report
@@ -149,6 +155,59 @@ up on the robot. Positions in the robot's programs that CrossArm did not write a
 programs do not have them. Measured on ROBOGUIDE: a point touched up, the backup changed and converted
 again, the robot goes to the touch-up kept and to the new point
 ([validation](validation.md#36-converting-again-the-touch-ups-kept-run)).
+
+### KAREL programs (--karel)
+
+Some RAPID does what TP has no instruction or arithmetic for. `--karel` (step 6 of the window, off by
+default) writes part of it as calls to CrossArm's own KAREL programs, a fixed library written for this:
+the TP program stays the main program and calls them with the numbers of the registers to work on.
+
+| Program | Does | Called for |
+|---|---|---|
+| `CA_POSEMULT` | the product of two poses in position registers | `PoseMult` |
+| `CA_POSEINV` | the inverse of a pose | `PoseInv` |
+| `CA_RELTOOL` | a displacement and turns in the tool frame of a pose (constants or registers) | `RelTool` of a point whose orientation is only known at run time |
+| `CA_DEFFRAME` | a frame from three points (and the origin RAPID's `\Origin` asks for) | `DefFrame` |
+| `CA_FILE` | open, write and close a text file | `Open` (`\Write`, `\Append`), `Write` (texts, `\Num`, `\NoNewLine`), `Close` |
+
+What it converts:
+- poses the programs change while they run (`VAR` poses, points read with `CRobT`) are kept in position
+  registers, and `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of them become `CALL CA_POSEMULT(81,82,83)`
+  and the like;
+- a work object's `uframe` or a tool's `tframe` computed from them (a calibration) is loaded where the RAPID
+  sets it, `UFRAME[1]=PR[96]` or `UTOOL[2]=PR[96]`, and read back by `PR[91]=UTOOL[2]` where the programs
+  use it;
+- RAPID's text files: `Open "HOME:" \File:="log.txt", ioLog \Write;` becomes
+  `CALL CA_FILE(1,1,1,'UD1:log.txt')`, the iodev a register (here `R[1]`) keeping the file's handle; `Write` and
+  `Close` the same. The files of `HOME:` are written on the controller's `UD1:` (its USB memory stick, read
+  on a PC as `HOME:` is), byte for byte as RAPID writes them: lines ended by CR LF, numbers with six
+  significant digits as `Write \Num` writes them. A file stays open from one `CALL` to the next while the
+  program runs, and is closed when the TP program ends or is aborted.
+
+The output gets a `KAREL` folder: `ca_lib.kl` and the `.kl` of each program called. When FANUC ktrans is
+found (installed with ROBOGUIDE or WinOLPC, or named by `CROSSARM_KTRANS`), each is compiled to a `.pc` for
+the software version of the `--tp-robot` robot, else the newest version installed. A controller refuses a
+`.pc` made for an older software version than its own ("Program version is too old"; ROBOGUIDE V10.10 ran
+those made for V10.13), so the report gives the command to compile them again for another version. Without ktrans, the `.kl` are written with that command.
+
+On the robot:
+- a real controller needs the **KAREL option (R632)** to load a `.pc`; ROBOGUIDE runs them;
+- load every `.pc` of the `KAREL` folder **before** the `.LS`: a `.LS` calling a program the robot does not
+  have loads, but stops on the `CALL` when it runs (INTP-222);
+- a wrong argument (a register past the controller's, a position register never set or holding joints, a
+  file not open, a file in a sub-folder) posts the controller's alarm and aborts the program on the
+  `CALL`.
+
+What stays TODO with `--karel`: sockets (KAREL socket messaging needs client tags configured on the robot,
+which CrossArm does not set up: a RAPID program choosing its host and port as it runs has no equivalent there;
+a socket routine can be a program you provide, [external_routines](#programs-you-provide)), `PoseVect`,
+reading files (`ReadNum`, `ReadStr`), `WriteStr`, `Write` of a bool or a pose, texts with control characters,
+and the `ERROR` handlers of file routines. A routine named in `external_routines` is never converted by KAREL.
+
+The report says what it did: an action of the analysis, "Load the KAREL programs", a "KAREL programs"
+section (each program, what it does, its arguments, the file to load) and a checklist group. Without
+`--karel`, the report, the log and the window say how many TODO it would convert. Measured on ROBOGUIDE,
+program by program ([validation](validation.md#37-karel-programs-called-from-tp-run)).
 
 ## What is converted
 
@@ -227,7 +286,8 @@ again, the robot goes to the touch-up kept and to the new point
   binding; string, point and other fields of records, arrays of records, a speed or zone field set to
   several values, a record of a routine that calls itself back or with fields other than `num` and `bool`;
 - RAPID instructions TP has nothing for, under a cause of their own in the report, "RAPID instruction
-  without a TP equivalent", each with why: files and serial channels (`Open`, `Write`...), sockets,
+  without a TP equivalent", each with why: files and serial channels (`Open`, `Write`...; text files are
+  written with [`--karel`](#karel-programs---karel)), sockets,
   raw byte buffers, operator dialogs waiting for an answer (`TPReadFK`, `UIMessageBox`...), screens of
   the ABB pendant (`TPShow`), the ABB event log (`BookErrNo`, `ErrLog`...), system instructions
   (`Load`/`UnLoad`, `GetSysData`, `ActUnit`...), world zones (`WZBoxDef`...); what an operator dialog or a
@@ -262,7 +322,9 @@ only computes (no instruction, no change to other data).
 Anything else stays TODO, and the report says which input is not fixed and where it changes, or that
 the value is **measured on the robot**: a calibration reading `CRobT`, and every frame derived from
 it. TP can read the robot's pose (`PR[n]=LPOS`) but not compute a frame from it: such a frame is set
-again on the FANUC with its frame setup (3- or 4-point user frame, 6-point tool frame), or in KAREL.
+again on the FANUC with its frame setup (3- or 4-point user frame, 6-point tool frame), or computed while the
+robot runs by CrossArm's KAREL programs when it comes from `PoseMult`, `PoseInv`, `RelTool` or `DefFrame`
+([`--karel`](#karel-programs---karel)).
 
 ## Reading the report
 
@@ -275,8 +337,8 @@ or dark, and prints. Its menu leads to:
   ([converting again](#converting-again-keeping-the-touch-ups));
 - **Summary**: programs ready as is, the TODO by cause (a cause clicked filters the list below), and
   the share of the RAPID converted;
-- **Checklist**: the commissioning, in the order the cell is brought up: load the programs (`.LS`,
-  or the `TP` folder), frames and tools with their values, payloads, I/O to map, registers, flags and
+- **Checklist**: the commissioning, in the order the cell is brought up: load the programs (the KAREL
+  programs first with `--karel`, then the `.LS`, or the `TP` folder), frames and tools with their values, payloads, I/O to map, registers, flags and
   timers with their initial values, TODO lines to finish by hand, points to touch up, motion to check
   (each zone's CNT, the speeds), other assumptions, and the programs to provide
   ([programs you provide](#programs-you-provide)). It is folded until opened, with its number of
@@ -307,7 +369,8 @@ A large backup produces hundreds of TODO entries that come down to a handful of 
   redo an error handler or a dialog the FANUC way). "How this is decided" lists the blocking causes found;
 - **what to do first**: 3 to 7 actions drawn from what is left, each with its detail and a link: the
   resources over the controller's capacity, routines or data missing from the backup (with the
-  `external_routines` candidates), programs to provide, the blocking causes with their programs, error
+  `external_routines` candidates), the KAREL programs to load first (with `--karel`; without it, converting
+  again with `--karel` when it would convert TODO), programs to provide, the blocking causes with their programs, error
   handlers to redo the FANUC way (not a CrossArm bug), what TP has no instruction for, then the points to
   touch up again and to touch up;
 - **the main TODO causes**, five at most, each with its count, its share of the TODO and an example;
@@ -334,6 +397,9 @@ not use, and loaded into one reserved number before each use; the report says wh
 which frame. A controller can hold more frames, raised at a Controlled Start
 (`$SCR.$MAXNUMUTOOL`, `$SCR.$MAXNUMUFRAM`): with that number under `limits` in the mapping file,
 every frame is selected directly.
+
+With `--karel`, a "KAREL programs" section lists the programs called, what each does, its arguments and
+the file to load, with the command to compile them again for another software version.
 
 The report also lists the frames and payloads to set up, the frames the programs compute and the
 register each is kept in, the registers, flags and I/O used, every point, and how each speed and zone

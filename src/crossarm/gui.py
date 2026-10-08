@@ -110,7 +110,7 @@ ABB position or frame changed gets the new theoretical value, to touch up again.
 lists each point.
 
 What TP cannot compute
-Some RAPID computes poses while it runs (PoseMult, PoseInv, RelTool, DefFrame of poses and points the programs change, frames calibrated from them). TP cannot: those lines stay TODO, and the report says how many KAREL would convert. Step 6 writes them as calls to CrossArm's KAREL programs, in a KAREL folder: load each .pc before the programs. The robot needs the KAREL option (R632).
+Some RAPID computes poses while it runs (PoseMult, PoseInv, RelTool, DefFrame of poses and points the programs change, frames calibrated from them) and writes text files. TP cannot: those lines stay TODO, and the report says how many KAREL would convert. Step 6 writes them as calls to CrossArm's KAREL programs, in a KAREL folder: load each .pc before the programs. The robot needs the KAREL option (R632). Sockets stay TODO.
 
 Moves inside routines
 Many backups move through the integrator's own routines (a "MoveL" that also picks a station, \

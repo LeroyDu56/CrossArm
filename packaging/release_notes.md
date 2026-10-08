@@ -1,39 +1,34 @@
-## CrossArm 1.6.0
+## CrossArm 1.7.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review. 1.6 is for converting again a program already commissioned, and for the routines
-CrossArm cannot write. It converts about 60 % of the instructions of public open-source programs, 87 % to 93 %
-of our own test corpus, written for testing ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
+everything left to review. 1.7 adds KAREL, as an option, for what TP cannot compute. Without it, CrossArm
+converts about 60 % of the instructions of public open-source programs, 87 % to 93 % of our own test corpus,
+written for testing ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
 
-**Programs the integrator provides.** A routine CrossArm cannot write (missing from the backup, or using
-files, sockets or byte buffers) can be a TP or KAREL program written on the FANUC side, named under the new
-mapping key `external_routines`: `{"WriteLog": {"program": "WRITE_LOG"}}`. Its calls become
-`CALL WRITE_LOG(args)`, the routine is not written, and the report and checklist list each program to
-provide with its arguments (`AR[1]`, `AR[2]`...) and the num read back. The mapping file CrossArm writes lists
-the candidates with `"program": null`: they activate nothing until a name is filled in. Measured on ROBOGUIDE.
+**`--karel` and CrossArm's KAREL programs.** With the new option `--karel` (or step 6 of the window, off by
+default), what TP has no arithmetic or instruction for is written as calls to a fixed library of KAREL
+programs CrossArm ships: poses computed while the robot runs (`PoseMult`, `PoseInv`, `RelTool`, `DefFrame`
+become `CALL CA_POSEMULT(...)` and the like, the poses kept in position registers), the tool and user frames
+calibrated from them (loaded where the RAPID sets them, `UFRAME[n]=PR[k]`), and RAPID's text files (`Open`,
+`Write`, `Close` become `CALL CA_FILE(...)`; the files of `HOME:` are written on the controller's `UD1:`, byte
+for byte as RAPID writes them). Each program was measured on ROBOGUIDE.
 
-**Converting again, keeping the touch-ups.** Every conversion now writes `crossarm_points.json`, each point
-written and the RAPID it came from. When the ABB program changes after commissioning,
-`crossarm convert new_backup/ --keep-taught robot_programs/ --keep-taught crossarm_old/`, or step 5 of the
-window, reads the robot's programs as they are now (`.LS`, or `.TP` decoded by FANUC PrintTP) and keeps
-each point touched up there unless its ABB position or its frames changed; those are listed to touch up
-again, with how far the touch-up was. A conversion made before 1.6 has no `crossarm_points.json`: convert
-that old backup again once with 1.6 to get one. Measured on ROBOGUIDE: the robot goes to the touch-up kept
-and to the new point.
+**What the robot needs.** The programs land in a `KAREL` folder of the output, compiled to `.pc` by FANUC
+ktrans when it is installed (with ROBOGUIDE), for the software version of the `--tp-robot` robot; without
+ktrans, as `.kl` with the command to compile them. A real controller needs the KAREL option (R632). Load the
+`.pc` before the `.LS`: a program calling one the robot does not have stops on that `CALL`. The report gets a
+"KAREL programs" section, an action of the analysis and a checklist group; without `--karel`, it says how many
+TODO the option would convert.
 
-**Reports that open on a decision.** The report opens on an analysis: ready, workable or not ready, by a
-fixed rule printed under it (workable from 85 % of the RAPID instructions converted and at most 3 blocking
-causes), the 3 to 7 things to do first, the main TODO causes, the share converted by area, and only the
-controller resources near their limit. The detail follows; the checklist is folded until opened. The window
-shows the decision too; its steps scroll on a small screen.
+**What stays TODO.** Sockets, with `--karel` too: KAREL socket messaging needs client tags configured on the
+robot, which CrossArm does not set up. A socket routine can still be a program the integrator provides
+(`external_routines`). Also left: `PoseVect`, reading files, and the error handlers of file routines.
 
-**A fix:** the window's result tiles are laid out two per row: the converted share was cut off.
-
-**Still what 1.x keeps:** a mapping file written for 1.0 to 1.5 gives the same numbers, and the command
-line keeps its options (`--keep-taught` is new). `external_routines` is a new key: without it, nothing
-changes. Numbers CrossArm picks by itself can move from one version to the next: give a conversion its
-mapping file back to keep them. The whole list:
-[CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
+**Still what 1.x keeps:** without `--karel`, the programs are the ones 1.6 writes (the report adds what
+`--karel` would convert). A mapping file written for 1.0
+to 1.6 gives the same numbers, and the command line keeps its options (`--karel` is new). Numbers CrossArm
+picks by itself can move from one version to the next: give a conversion its mapping file back to keep them.
+The whole list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 See the [README](https://github.com/LeroyDu56/CrossArm#readme), the
 [user guide](https://github.com/LeroyDu56/CrossArm/blob/main/docs/guide.md) and
@@ -49,7 +44,7 @@ programs loaded on a real robot, conversions delivered to a customer, or billed
 migration work. See [LICENSING.md](https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md)
 for where the line falls, and write to **enzoleroy56@gmail.com** for a licence.
 
-This version becomes Apache 2.0 on 2030-10-07.
+This version becomes Apache 2.0 on 2030-10-08.
 
 `python_license.txt` next to the executable covers the Python runtime bundled inside it; see
 [THIRD_PARTY_LICENSES.md](https://github.com/LeroyDu56/CrossArm/blob/main/THIRD_PARTY_LICENSES.md).
@@ -64,7 +59,8 @@ This version becomes Apache 2.0 on 2030-10-07.
 
 The `.LS` programs, `SETUP_FRAMES.LS`, the conversion report (`crossarm_report.html`), the editable
 `crossarm_mapping.json`, `crossarm_points.json` and `crossarm_log.txt` are written to a new
-`crossarm_<name>` folder next to the input, with a `TP` folder of `.TP` programs when step 4 is used. Everything runs locally: no file
+`crossarm_<name>` folder next to the input, with a `TP` folder of `.TP` programs when step 4 is used and a
+`KAREL` folder when step 6 is. Everything runs locally: no file
 leaves the computer.
 
 ## First launch: Windows SmartScreen

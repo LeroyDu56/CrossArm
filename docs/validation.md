@@ -11,11 +11,11 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 
 | What | Result |
 |---|---|
-| RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)) | about 60 %, from about 15 % to all of it per project |
-| RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
+| RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)), without `--karel` | about 60 %, from about 15 % to all of it per project |
+| RAPID instructions converted, our test corpus, written for testing, without `--karel` | 87 % to 93 % |
 | Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes, all run again for this version on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1) | 31 of 31 give what was measured |
+| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1): the 10 this version touches run again for it, the others last run for 1.6.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 34 of 34 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -43,6 +43,9 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | Jointtargets read on the robot (`CJointT`), kept in joint position registers, run on both controllers | the ABB axes, within 0.01° |
 | Calls to programs the integrator provides (`external_routines`), run on ROBOGUIDE | each program given what the call passes, the num read back; without them, the caller loads and stops on the `CALL` |
 | Points touched up on ROBOGUIDE, the backup changed and converted again with `--keep-taught`, run | the touch-up kept where the point did not change, the new point where it did, within 0.001 mm |
+| With `--karel`: `PoseMult` of poses known at run time by CrossArm's KAREL program, run on ROBOGUIDE; a wrong argument | the pose RAPID computes, within 0.001 mm; the controller's alarm on the `CALL` |
+| With `--karel`: `PoseInv`, `RelTool`, `DefFrame`, and a work object and a tool calibrated from them, run on ROBOGUIDE | what RAPID computes, within 0.001 mm and 0.01°; the flange where RAPID puts it |
+| With `--karel`: RAPID's text files written by a KAREL program, run on ROBOGUIDE | the bytes RAPID writes, line ends and numbers included |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -80,9 +83,9 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 34. [Jointtargets read on the robot, run](#34-jointtargets-read-on-the-robot-run)
 35. [Programs the integrator provides, run](#35-programs-the-integrator-provides-run)
 36. [Converting again, the touch-ups kept, run](#36-converting-again-the-touch-ups-kept-run)
-32. [Speeds and zones given to a routine, run](#32-speeds-and-zones-given-to-a-routine-run)
-33. [Binary .TP programs made by MakeTP, run](#33-binary-tp-programs-made-by-maketp-run)
-34. [Jointtargets read on the robot, run](#34-jointtargets-read-on-the-robot-run)
+37. [KAREL programs called from TP, run](#37-karel-programs-called-from-tp-run)
+38. [Poses and frames computed at run time, run](#38-poses-and-frames-computed-at-run-time-run)
+39. [Text files, run](#39-text-files-run)
 
 ## 1. The test corpus
 
@@ -270,7 +273,7 @@ frame names aside. Forms that first differed by a space before the `;` are now w
 controller's way.
 
 [tools/probe_all.py](../tools/probe_all.py) then runs the probes again on both simulators with
-nobody at either pendant, in about twenty minutes. On ROBOGUIDE: FTP to load, the FANUC COM
+nobody at either pendant, in about half an hour. On ROBOGUIDE: FTP to load, the FANUC COM
 interface to run, the robot's web pages to read. On RobotStudio, where RobotWare 7 and 8 give a PC
 program no right to load or start programs, a small RAPID module started once
 ([tools/CrossArmServer.mod](../tools/CrossArmServer.mod)) loads and runs each probe module itself, and
@@ -308,7 +311,16 @@ the results are read from the virtual controller's `HOME:` folder:
 | jointtargets read on the robot | 21 registers within 0.01° of the ABB axes ([section 34](#34-jointtargets-read-on-the-robot-run)) |
 | programs the integrator provides | the caller loads without them and stops on the `CALL` (INTP-222); with them, 6 registers as expected ([section 35](#35-programs-the-integrator-provides-run)) |
 | touch-ups kept when converting again | 2 points touched up, 4 statuses as expected from the `.LS` and from the `.TP`, the robot at each point within 0.001 mm ([section 36](#36-converting-again-the-touch-ups-kept-run)) |
+| KAREL programs called from TP (`--karel`) | the caller stops on the `CALL` without the `.pc`; `PoseMult` within 0.001 mm; 5 wrong arguments, each its alarm ([section 37](#37-karel-programs-called-from-tp-run)) |
+| poses and frames computed at run time (`--karel`) | `PoseInv`, `RelTool`, `DefFrame` within 0.001 mm and 0.01°; the moves in frames calibrated at run time where RAPID puts them ([section 38](#38-poses-and-frames-computed-at-run-time-run)) |
+| text files (`--karel`) | the files read back byte for byte; 4 errors, each its alarm ([section 39](#39-text-files-run)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
+
+For 1.7.0, on 2026-10-08, the probes this version touches were run again on ROBOGUIDE (R-1000iA/80F, V10.10,
+with the KAREL option): the three KAREL probes, binary `.TP` made by MakeTP, programs the integrator provides,
+touch-ups kept when converting again, jointtargets read on the robot, calls with arguments, `SETUP_FRAMES` and
+flange poses. Each gave what was measured. The other probes were last run for 1.6.0, on 2026-10-07, all giving
+what was measured; the ABB probe modules were not run again on RobotStudio for 1.7.0.
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -963,3 +975,69 @@ programs are loaded and run, the robot's position read at each point:
 
 Each position within 0.001 mm of the one expected (W of 180° and −180° being the same). Points kept in position
 registers (arrays of points, which the report counts) and frames touched up on the robot are not read.
+
+## 37. KAREL programs called from TP, run
+
+TP has no pose product, no inverse and no instruction for files. With `--karel`
+([user guide](guide.md#karel-programs---karel)), CrossArm writes what it converts of them as calls to its own
+KAREL programs, a fixed library (`src/crossarm/karel/`), the TP program passing the numbers of the registers
+to work on: `CALL CA_POSEMULT(81,82,83)` sets `PR[83]` to the product of `PR[81]` and `PR[82]`.
+
+[tools/make_karel_probe.py](../tools/make_karel_probe.py) compiles the library with FANUC ktrans for the
+controller's software, converts a module of `PoseMult` of poses known only at run time, loads them on ROBOGUIDE
+(R-1000iA/80F, V10.10) and runs them. The poses are compared with RAPID's `PoseMult`, worked out independently
+(the arithmetic CrossArm's frames use at conversion time, checked against RobotStudio in
+[section 15](#15-frames-and-points-the-programs-compute)):
+
+| Check | ROBOGUIDE |
+|---|---|
+| the caller loaded without the `.pc`, run | loaded; stops on the `CALL`: INTP-222 Call program failed (MEMO-073 Program does not exist) |
+| a `.pc` compiled for ktrans's default version, older than the controller's | refused at load: "Program version is too old" |
+| a `.pc` compiled for the controller's version, and for a newer one (V10.13) | loaded and run |
+| `PoseMult` of two poses, in both orders | the pose RAPID computes, within 0.001 mm |
+| a register past the controller's, a real where a register number is expected, an argument missing, a joint position register, a position register never set | VARS-024, ROUT-043, ROUT-042, ROUT-032, ROUT-038, the program aborted on the `CALL`, the line after it not run |
+
+A constant whole number in the `CALL` arrives in the KAREL program as an integer, a register `R[i]` as its
+value. A real robot needs the KAREL option (R632) to load the `.pc`.
+
+## 38. Poses and frames computed at run time, run
+
+[tools/make_karel_pose_probe.py](../tools/make_karel_pose_probe.py) runs `CA_POSEINV`, `CA_RELTOOL` and
+`CA_DEFFRAME` on poses in position registers, then a converted module that calibrates a work object with
+`DefFrame` of three points read with `CRobT` and moves in it, reads a tool back, changes it with `PoseMult` and
+`PoseInv`, and turns a point read on the robot with `RelTool`. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| `PoseInv`, `RelTool` (displacement, `\Rx` `\Ry` `\Rz` past 180°, from constants and registers), `DefFrame` (`\Origin` 1, 2, 3) | what RAPID computes, within 0.001 mm and 0.01° |
+| `DefFrame` of points closer than 10 mm, `\Origin` 4, a text where a number is expected | ROUT-035, ROUT-035, ROUT-043, the program aborted on the `CALL` |
+| the work object calibrated at run time, saved 50 mm and 37° away from what was measured: `UFRAME[1]=PR[k]`, then a move in it | the flange where RAPID puts it, within 0.001 mm |
+| the tool read back, `PR[k]=UTOOL[2]` | the tool `SETUP_FRAMES` set, exactly |
+| the tool changed by `PoseMult` and `PoseInv`, `UTOOL[2]=PR[k]`, then a move | the flange where RAPID puts it |
+| `RelTool \Rz:=-90` of a point read on the robot, moved to | reached, the configuration kept, the wrist turned a quarter turn |
+
+The values are compared with RAPID's functions worked out independently, the same as RobotStudio gave in the
+compute and pose probes ([section 15](#15-frames-and-points-the-programs-compute)); RobotStudio itself was not
+run for this probe.
+
+## 39. Text files, run
+
+[tools/make_karel_file_probe.py](../tools/make_karel_file_probe.py) converts a module that opens files of
+`HOME:` (`\Write`, then `\Append`), writes texts (an apostrophe, commas, a text of 70 characters), numbers
+with `\Num` (15 values: decimals, a negative, large numbers, a fraction of a millionth) and a line with
+`\NoNewLine`, and closes them, through `CA_FILE`. On ROBOGUIDE (R-1000iA/80F, V10.10), the files are read
+back from `UD1:` by FTP:
+
+| Check | ROBOGUIDE |
+|---|---|
+| the files written, read back | the bytes RAPID writes: lines ended by CR LF, each number as `Write \Num` writes it (six significant digits) |
+| a file written in one program, then written from another program run later | the file is closed when the first program ends (its content kept): INTP-328 |
+| writing a file not open, opening a file in a sub-folder of `HOME:`, on a device that does not exist | INTP-328, INTP-325, FILE-008, the program aborted on the `CALL`, the line after it not run |
+
+RAPID keeps a file open until it is closed; a KAREL file is closed when the TP program that opened it ends or
+is aborted. The number format follows RAPID's rule for `Write \Num` and the line ends the files RobotStudio
+wrote in earlier probes; RobotStudio was not run for this probe.
+
+Sockets are not converted, with `--karel` either: KAREL socket messaging needs client tags configured on the
+robot, and a KAREL program could not set them on the controller measured, so a RAPID program choosing its host
+and port has no equivalent. They stay TODO, with that reason in the report.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crossarm"
-version = "1.6.0"
+version = "1.7.0"
 description = "ABB RAPID to FANUC TP converter: turns ABB robot programs and RobotWare backups into FANUC .LS programs, with a conversion report"
 readme = "README.md"
 requires-python = ">=3.11"

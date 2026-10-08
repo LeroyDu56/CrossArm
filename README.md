@@ -24,7 +24,7 @@ commissioning.
 | | |
 |---|---|
 | **Input** | ABB RobotWare 6 / 7 backup (folder or `.zip`), or RAPID modules (`.mod` `.modx` `.sys` `.sysx` `.prg`) |
-| **Output** | FANUC TP programs as `.LS` text (and binary `.TP` through FANUC MakeTP, optional), an interactive HTML report that opens on a decision (ready, workable, not ready) and holds a commissioning checklist, an editable numbering file, the points written (to keep the robot's touch-ups when converting again) |
+| **Output** | FANUC TP programs as `.LS` text (and binary `.TP` through FANUC MakeTP, optional; KAREL programs for what TP cannot compute, optional), an interactive HTML report that opens on a decision (ready, workable, not ready) and holds a commissioning checklist, an editable numbering file, the points written (to keep the robot's touch-ups when converting again) |
 | **Optional** | the backup of the FANUC robot the programs will run on, so its numbers and program names are left free; its programs as they are now, so the points touched up on it are kept |
 | **Runs on** | Windows (`CrossArm.exe`, nothing to install) or any system with Python 3.11+ — entirely offline |
 | **Licence** | Business Source License 1.1: free for evaluation and non-production use ([details](LICENSING.md)) |
@@ -47,7 +47,9 @@ nothing to install.
 5. Optionally, the **positions touched up on the robot**, when converting again a program already
    commissioned: the robot's programs as they are now and the earlier CrossArm output. A point whose
    ABB position did not change keeps its touch-up.
-6. **Convert.** The result gives the decision (ready, workable, not ready), how many programs are ready
+6. Optionally, **KAREL programs**, for what TP cannot compute (poses computed at run time, text files):
+   the robot needs the KAREL option (R632).
+7. **Convert.** The result gives the decision (ready, workable, not ready), how many programs are ready
    as is and what to look at first.
 
 The programs, the report and the numbering file land in a new `crossarm_<name>` folder next to the
@@ -75,6 +77,22 @@ touch-up was.
 sockets) can be a TP or KAREL program you write on the FANUC side: name it under `external_routines` in
 the mapping file and its calls become `CALL NAME(args)`, the report listing what each program receives.
 The mapping file CrossArm writes offers the candidates, inactive until a name is filled in.
+
+**KAREL for what TP cannot compute.** With `--karel` (or step 6), what TP has no arithmetic or instruction
+for is written as calls to CrossArm's own KAREL programs: poses computed while the robot runs (`PoseMult`,
+`PoseInv`, `RelTool`, `DefFrame`), the frames calibrated from them (`UFRAME[n]=PR[k]`), and RAPID's text files
+(`Open`, `Write`, `Close`, written on the controller's `UD1:`). The programs land in a `KAREL` folder,
+compiled by FANUC ktrans when ROBOGUIDE is installed, else as `.kl` with the command to compile them. A real
+robot needs the KAREL option (R632), and the `.pc` loaded before the `.LS`. Sockets stay TODO
+([user guide](docs/guide.md#karel-programs---karel)).
+
+**KAREL for what TP cannot compute.** With `--karel` (or step 6), what TP has no arithmetic or instruction
+for is written as calls to CrossArm's own KAREL programs: poses computed while the robot runs (`PoseMult`,
+`PoseInv`, `RelTool`, `DefFrame`), the frames calibrated from them (`UFRAME[n]=PR[k]`), and RAPID's text files
+(`Open`, `Write`, `Close`, written on the controller's `UD1:`). The programs land in a `KAREL` folder,
+compiled by FANUC ktrans when ROBOGUIDE is installed, else as `.kl` with the command to compile them. A real
+robot needs the KAREL option (R632), and the `.pc` loaded before the `.LS`. Sockets stay TODO
+([user guide](docs/guide.md#karel-programs---karel)).
 
 ## An example
 
@@ -131,11 +149,16 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
   measured, cut and passed on), calculations of any length; points worked out at run
   time (palletizing: `Offs()` of loop counters, `RelTool()`, `CRobT()`) in position registers, jointtargets
   read on the robot (`CJointT()`) in joint position registers; operator messages; comments.
+- **With `--karel`**: `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of poses known only at run time, the
+  tool and user frames calibrated from them, and text files, by CrossArm's KAREL programs.
+- **With `--karel`**: `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of poses known only at run time, the
+  tool and user frames calibrated from them, and text files, by CrossArm's KAREL programs.
 
 Frames and points the programs compute are worked out at conversion time when every value they read
 is fixed; points worked out from data that changes at run time are kept in position registers. Marked
 `!TODO` in the program and listed in the report, never guessed: other routine parameters, frames
-computed from data that changes at run time (calibrations included),
+computed from data that changes at run time (calibrations included; with `--karel`, those computed by
+`PoseMult`, `PoseInv`, `RelTool` or `DefFrame` are converted),
 error handlers beyond wait timeouts, timer interrupts and a `TRAP` that moves the robot, analog inputs
 and a few ABB-specific instructions. The full table is in the [user guide](docs/guide.md#what-is-converted).
 
@@ -145,7 +168,8 @@ and a few ABB-specific instructions. The full table is in the [user guide](docs/
 mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
 depending on the program; programs built around files, sockets, operator dialogs or error handlers
 convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
-higher because we wrote the programs. Converted means written in TP and loaded by the controller
+higher because we wrote the programs. Both figures are without `--karel`, which converts a few TODO more in
+programs that write text files or compute poses at run time. Converted means written in TP and loaded by the controller
 without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
 
 **The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
@@ -180,7 +204,8 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 | RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on both simulators, all run again for this version (ROBOGUIDE R-1000iA/80F, RobotStudio IRB 6700) | 31 of 31 give what was measured |
+| The controller probes on both simulators (ROBOGUIDE R-1000iA/80F, RobotStudio IRB 6700): those this version touches run again for it, the others last run for 1.6.0 | 34 of 34 give what was measured |
+| With `--karel`: poses, frames and text files by CrossArm's KAREL programs, run on ROBOGUIDE | what RAPID computes and writes, within 0.001 mm and 0.01° |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -224,7 +249,8 @@ once with 1.6 to get one.
 
 ### Why not 100 %?
 Three reasons, and the report gives each `!TODO` its cause.
-- **What TP cannot do** without KAREL or a robot option: files, sockets and raw byte buffers; an
+- **What TP cannot do** without KAREL or a robot option (`--karel` converts poses computed at run time
+  and text files): files, sockets and raw byte buffers; an
   operator dialog that waits for an answer; more than 25 string registers; an event log;
   trigonometric functions of data that changes at run time; setting some outputs in the middle of a
   corner path; turning positions the robot measures (a calibration, a search on either edge of an
@@ -287,18 +313,19 @@ open-source programs, about 60 %. What is left gives the order of the next steps
 2. Routines taking optional parameters, and calls whose arguments TP cannot take.
 3. Error handlers (`ERROR`, `RETRY`, `RAISE`), for errors the program raises itself (part not found,
    measure out of range) and those of the instructions it calls.
-4. Frames and positions measured on the robot (calibration): TP cannot compute a frame, so this needs
-   KAREL. Those computed from fixed values, and searches on one edge of an input, are converted.
+4. Frames and positions measured on the robot (calibration): TP cannot compute a frame. Those computed
+   from fixed values, and searches on one edge of an input, are converted; with `--karel` (1.7), those
+   computed by `PoseMult`, `PoseInv`, `RelTool` or `DefFrame` too.
 
-Next, 1.7: KAREL, as an option, for what TP cannot do. A routine using files or sockets can already be
-replaced by a program the integrator writes (`external_routines`, 1.6). Further out: other brands behind
-the same program model (KUKA KRL, Yaskawa INFORM).
+Done in 1.7: KAREL, as an option, for the poses computed at run time and text files. Sockets are not
+planned: a routine using them can be replaced by a program the integrator writes (`external_routines`).
+Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
 
 ## Documentation
 
 - [User guide](docs/guide.md): inputs and outputs, the full conversion table, the report and its
   analysis, numbering and the mapping file, programs you provide, converting again with the touch-ups,
-  the tool on the flange, speeds and zones.
+  KAREL programs (`--karel`), the tool on the flange, speeds and zones.
 - [How it was validated](docs/validation.md): every probe and measurement.
 - [FANUC `.LS` format status](docs/fanuc_ls_format.md) and [design notes](docs/design.md).
 - [Contributing](CONTRIBUTING.md): bug reports, code layout, running the tests and the probes.
@@ -321,8 +348,8 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.6.0 and v1.5.0 on
-2030-10-07, v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
+Each released version becomes Apache 2.0 four years after it is published: v1.7.0 on 2030-10-08,
+v1.6.0 and v1.5.0 on 2030-10-07, v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 

@@ -1,6 +1,6 @@
 # CrossArm conversion report
 
-- Generated: 2026-01-01 08:00:00 by CrossArm 1.6.0
+- Generated: 2026-01-01 08:00:00 by CrossArm 1.7.0
 - Sources: `hmi_and_groups.mod`
 - Programs: 1, items to review: 0 TODO, 0 warnings
 
