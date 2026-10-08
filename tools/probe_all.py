@@ -65,9 +65,12 @@ probe, everything else in local/logs/probe_all.log):
     framefield   a tool's tframe.trans and a work object's uframe.trans / .rot set from points read on the robot
                  (PR[F]=UTOOL/UFRAME, PR[F,i]=PR[k,i], UTOOL/UFRAME=PR[F]), that uframe copied to nine work objects
                  (banks, oframe by CA_POSEMULT): the moves after them where RAPID puts the flange
+    funcinline   FUNCs of the backup building tools and work objects from base frames calibrated at run time,
+                 copied into each call: TP (PR[F,i]=PR[F,i]+d) where the base's orientation is known, else
+                 CA_POSEMULT: the moves with each tool, in each work object, where RAPID puts the flange
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
-The programs loaded are deleted at the end. The probes overwrite tool frames 1 to 3 and 9, user frames 1 to 9, and
+The programs loaded are deleted at the end. The probes overwrite tool frames 1 to 10, user frames 1 to 9, and
 position registers: use a test cell. The virtual pendant must be OFF.
 
 Usage:  python tools/probe_all.py [probe ...]      (default: all of them)
@@ -94,6 +97,7 @@ import make_external_probe
 import make_flag_array_probe
 import make_flag_probe
 import make_frame_field_probe
+import make_func_inline_probe
 import make_interrupt_probe
 import make_io_probe
 import make_joint_probe
@@ -448,6 +452,14 @@ def probe_framefield() -> str:
     return f"FAIL {problem}" if problem else make_frame_field_probe.summary(make_frame_field_probe.stored())
 
 
+def probe_funcinline() -> str:
+    try:
+        problem = make_func_inline_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_func_inline_probe.summary(make_func_inline_probe.stored())
+
+
 def probe_taught() -> str:
     try:
         problem = make_taught_probe.run()
@@ -538,6 +550,7 @@ def main() -> int:
               "external": probe_external, "taught": probe_taught,
               "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel, "karelpose": probe_karelpose,
               "karelfile": probe_karelfile, "framefield": probe_framefield,
+              "funcinline": probe_funcinline,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     summary = "--summary" in sys.argv

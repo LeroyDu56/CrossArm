@@ -151,6 +151,9 @@ class KarelPoses:
         if self.pose_written(value, register) or self.pose_computed(value, register, 1) \
                 or self.frame_read(value, register):  # fmt: skip
             return
+        if self.func_inlined(a, POSE, Unresolvable(f"{format_expr(value)} is not computed at conversion time"),  # type: ignore[attr-defined]
+                             f"pose {format_expr(a.target)}", Blocker.RUNTIME_POSITION):  # convert.func_inline  # fmt: skip
+            return
         raise Untranslatable(f"pose {format_expr(a.target)} set to {format_expr(value)}: a pose kept in a position"
                              " register is set to PoseMult(), PoseInv() or DefFrame() of poses, to another one, or to"
                              " a value whose orientation is known", Blocker.RUNTIME_POSITION)  # fmt: skip

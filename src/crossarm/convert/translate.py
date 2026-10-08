@@ -78,6 +78,7 @@ from crossarm.convert.external import (
 )
 from crossarm.convert.frame_fields import FrameFields
 from crossarm.convert.frame_writes import FrameWrites
+from crossarm.convert.func_inline import FuncInline, inlined_notes
 from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes_on
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
@@ -806,6 +807,8 @@ class Converter:
         self.result = ConversionResult()
         self.result.rapid_sources = self.source_lines
         self._warned: set[str] = set()
+        self.inlined: list[tuple[str, str, int]] = []  # FUNC copied into a call: (FUNC, program, line), func_inline
+        self.inline_texts: dict[int, str] = {}  # id of a statement made by func_inline: its RAPID text
         self.do_names, self.di_names = self._signals_by_usage()
         self.program_names: dict[str, str] = {}  # routine (upper) -> TP name, set by convert()
         self.move_routines = find_move_routines(modules)
@@ -944,6 +947,7 @@ class Converter:
         self._controller_comments()
         self._place_computed()
         place_karel_frames(self)  # before the registers are numbered: they stay placeholders until then
+        inlined_notes(self)
         self._place_points()
         self._place_number_arrays()
         self._place_payloads()
@@ -2019,7 +2023,7 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites):
+class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2212,6 +2216,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
 
     def rapid_text(self, stmt: n.Stmt) -> str:
         """The RAPID source line of a statement (comment stripped), or a re-print of it."""
+        if (made := self.c.inline_texts.get(id(stmt))) is not None:  # a statement of an inlined FUNC
+            return made
         lines = self.c.source_lines.get(self.module.name.upper())
         if lines and 0 < stmt.span.line <= len(lines):
             text = lines[stmt.span.line - 1]
@@ -4272,12 +4278,16 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         try:
             root, new = self.c.computer.assigned(a)
         except MeasuredAtRunTime as exc:
+            if self.func_inlined(a, root_type, exc, what, category):  # a FUNC of the backup: convert.func_inline
+                return
             if is_frame and self.frame_written(a, root_type, remark, True, str(exc)):  # part by part, or copied: frame_writes
                 return
             if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):  # convert.karel_poses
                 return
             raise Untranslatable(self.measured_why(a, root_type, what, exc), Blocker.CALIBRATION) from exc
         except Unresolvable as exc:
+            if self.func_inlined(a, root_type, exc, what, category):
+                return
             if is_frame and self.frame_written(a, root_type, remark, self.measured_point(a.value) is not None, str(exc)):
                 return
             if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):

@@ -186,11 +186,13 @@ class FrameWrites:
         value = a.value
         pair = isinstance(value, n.Aggregate) and len(value.items) == 2
         source = self.frame_kind(value) if whole else None
-        if whole and source is None and not pair:
-            return False  # a pose function or a pose kept in a register: crossarm.convert.karel_poses
         key = path[0]
         if key not in self.c.frames_in_moves[kind] or self.c.symbols.is_local(key):  # type: ignore[attr-defined]
             return False
+        if whole and source is None and not pair:
+            # PoseMult(frame read back, pose known now), the frame's orientation known now: TP; any other pose
+            # function, or a pose kept in a register: crossarm.convert.karel_poses
+            return self._frame_moved(a, kind, key, remark, measured)
         decl = self.c.symbols.get(key)  # type: ignore[attr-defined]
         what = f"{'tool' if kind == 'UT' else 'work object'} {decl.name}"
         # What it needs, before anything is written: the frame now (unless every part is written), its oframe.
@@ -221,7 +223,47 @@ class FrameWrites:
             if rest[0] == "ROT":
                 self._rot_into(register, value)
             else:
-                self._trans_into(register, value, rest[1:] or _AXES)
+                self._trans_into(register, value, rest[1:] or _AXES, (key, FIELD[kind], "TRANS"))
+        self.frame_load(kind, key, register, other_pose)
+        self.frame_loaded(kind, key, a.span.line, measured)
+        return True
+
+    def _frame_moved(self, a: n.Assign, kind: str, key: str, remark: str, measured: bool) -> bool:
+        """`t.tframe := PoseMult(tBase.tframe, peOfs)`, tBase's tframe changed at run time but for its orientation,
+        known now as peOfs is: the frame read back, moved by R x peOfs.trans and turned to R x peOfs.rot, in TP
+        (`PR[F,1]=PR[F,1]+dx`...). False when the statement is not one (KAREL or TODO then)."""
+        call = a.value
+        if not isinstance(call, n.FuncCall) or call.name.upper() != "POSEMULT" \
+                or call.name.upper() in self.c.computer.functions:  # type: ignore[attr-defined]  # fmt: skip
+            return False
+        given = [arg.value for arg in call.args if arg.name is None]
+        if len(given) != 2 or len(call.args) != 2 or None in given:
+            return False
+        left, right = given
+        source = self.frame_kind(left)  # type: ignore[arg-type]
+        if source is None:
+            return False
+        try:
+            offset = to_pose(self.c.computer.value(right).value)  # type: ignore[attr-defined, arg-type]
+            turn = to_pose([[0, 0, 0], self.c.computer.value(n.Component(left.span, left, "rot")).value])  # type: ignore[attr-defined, union-attr]
+        except Unresolvable:
+            return False
+        base, base_other = self.frame_now(source[0], source[1], a.span)
+        _decl, other = self.frame_fields(kind, key, a.span)  # type: ignore[attr-defined]
+        other_pose = to_pose(other) if other is not None else None
+        if base is not None or not identity(base_other) or (not identity(other_pose) and not self.c.config.karel):  # type: ignore[attr-defined]
+            return False
+        moved = turn.compose(offset)  # R x peOfs: its position is what the base frame's origin moves by
+        self.emit(remark)  # type: ignore[attr-defined]
+        register = self.c.point_register(FRAME)  # type: ignore[attr-defined]
+        self.frame_into(register, source[0], source[1], a.span, None, base_other)
+        element = register[:-1]
+        for axis, shift in enumerate(moved.pos, 1):
+            shift = round(shift, 3) + 0.0
+            if shift:
+                self.emit(f"{element},{axis}]={element},{axis}]{'-' if shift < 0 else '+'}{fmt_number(abs(shift))}")  # type: ignore[attr-defined]
+        for axis, angle in zip((4, 5, 6), quat_to_wpr(moved.rot), strict=True):  # type: ignore[arg-type]
+            self.emit(f"{element},{axis}]={operand(fmt_number(round(angle, 3) + 0.0))}")  # type: ignore[attr-defined]
         self.frame_load(kind, key, register, other_pose)
         self.frame_loaded(kind, key, a.span.line, measured)
         return True
@@ -263,8 +305,10 @@ class FrameWrites:
         self.known.pop(f"{key}{STALE}", None)  # type: ignore[attr-defined]
         return True
 
-    def _trans_into(self, register: str, value: n.Expr, axes: tuple[str, ...]) -> None:
-        """x, y, z (those of `axes`) of `value` into PR[register, 1..3]: the items of [x, y, z], or its components."""
+    def _trans_into(self, register: str, value: n.Expr, axes: tuple[str, ...], own: tuple[str, ...] = ()) -> None:
+        """x, y, z (those of `axes`) of `value` into PR[register, 1..3]: the items of [x, y, z], or its components.
+        `own`: the frame's own translation, read back into the register: `t.tframe.trans.z := t.tframe.trans.z + 10`
+        is `PR[F,3]=PR[F,3]+10`."""
         base = register[:-1]
         for axis in axes:
             if len(axes) == 1:
@@ -273,7 +317,12 @@ class FrameWrites:
                 part = value.items[_AXES.index(axis)]
             else:
                 part = n.Component(value.span, value, axis.lower())
-            self.emit(f"{base},{_AXES.index(axis) + 1}]={self.arithmetic(part)}")  # type: ignore[attr-defined]
+            element = f"{base},{_AXES.index(axis) + 1}]"
+            if own and isinstance(part, n.BinaryOp) and part.op in ("+", "-") \
+                    and path_of(part.left) == (*own, axis):  # fmt: skip
+                self.emit(f"{element}={element}{part.op}{self.single(part.right, 1)}")  # type: ignore[attr-defined]
+                continue
+            self.emit(f"{element}={self.arithmetic(part)}")  # type: ignore[attr-defined]
 
     def _rot_into(self, register: str, value: n.Expr) -> None:
         """The orientation `value` into PR[register, 4..6]: from a quaternion known now, or the W, P, R of a point

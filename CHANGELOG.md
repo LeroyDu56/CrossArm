@@ -13,6 +13,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `t.tframe.trans.z := ...`) and frames copied (`wB.uframe := wA.uframe`, banks past the UFRAME limit) are converted:
   the frame read back (`PR[k]=UFRAME[n]`), its parts written by TP, then loaded; an oframe other than the identity
   by KAREL (`--karel`). Measured on ROBOGUIDE (probe `framefield`).
+- A FUNC of the backup that builds a tool, a work object or a pose (`tNew := MakeTool(tBase, tOffset)`, its body
+  only assignments and pose functions) from a frame calibrated at run time is copied into each call: TP when the
+  base frame's orientation is known (`PR[k,i]=PR[k,i]+d`), else KAREL (`--karel`); other bodies stay TODO naming the
+  FUNC and the statement, and the report says at how many calls each FUNC was copied. Measured (probe `funcinline`).
 
 ## 1.7.0 — 2026-10-08
 

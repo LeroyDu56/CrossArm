@@ -50,6 +50,7 @@ class Blocker:
     MONITOR = "interrupt watched by a condition monitor (checked periodically)"
     SEARCH = "search: the FANUC skip stops and fails otherwise"
     IO_ROUNDED = "I/O written approximately (pulse length)"
+    INLINED = "function of the backup copied into each call"
     INTERNAL = "CrossArm internal error"
     OTHER = "other"
 
