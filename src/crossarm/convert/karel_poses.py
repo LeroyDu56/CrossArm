@@ -74,13 +74,15 @@ def karel_call(c: "Converter", name: str, registers: list[str], numbers: tuple[s
 
 def karel_candidates(modules: list[n.Module], result: "ConversionResult") -> bool:
     """Whether --karel could convert some of the TODO: a pose data the programs may change (kept in a position
-    register with --karel), or a TODO on a pose function or a frame worked out at run time. The conversion is
+    register with --karel), an iodev (a file), or a TODO on a pose function or a frame worked out at run time. The conversion is
     made again with it only then."""
     if not result.todo_count:
         return False
     declared = [d for m in modules for d in m.declarations] + [d for m in modules for r in m.routines for d in r.body
                                                        if isinstance(d, n.DataDecl)]  # fmt: skip
     if any(d.type_name.lower() == "pose" and d.storage != "CONST" and not d.dims for d in declared):
+        return True
+    if any(d.type_name.lower() == "iodev" for d in declared):  # files: convert.karel_files
         return True
     causes = (Blocker.RUNTIME_POSITION, Blocker.RUNTIME_FRAME, Blocker.CALIBRATION)
     return any(note.kind == "TODO" and note.category in causes and "`" in note.message

@@ -80,6 +80,9 @@ from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
 from crossarm.convert.interrupts import GAPS, SINGLE_OPTIONS, Interrupt, arming, called_by, changed_by, connected
 from crossarm.convert.interrupts import scan as scan_interrupts
+from crossarm.convert.karel_files import CONVERTED as KAREL_FILES
+from crossarm.convert.karel_files import INSTRUCTIONS as FILE_INSTRUCTIONS
+from crossarm.convert.karel_files import KarelFiles
 from crossarm.convert.karel_poses import KarelPoses, karel_candidates, karel_would
 from crossarm.convert.karel_poses import place_frames as place_karel_frames
 from crossarm.convert.motion import corner, next_move
@@ -821,7 +824,8 @@ class Converter:
         self.provided: dict[str, ProvidedProgram] = {}
         self.not_written: set[str] = set()  # of which: routines this task would have written
         self._provided_entries(modules)
-        self.routine_use = RoutineUse(self.procs | self.computer.functions, self.externals)
+        self.routine_use = RoutineUse(self.procs | self.computer.functions, self.externals,
+                                      KAREL_FILES if self.config.karel else ())
         self.move_routine_calls: Counter[str] = Counter()
         # Interrupts (crossarm.convert.interrupts): upper-case intnum -> what the programs do with it, set by
         # convert(); the WHEN conditions each is armed on; the data a TRAP changes, never taken as known.
@@ -2009,7 +2013,7 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses):
+class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2239,7 +2243,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses):
                 # An Unresolvable that reaches here is always a value we could not work out.
                 measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
                 none = no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
-                                         self.c.symbols.type_of)  # fmt: skip
+                                         self.c.symbols.type_of, KAREL_FILES if self.c.config.karel else ())
                 text = text_todo(stmt, self.c.procs.keys() | self.c.computer.functions.keys())
                 if none is not None:
                     self.todo(stmt, none, Blocker.NO_TP_EQUIVALENT)
@@ -2672,7 +2676,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses):
         decl = self.c.symbols.get(expr.base.name)
         if decl is None or decl.type_name.lower() != kind or len(decl.dims) != len(expr.indices):
             return None
-        prefix, mark, store = ("R", "RB", self.c.number_arrays) if kind == "num" else ("F", "FB", self.c.flag_arrays)
+        prefix, mark, store = ("R", "RB", self.c.number_arrays) if kind in ("num", "iodev") else ("F", "FB",
+                                                                                            self.c.flag_arrays)
         changed = self.c.computer.written.where((decl.name.upper(),), kind)
         try:
             fixed = [self.c.evaluator.constant_number(i) for i in expr.indices]
@@ -3076,6 +3081,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses):
             raise Untranslatable(f"{call.name}: {why}", Blocker.INTERRUPT)
         elif name in self.c.externals:
             self.provided_call(call, self.c.externals[name])
+        elif self.c.config.karel and name in FILE_INSTRUCTIONS and name not in self.c.procs:
+            self.file_statement(call, name)  # convert.karel_files
         elif name in self.c.move_routines:
             self.routine_move(call, self.c.move_routines[name])
         elif isinstance(self.c.signatures.get(name), Signature) and name in self.c.program_names:

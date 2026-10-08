@@ -1,0 +1,337 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CALL CA_FILE(op, h, ...): RAPID's Open, Write and Close of a text file, for a TP program. Written by
+-- CrossArm (--karel).
+--
+--   CALL CA_FILE(1, h, mode, dir, part, ...)  Open: the file named by the parts put together after the folder
+--                                         dir ('UD1:', 'log.txt'; RAPID's HOME: is UD1:), mode 1 \Write (emptied
+--                                         first), 2 \Append; R[h] = its handle (1 to 8)
+--   CALL CA_FILE(2, h, nl, part, ...)     Write the parts in the file R[h] holds; nl 1: then a new line (CR LF,
+--                                         as RAPID), 0: \NoNewLine
+--   CALL CA_FILE(3, h)                    Close the file R[h] holds; R[h] = 0 (nothing to do when none)
+--
+-- h is the NUMBER of the register R[h] keeping the handle (an iodev). A part is a text (a constant, or
+-- SR[n]: a backquote stands for an apostrophe, which a TP text cannot hold) or a number (a constant or
+-- R[n]), written as RAPID's Write \Num writes it: six significant digits, a whole number when the decimals
+-- are within 0.000005 of one. A file stays open from one CALL to the next. Anything wrong (a handle with no
+-- file open, a file the controller cannot open or write, more than 8 files open) posts the controller's
+-- error and aborts: the TP program stops on the CALL.
+PROGRAM ca_file
+%NOLOCKGROUP
+%NOBUSYLAMP
+%COMMENT = 'CrossArm files'
+%ENVIRONMENT REGOPE
+%ENVIRONMENT STRNG
+VAR
+  f1, f2, f3, f4, f5, f6, f7, f8 : FILE
+  owner : ARRAY[8] OF INTEGER  -- the number of the register keeping each handle; 0: free
+  op, h, slot, flag, n, kind, ival, status : INTEGER
+  rval : REAL
+  sval, piece, fname : STRING[254]
+%INCLUDE ca_lib
+
+-- The text a TP text argument stands for: each backquote an apostrophe.
+ROUTINE ca_unquote(s : STRING) : STRING
+VAR
+  i : INTEGER
+  c : STRING[1]
+  out : STRING[254]
+BEGIN
+  out = ''
+  FOR i = 1 TO STR_LEN(s) DO
+    c = SUB_STR(s, i, 1)
+    IF c = '`' THEN
+      out = out + CHR(39)
+    ELSE
+      out = out + c
+    ENDIF
+  ENDFOR
+  RETURN (out)
+END ca_unquote
+
+-- The device a folder given to Open stands for: UD1: for RAPID's HOME: (HOME:/ too, any case), else itself.
+ROUTINE ca_folder(s : STRING) : STRING
+VAR
+  i, code : INTEGER
+  rest : STRING[254]
+BEGIN
+  IF STR_LEN(s) < 5 THEN
+    RETURN (s)
+  ENDIF
+  FOR i = 1 TO 4 DO
+    code = ORD(s, i)
+    IF code >= 97 THEN
+      code = code - 32
+    ENDIF
+    IF code <> ORD('HOME', i) THEN
+      RETURN (s)
+    ENDIF
+  ENDFOR
+  IF SUB_STR(s, 5, 1) <> ':' THEN
+    RETURN (s)
+  ENDIF
+  rest = ''
+  IF STR_LEN(s) > 5 THEN
+    rest = SUB_STR(s, 6, STR_LEN(s) - 5)
+  ENDIF
+  IF (rest <> '') AND (rest <> '/') THEN
+    ca_stop(12325)  -- illegal file string: a folder of HOME:
+  ENDIF
+  RETURN ('UD1:')
+END ca_folder
+
+-- s without its leading blanks.
+ROUTINE ca_trim(s : STRING) : STRING
+VAR
+  i : INTEGER
+BEGIN
+  i = 1
+  WHILE (i < STR_LEN(s)) AND (SUB_STR(s, i, 1) = ' ') DO
+    i = i + 1
+  ENDWHILE
+  RETURN (SUB_STR(s, i, STR_LEN(s) - i + 1))
+END ca_trim
+
+-- A number as RAPID's Write \Num writes it: whole when its decimals are within 0.000005 of a whole number,
+-- else six significant digits, without the zeros at the end.
+ROUTINE ca_num_text(r : REAL) : STRING
+VAR
+  a, p, fraction : REAL
+  digits, last : INTEGER
+  s : STRING[40]
+BEGIN
+  a = ABS(r)
+  IF a >= 1.0E9 THEN
+    CNV_REAL_STR(r, 1, 0, s)
+    RETURN (ca_trim(s))
+  ENDIF
+  fraction = a - TRUNC(a)
+  IF (fraction < 0.000005) OR (fraction > 0.999995) THEN
+    CNV_INT_STR(ROUND(r), 1, 10, s)
+    RETURN (ca_trim(s))
+  ENDIF
+  digits = 5
+  p = 10
+  WHILE (a >= p) AND (digits > 0) DO
+    digits = digits - 1
+    p = p * 10
+  ENDWHILE
+  p = 1
+  WHILE a < p DO
+    digits = digits + 1
+    p = p / 10
+  ENDWHILE
+  CNV_REAL_STR(r, 1, digits, s)
+  s = ca_trim(s)
+  IF SUB_STR(s, 1, 1) = '.' THEN
+    s = '0' + s
+  ENDIF
+  IF SUB_STR(s, 1, 2) = '-.' THEN
+    s = '-0' + SUB_STR(s, 2, STR_LEN(s) - 1)
+  ENDIF
+  last = STR_LEN(s)
+  WHILE SUB_STR(s, last, 1) = '0' DO
+    last = last - 1
+  ENDWHILE
+  IF SUB_STR(s, last, 1) = '.' THEN
+    last = last - 1
+  ENDIF
+  RETURN (SUB_STR(s, 1, last))
+END ca_num_text
+
+-- The open file of slot s: the error of its last operation, or 0.
+ROUTINE ca_status(s : INTEGER) : INTEGER
+BEGIN
+  SELECT s OF
+    CASE (1): RETURN (IO_STATUS(f1))
+    CASE (2): RETURN (IO_STATUS(f2))
+    CASE (3): RETURN (IO_STATUS(f3))
+    CASE (4): RETURN (IO_STATUS(f4))
+    CASE (5): RETURN (IO_STATUS(f5))
+    CASE (6): RETURN (IO_STATUS(f6))
+    CASE (7): RETURN (IO_STATUS(f7))
+    ELSE: RETURN (IO_STATUS(f8))
+  ENDSELECT
+END ca_status
+
+-- s written in the file of slot k (with CR LF after it when nl): the program aborts when it is not written.
+ROUTINE ca_put(k : INTEGER; s : STRING; nl : BOOLEAN)
+VAR
+  code : INTEGER
+BEGIN
+  IF nl THEN
+    SELECT k OF
+      CASE (1): WRITE f1 (s, CHR(13), CR)
+      CASE (2): WRITE f2 (s, CHR(13), CR)
+      CASE (3): WRITE f3 (s, CHR(13), CR)
+      CASE (4): WRITE f4 (s, CHR(13), CR)
+      CASE (5): WRITE f5 (s, CHR(13), CR)
+      CASE (6): WRITE f6 (s, CHR(13), CR)
+      CASE (7): WRITE f7 (s, CHR(13), CR)
+      ELSE: WRITE f8 (s, CHR(13), CR)
+    ENDSELECT
+  ELSE
+    SELECT k OF
+      CASE (1): WRITE f1 (s)
+      CASE (2): WRITE f2 (s)
+      CASE (3): WRITE f3 (s)
+      CASE (4): WRITE f4 (s)
+      CASE (5): WRITE f5 (s)
+      CASE (6): WRITE f6 (s)
+      CASE (7): WRITE f7 (s)
+      ELSE: WRITE f8 (s)
+    ENDSELECT
+  ENDIF
+  code = ca_status(k)
+  IF code <> 0 THEN
+    ca_stop(code)  -- 12328: file is not opened; 12330: write file failed
+  ENDIF
+END ca_put
+
+-- The file of slot k closed (nothing happens when it is not open).
+ROUTINE ca_close(k : INTEGER)
+BEGIN
+  SELECT k OF
+    CASE (1): CLOSE FILE f1
+    CASE (2): CLOSE FILE f2
+    CASE (3): CLOSE FILE f3
+    CASE (4): CLOSE FILE f4
+    CASE (5): CLOSE FILE f5
+    CASE (6): CLOSE FILE f6
+    CASE (7): CLOSE FILE f7
+    ELSE: CLOSE FILE f8
+  ENDSELECT
+  owner[k] = 0
+END ca_close
+
+-- The file named fname opened in slot k with this usage ('RW' or 'AP'): the program aborts when it is not.
+ROUTINE ca_open(k : INTEGER; usage : STRING)
+VAR
+  code : INTEGER
+BEGIN
+  SELECT k OF
+    CASE (1): OPEN FILE f1 (usage, fname)
+    CASE (2): OPEN FILE f2 (usage, fname)
+    CASE (3): OPEN FILE f3 (usage, fname)
+    CASE (4): OPEN FILE f4 (usage, fname)
+    CASE (5): OPEN FILE f5 (usage, fname)
+    CASE (6): OPEN FILE f6 (usage, fname)
+    CASE (7): OPEN FILE f7 (usage, fname)
+    ELSE: OPEN FILE f8 (usage, fname)
+  ENDSELECT
+  code = ca_status(k)
+  IF code <> 0 THEN
+    ca_stop(code)  -- 2008: device not ready...
+  ENDIF
+END ca_open
+
+-- The slot of the file R[h] holds, or 0 when it holds none.
+ROUTINE ca_slot(h : INTEGER) : INTEGER
+VAR
+  real_flag : BOOLEAN
+  k, st : INTEGER
+  r : REAL
+BEGIN
+  GET_REG(h, real_flag, k, r, st)
+  IF st <> 0 THEN
+    ca_stop(st)  -- VARS-024: bad register index
+  ENDIF
+  IF real_flag THEN
+    RETURN (0)
+  ENDIF
+  IF (k < 1) OR (k > 8) THEN
+    RETURN (0)
+  ENDIF
+  IF UNINIT(owner[k]) THEN
+    RETURN (0)
+  ENDIF
+  IF owner[k] <> h THEN
+    RETURN (0)
+  ENDIF
+  RETURN (k)
+END ca_slot
+
+BEGIN
+  FOR n = 1 TO 8 DO
+    IF UNINIT(owner[n]) THEN
+      owner[n] = 0
+    ENDIF
+  ENDFOR
+  op = ca_reg_arg(1)
+  h = ca_reg_arg(2)
+  slot = ca_slot(h)
+  IF op = 3 THEN
+    IF slot <> 0 THEN
+      ca_close(slot)
+    ENDIF
+    SET_INT_REG(h, 0, status)
+    RETURN
+  ENDIF
+  IF (op <> 1) AND (op <> 2) THEN
+    ca_stop(17035)  -- ROUT-035: value is out of range
+  ENDIF
+  flag = ca_reg_arg(3)
+  IF op = 1 THEN
+    fname = ''
+    n = 4
+    GET_TPE_PRM(n, kind, ival, rval, sval, status)
+    WHILE status = 0 DO
+      IF kind <> 3 THEN
+        ca_stop(17043)  -- ROUT-043: TPE parameter wrong data type
+      ENDIF
+      IF n = 4 THEN
+        fname = ca_folder(ca_unquote(sval))
+      ELSE
+        fname = fname + ca_unquote(sval)
+      ENDIF
+      n = n + 1
+      GET_TPE_PRM(n, kind, ival, rval, sval, status)
+    ENDWHILE
+    IF slot <> 0 THEN  -- the iodev opened again (or left open by a program aborted): closed first
+      ca_close(slot)
+    ENDIF
+    slot = 0
+    FOR n = 1 TO 8 DO
+      IF (slot = 0) AND (owner[n] = 0) THEN
+        slot = n
+      ENDIF
+    ENDFOR
+    IF slot = 0 THEN
+      ca_stop(12326)  -- file var is already used: 8 files open
+    ENDIF
+    IF flag = 2 THEN
+      ca_open(slot, 'AP')
+    ELSE
+      ca_open(slot, 'RW')
+    ENDIF
+    owner[slot] = h
+    SET_INT_REG(h, slot, status)
+    RETURN
+  ENDIF
+  IF slot = 0 THEN
+    ca_stop(12328)  -- file is not opened
+  ENDIF
+  n = 4
+  GET_TPE_PRM(n, kind, ival, rval, sval, status)
+  IF status <> 0 THEN
+    ca_stop(status)  -- ROUT-042: nothing to write
+  ENDIF
+  WHILE status = 0 DO
+    SELECT kind OF
+      CASE (1):
+        rval = ival
+        piece = ca_num_text(rval)
+      CASE (2): piece = ca_num_text(rval)
+      CASE (3): piece = ca_unquote(sval)
+      ELSE: ca_stop(17043)
+    ENDSELECT
+    n = n + 1
+    GET_TPE_PRM(n, kind, ival, rval, sval, status)
+    IF status = 0 THEN
+      ca_put(slot, piece, FALSE)
+    ELSE
+      ca_put(slot, piece, flag = 1)
+    ENDIF
+  ENDWHILE
+END ca_file

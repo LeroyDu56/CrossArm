@@ -13,6 +13,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - `--karel` also converts `PoseInv`, `DefFrame` and `RelTool` of a point whose orientation is only known at run
   time (`CA_POSEINV`, `CA_DEFFRAME`, `CA_RELTOOL`), and a work object's uframe or a tool's tframe calibrated
   from them, loaded where the RAPID sets it (`UFRAME[n]=PR[k]`, `UTOOL[n]=PR[k]`).
+- `--karel` writes RAPID's text files: `Open` (`\Write`, `\Append`), `Write` (texts, `\Num`, `\NoNewLine`) and
+  `Close` become `CALL CA_FILE(...)`, the iodev a register; the files of `HOME:` are written on `UD1:`, byte for
+  byte as RAPID writes them (measured on ROBOGUIDE).
 
 ## 1.6.0 — 2026-10-07
 

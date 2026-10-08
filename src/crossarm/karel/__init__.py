@@ -49,6 +49,11 @@ PROGRAMS = {
                                " or R[i]"),
     "CA_DEFFRAME": KarelProgram("CA_DEFFRAME", "ca_defframe.kl", "PR[c] = RAPID DefFrame(PR[a], PR[b], PR[d]"
                                 " \\Origin:=o)", "a, b, d, c: position register numbers; o: 1, 2 or 3"),
+    "CA_FILE": KarelProgram("CA_FILE", "ca_file.kl", "RAPID's Open (1), Write (2) and Close (3) of a text file of"
+                            " HOME:, written on UD1: (lines ended by CR LF, numbers as Write \\Num writes them)",
+                            "op; h: number of the register keeping the handle; Open: mode 1 \\Write, 2 \\Append,"
+                            " then the name's parts; Write: 1 new line or 0 \\NoNewLine, then texts (constants,"
+                            " SR[n], AR[n]) and numbers (constants, R[n])"),
 }  # fmt: skip
 _CALL = re.compile(r"^CALL (CA_[A-Z0-9_]+)\(")
 
