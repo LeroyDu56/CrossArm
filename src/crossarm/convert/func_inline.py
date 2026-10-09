@@ -397,6 +397,7 @@ def inlined_notes(c: Any) -> None:
         if not places:
             continue
         count = len(places)
+        c.result.inlined_sites[function] = list(places)
         c.note(places[0][0], places[0][1], "WARNING", f"FUNC {function}() of the backup is inlined at {count} call"
                f" site{'s' if count > 1 else ''}: its body is copied into each call, as TP (and KAREL) lines; convert"
                f" again after a change of {function}() in the RAPID", Blocker.INLINED)  # fmt: skip

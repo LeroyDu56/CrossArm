@@ -11,6 +11,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - Actions you can act on: each gives the exact number of TODO it concerns, leading to them, and who acts; cosmetic
   TODO apart; a family on each cause; an `external_routines` example to copy; over the controller's capacity, the
   mapping keys to edit; one sentence under the share converted by area; what TP has no equivalent for, apart.
+- RAPID and TP, program by program, no longer a long list: programs in folders by name (or RAPID module), each with
+  its counts; a program opens on its TODO and warnings, two lines around, the rest one click away; a TODO followed
+  from the list highlights its RAPID line and the TP lines written from it; what `--karel`, FUNCs copied into
+  their calls and provided routines did in each program.
 
 ## 1.8.0 — 2026-10-09
 

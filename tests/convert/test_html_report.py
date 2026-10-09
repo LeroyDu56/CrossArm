@@ -126,7 +126,7 @@ def test_the_page_loads_nothing_escapes_the_backup_and_links_every_todo_to_its_l
     assert {"summary", "review", "code", "details", "p-MAIN", "L-MAIN-16"} <= parsed.ids
     assert set(parsed.links) <= parsed.ids  # no link leads nowhere
     assert "L-MAIN-16" in parsed.links  # the TODO, from the list to its line
-    assert '<tr id="L-MAIN-16" class="todo">' in page
+    assert '<tr id="L-MAIN-16" data-l="16" class="todo">' in page
     # Under the verdict, before what to do first: always seen, the header only says the licence.
     analysis = page.split('<section id="analysis">')[1].split("</section>")[0]
     assert page.count("Evaluation copy.") == 1 and "Evaluation copy." in analysis.split('class="an-grid"')[0]
@@ -159,7 +159,8 @@ def test_the_pipeline_writes_the_page_and_the_markdown(tmp_path):
     ls = (tmp_path / "out" / "MAIN.LS").read_text(encoding="ascii")
     number = next(int(line.split(":")[0]) for line in ls.splitlines() if "!RAPID Cell.main" in line)
     assert number > 1  # after the licence mark: numbered as in the .LS
-    assert f'<tr id="L-MAIN-4"><td class="n">4</td><td class="c">PROC main()</td><td class="n">{number}' in page
+    assert re.search(rf'<tr id="L-MAIN-4" data-l="4"[^>]*><td class="n">4</td><td class="c">PROC main\(\)</td>'
+                     rf'<td class="n">{number}\b', page)
     assert Path(output.tasks[0].report_html).stat().st_size < 200_000
 
 
@@ -400,7 +401,7 @@ def test_links_to_the_items_to_review_carry_their_filters_in_the_address():
 
 def test_programs_ready_as_is_are_one_line_and_points_one_line_per_program():
     page = build_html_report(_convert(_many(3, todo=1)), ConversionConfig(), ["big.mod"], title="t")
-    assert "<b>2 programs ready as is</b>" in page and 'id="p-ready"' in page
+    assert "<b>2 programs ready as is</b>: R1.LS, R2.LS." in page and 'class="js-only-inline pf-show"' in page
     assert '<details class="prog" id="p-R1" data-p="R1" data-r="Big.r1" data-todo="0" data-ready>' in page
     assert '<details class="prog" id="p-R0" data-p="R0" data-r="Big.r0" data-todo="1">' in page
     section = page.split('<section id="points">')[1].split("</section>")[0]

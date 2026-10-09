@@ -17,7 +17,9 @@ menu, the analysis says what to do first, and every other section is one folded 
     Items to review  every TODO and warning, filtered by kind, cause and program, or searched, 50 at a time
     RAPID and TP     each program, its RAPID routine and the TP written from it side by side, line by line
                      (crossarm.convert.source_map), the lines left TODO marked with their cause and why; the
-                     programs with no TODO in one line, shown on demand
+                     programs in folders by name (crossarm.convert.program_folders), those with no TODO in one
+                     line per folder; each program opened on its TODO, two lines around, with its counts and what
+                     --karel, the FUNCs copied in and the provided routines did in it
     Points           one line per program, its points on demand
     Summary          the figures, then the summary of the Markdown report
     Details          the rest of the Markdown report: programs, frames, registers, speeds, what the run added
@@ -37,6 +39,7 @@ import html
 import json
 import re
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 
 from crossarm import __version__
 from crossarm.convert import analysis, triage
@@ -57,6 +60,7 @@ from crossarm.convert.config import ConversionConfig
 from crossarm.convert.coverage import MOTION, fmt_percent
 from crossarm.convert.html import CSS as MARKDOWN_CSS
 from crossarm.convert.html import inline, markdown_body
+from crossarm.convert.program_folders import folders, todo_only
 from crossarm.convert.report import EVALUATION_NOTICE, report_parts
 from crossarm.convert.source_map import Row, line_anchor, side_by_side, todo_href, tp_text
 from crossarm.convert.taught import AGAIN, KEPT
@@ -122,18 +126,89 @@ def _fold(section: Section, line: str, depth: str, *, fold_id: str = "") -> Sect
 # ---------------------------------------------------------------------------
 
 
-def _note_rows(notes: list[Note]) -> str:
+def _note_rows(notes: list[Note], line: int | None = None) -> str:
     out = []
+    of = f' data-l="{line}"' if line is not None else ""
     for note in notes:
         kind = "todo" if note.kind == "TODO" else "warn"
-        out.append(f'<tr class="note {kind}"><td></td><td colspan="3"><span class="tag {kind}">{_e(note.kind)}</span>'
+        out.append(f'<tr class="note {kind}"{of}><td></td><td colspan="3"><span class="tag {kind}">{_e(note.kind)}</span>'
                    f' <span class="cause">{_e(note.category)}</span> {inline(note.message)}</td></tr>')  # fmt: skip
     return "".join(out)
 
 
+@dataclass
+class _Facts:
+    """What happened in one program besides its lines: KAREL calls, FUNCs copied in, provided routines called."""
+
+    karel: list[tuple[str, int]] = field(default_factory=list)  # (KAREL program, calls here)
+    inlined: list[tuple[str, list[int], int]] = field(default_factory=list)  # (FUNC, RAPID lines here, sites in all)
+    provided: list[tuple[str, str, list[int]]] = field(default_factory=list)  # (routine, its TP program, lines here)
+
+    @property
+    def karel_calls(self) -> int:
+        return sum(count for _, count in self.karel)
+
+    @property
+    def inlined_sites(self) -> int:
+        return sum(len(lines) for _, lines, _ in self.inlined)
+
+    @property
+    def provided_calls(self) -> int:
+        return sum(len(lines) for _, _, lines in self.provided)
+
+
+def _facts(result: ConversionResult) -> dict[str, _Facts]:
+    """Each program's _Facts, from what the run kept: karel_calls, inlined_sites, provided[].calls."""
+    out: dict[str, _Facts] = defaultdict(_Facts)
+    for name, callers in (result.karel_calls or {}).items():
+        for program, count in callers.items():
+            out[program].karel.append((name, count))
+    for function, sites in result.inlined_sites.items():
+        here: dict[str, list[int]] = defaultdict(list)
+        for program, line in sites:
+            here[program].append(line)
+        for program, lines in here.items():
+            out[program].inlined.append((function, sorted(lines), len(sites)))
+    for use in result.provided:
+        here = defaultdict(list)
+        for program, line in use.calls:
+            here[program].append(line)
+        for program, lines in here.items():
+            out[program].provided.append((use.routine, use.program, sorted(lines)))
+    return out
+
+
+def _lines(program: str, lines: list[int], anchors: set[tuple[str, int]]) -> str:
+    shown = [f'<a href="#{_e(line_anchor(program, k))}">{k}</a>' if (program, k) in anchors else str(k)
+             for k in lines[:12]]  # fmt: skip
+    more = f" and {len(lines) - 12} more" if len(lines) > 12 else ""
+    return f"l. {', '.join(shown)}{more}"
+
+
+def _facts_list(name: str, facts: _Facts, anchors: set[tuple[str, int]]) -> str:
+    """What --karel did here, the FUNCs copied in here and the provided routines called here, one line each."""
+    items = []
+    if facts.karel:
+        calls = ", ".join(f"<code>{_e(k)}</code> ({count})" for k, count in facts.karel)
+        items.append(f'<li><span class="tag kar">KAREL</span> <code>--karel</code> calls CrossArm\'s KAREL programs'
+                     f" here: {calls}. Load their <code>.pc</code> before the <code>.LS</code>.</li>")  # fmt: skip
+    for function, lines, total in facts.inlined:
+        items.append(f'<li><span class="tag inl">inlined</span> <code>{_e(function)}()</code> copied here at'
+                     f" {_s(len(lines), 'call site')} ({_lines(name, lines, anchors)}; {total} in all): change the"
+                     " FUNC in the RAPID, then convert again with the same mapping file.</li>")  # fmt: skip
+    for routine, program, lines in facts.provided:
+        items.append(f'<li><span class="tag ext">provided</span> <code>{_e(routine)}</code> called as'
+                     f" <code>CALL {_e(program)}</code> ({_lines(name, lines, anchors)}): a program the integrator"
+                     " writes (<code>external_routines</code>).</li>")  # fmt: skip
+    return f'<ul class="pdid">{"".join(items)}</ul>' if items else ""
+
+
 def _program_view(info: ProgramInfo, result: ConversionResult, notes: list[Note], lead: list[str],
                   anchors: set[tuple[str, int]]) -> str:  # fmt: skip
-    """One program: RAPID on the left, TP on the right, a row per RAPID line."""
+    """One program: RAPID on the left, TP on the right, a row per RAPID line. With a TODO or warning, it opens on
+    its TODO-only view (program_folders.todo_only): the rows left out behind separators, the full view one click
+    away. Every row of a RAPID line (the line, its notes, its TP lines written further down) has data-l: the page
+    highlights them together."""
     name = info.program.name
     lines = info.program.lines
     offset = 0 if info.program.condition else len(lead)
@@ -148,16 +223,14 @@ def _program_view(info: ProgramInfo, result: ConversionResult, notes: list[Note]
             by_line[note.rapid_line].append(note)
     shown = {row.rapid for row in rows if row.rapid is not None and not row.again}
     loose = [note for note in notes if note.rapid_line not in shown]
+    marked_lines = {line for line in by_line if line in shown}
 
-    out = []
-    if loose:  # notes on the routine as a whole, or on a line outside it (a declaration of the module)
-        out.append('<table class="sbs loose"><tbody>' + _note_rows(loose) + "</tbody></table>")
-    out.append('<table class="sbs"><colgroup><col class="cn"><col class="cc"><col class="cn"><col class="cc">'
-               "</colgroup><thead><tr><th>l.</th><th>RAPID</th><th>l.</th><th>TP</th></tr></thead><tbody>")  # fmt: skip
+    # One item per row: (classes, attributes, cells, its notes' rows, marked, RAPID lines it shows)
+    items: list[tuple[list[str], str, str, str, bool, int]] = []
     if offset:
         numbers = "\n".join(str(k) for k in range(1, offset + 1))
-        out.append(f'<tr class="mark"><td></td><td></td><td class="n">{numbers}</td>'
-                   f'<td class="c">{_e(chr(10).join(lead))}</td></tr>')  # fmt: skip
+        cells = f'<td></td><td></td><td class="n">{numbers}</td><td class="c">{_e(chr(10).join(lead))}</td>'
+        items.append((["mark"], "", cells, "", False, 0))
     for row in rows:
         numbers, texts = [], []
         for i in row.tp:
@@ -166,18 +239,48 @@ def _program_view(info: ProgramInfo, result: ConversionResult, notes: list[Note]
                 texts.append(text)
         tp_cells = f'<td class="n">{chr(10).join(numbers)}</td><td class="c">{_e(chr(10).join(texts))}</td>'
         if row.rapid is None:
-            out.append(f"<tr><td></td><td></td>{tp_cells}</tr>")
+            items.append(([], "", f"<td></td><td></td>{tp_cells}", "", False, 0))
             continue
         if row.again:
-            out.append(f'<tr class="again"><td class="n">{row.rapid}</td><td class="c up">↑</td>{tp_cells}</tr>')
+            cells = f'<td class="n">{row.rapid}</td><td class="c up">↑</td>{tp_cells}'
+            items.append((["again"], f' data-l="{row.rapid}"', cells, "", row.rapid in marked_lines, 0))
             continue
         here = by_line.get(row.rapid, [])
-        kind = ' class="todo"' if any(n.kind == "TODO" for n in here) else ' class="warn"' if here else ""
+        kind = ["todo"] if any(n.kind == "TODO" for n in here) else ["warn"] if here else []
         text = source[row.rapid - 1] if source and row.rapid <= len(source) else ""
         anchors.add((name, row.rapid))
-        out.append(f'<tr id="{_e(line_anchor(name, row.rapid))}"{kind}><td class="n">{row.rapid}</td>'
-                   f'<td class="c">{_e(text.rstrip())}</td>{tp_cells}</tr>')  # fmt: skip
-        out.append(_note_rows(here))
+        items.append((kind, f' id="{_e(line_anchor(name, row.rapid))}" data-l="{row.rapid}"',
+                      f'<td class="n">{row.rapid}</td><td class="c">{_e(text.rstrip())}</td>{tp_cells}',
+                      _note_rows(here, row.rapid), bool(here), 1))  # fmt: skip
+
+    runs = todo_only([item[4] for item in items]) if marked_lines else []
+    gaps = [run for run in runs if not run.shown]
+    out = []
+    if gaps:
+        out.append('<div class="pv js-only"><span class="muted">View:</span> <button type="button" data-v="todo"'
+                   ' aria-pressed="true">TODO and warnings, 2 lines around</button> <button type="button"'
+                   ' data-v="all" aria-pressed="false">Full program</button></div>')  # fmt: skip
+    if loose:  # notes on the routine as a whole, or on a line outside it (a declaration of the module)
+        out.append('<table class="sbs loose"><tbody>' + _note_rows(loose) + "</tbody></table>")
+    out.append(f'<table class="sbs{" only" if gaps else ""}"><colgroup><col class="cn"><col class="cc"><col class="cn">'
+               '<col class="cc"></colgroup><thead><tr><th>l.</th><th>RAPID</th><th>l.</th><th>TP</th></tr></thead>'
+               "<tbody>")  # fmt: skip
+    hidden: dict[int, int] = {}  # row -> its separator
+    for g, run in enumerate(gaps):
+        hidden.update((k, g) for k in range(run.start, run.end))
+    starts = {run.start: g for g, run in enumerate(gaps)}
+    for k, (classes, attributes, cells, note_rows, _, rapid) in enumerate(items):
+        if k in starts:
+            g = starts[k]
+            count = sum(item[5] for item in items[gaps[g].start:gaps[g].end])
+            what = _s(count, "line") + " converted" if count else _s(gaps[g].end - gaps[g].start, "TP row")
+            out.append(f'<tr class="gap" data-g="{g}"><td colspan="4"><button type="button" class="gap"'
+                       f' title="Show these lines">… {what} …</button></td></tr>')  # fmt: skip
+        if k in hidden:
+            classes = [*classes, "f"]
+            attributes += f' data-g="{hidden[k]}"'
+        kind = f' class="{" ".join(classes)}"' if classes else ""
+        out.append(f"<tr{attributes}{kind}>{cells}</tr>{note_rows}")
     out.append("</tbody></table>")
     return "".join(out)
 
@@ -189,57 +292,108 @@ def _counts(notes: list[Note]) -> tuple[Counter[str], Counter[str]]:
     return todo, warnings
 
 
-def _badges(todo: int, warnings: int) -> str:
+def _badges(todo: int, warnings: int, facts: "_Facts | None" = None) -> str:
+    """A program's counters, read before opening it."""
     out = f' <span class="tag todo">{todo} TODO</span>' if todo else ' <span class="tag ok">no TODO</span>'
     if warnings:
         out += f' <span class="tag warn">{warnings} warning{"s" if warnings > 1 else ""}</span>'
+    if facts is not None:
+        if facts.karel_calls:
+            out += f' <span class="tag kar">{_s(facts.karel_calls, "KAREL call")}</span>'
+        if facts.inlined_sites:
+            out += f' <span class="tag inl">{_s(facts.inlined_sites, "inlined FUNC site")}</span>'
+        if facts.provided_calls:
+            out += f' <span class="tag ext">{_s(facts.provided_calls, "provided routine call")}</span>'
     return out
 
 
+@dataclass
+class _Entry:
+    name: str
+    routine: str
+    todo: int
+    warnings: int
+    html: str
+
+
+def _ready_line(ready: list[_Entry]) -> str:
+    names = ", ".join(f"{_e(entry.name)}.LS" for entry in ready[:8]) + (f" and {len(ready) - 8} more"
+                                                                         if len(ready) > 8 else "")  # fmt: skip
+    warned = sum(1 for entry in ready if entry.warnings)
+    also = f", {warned} with warnings" if warned else ""
+    return (f'<p class="pready"><span class="tag ok">ready</span> <b>{_s(len(ready), "program")} ready as is</b>{also}:'
+            f' {names}. <button type="button" class="js-only-inline pf-show">show them</button></p>'
+            f'<div class="pf-ready" hidden>{"".join(entry.html for entry in ready)}</div>')  # fmt: skip
+
+
+def _folder_body(entries: list[_Entry]) -> str:
+    """The programs with TODO, each one fold; those ready as is in one line, shown on demand."""
+    with_todo = [entry.html for entry in entries if entry.todo]
+    ready = [entry for entry in entries if not entry.todo]
+    return "".join(with_todo) + (_ready_line(ready) if ready else "")
+
+
 def _code_section(result: ConversionResult, lead: list[str], anchors: set[tuple[str, int]]) -> Section:
-    """Programs with TODO first in sight; those with none in one line, shown on demand; each program's view
-    built when it is opened."""
+    """The programs in folders (program_folders), each folded with its counts; in a folder, the programs with TODO
+    first, those ready as is in one line; each program's view built when it is opened."""
     todo, warnings = _counts(result.notes)
     notes: dict[str, list[Note]] = defaultdict(list)
     for note in result.notes:
         notes[note.program].append(note)
-    index, views = [], []
+    facts = _facts(result)
+    entries: dict[str, _Entry] = {}
     for info in result.programs:
         name = info.program.name
         routine = f"{info.module}.{info.routine}" if info.module else info.routine
         ready = "" if todo[name] else " data-ready"
-        index.append(f'<tr data-p="{_e(name)}" data-r="{_e(routine)}" data-todo="{todo[name]}"{ready}>'
-                     f'<td><a href="#p-{_e(name)}">{_e(name)}.LS</a>'
-                     f"</td><td>{_e(routine)}</td><td>{len(info.program.lines)}</td><td>{len(info.points)}</td>"
-                     f"<td>{todo[name] or ''}</td><td>{warnings[name] or ''}</td></tr>")  # fmt: skip
-        views.append(f'<details class="prog" id="p-{_e(name)}" data-p="{_e(name)}" data-r="{_e(routine)}"'
-                     f' data-todo="{todo[name]}"{ready}>'
-                     f'<summary><span class="pn">{_e(name)}.LS</span> <span class="muted">{_e(routine)}</span>'
-                     f"{_badges(todo[name], warnings[name])}</summary>"
-                     f"{lazy(_program_view(info, result, notes[name], lead, anchors))}</details>")  # fmt: skip
-    ready = sum(1 for info in result.programs if not todo[info.program.name])
-    with_todo = len(result.programs) - ready
-    ready_line = (
-        f'<p class="ready"><span class="tag ok">ready</span> <b>{_s(ready, "program")} ready as is</b>: no TODO, to'
-        f' load and check. <button type="button" class="js-only-inline" id="p-ready">show them</button></p>'
-        if ready and with_todo else ""
-    )  # fmt: skip
+        here = facts.get(name, _Facts())
+        size = f' <span class="muted">· {_s(len(info.program.lines), "line")}' + (
+            f" · {_s(len(info.points), 'point')}" if info.points else "") + "</span>"  # fmt: skip
+        view = _program_view(info, result, notes[name], lead, anchors)  # first: the facts link to its lines
+        view = _facts_list(name, here, anchors) + view
+        entries[name] = _Entry(name, routine, todo[name], warnings[name], (
+            f'<details class="prog" id="p-{_e(name)}" data-p="{_e(name)}" data-r="{_e(routine)}"'
+            f' data-todo="{todo[name]}"{ready}>'
+            f'<summary><span class="pn">{_e(name)}.LS</span> <span class="muted">{_e(routine)}</span>'
+            f"{_badges(todo[name], warnings[name], here)}{size}</summary>{lazy(view)}</details>"))  # fmt: skip
+    found = folders([(info.program.name, info.module) for info in result.programs])
+    ready = sum(1 for entry in entries.values() if not entry.todo)
+    with_todo = len(entries) - ready
+    if found:
+        order = {folder.key: k for k, folder in enumerate(found)}
+        boxes = []
+        for folder in sorted(found, key=lambda f: (-sum(entries[p].todo for p in f.programs), order[f.key])):
+            members = [entries[p] for p in folder.programs]
+            members.sort(key=lambda entry: not entry.todo)  # stable: the order of the programs otherwise
+            count_todo = sum(entry.todo for entry in members)
+            count_warn = sum(entry.warnings for entry in members)
+            count_ready = sum(1 for entry in members if not entry.todo)
+            inner = f'<div class="pfb">{_folder_body(members)}</div>'
+            names = "|".join(f"{entry.name} {entry.routine}".lower() for entry in members)
+            counts = (f'<span class="tag todo">{count_todo} TODO</span>' if count_todo else "") + (
+                f' <span class="tag warn">{_s(count_warn, "warning")}</span>' if count_warn else "") + (
+                f' <span class="tag ok">{count_ready} ready</span>' if count_ready else "")  # fmt: skip
+            boxes.append(f'<details class="pf" data-names="{_e(names)}" data-todo="{count_todo}"><summary>'
+                         f'<span class="fn">{_e(folder.label)}</span> <span class="muted">{_s(len(members), "program")}'
+                         f"</span> {counts}</summary>{lazy(inner)}</details>")  # fmt: skip
+        listing = "".join(boxes)
+        how = (f"{_s(len(entries), 'program')} in {_s(len(found), 'folder')}, by the start of their name (or the RAPID"
+               " module they come from), the folders with the most TODO first. Open a folder: its programs with TODO"
+               " first, those ready as is in one line.")  # fmt: skip
+    else:
+        listing = '<div class="pf-flat">' + _folder_body([entries[info.program.name] for info in result.programs]) + "</div>"
+        how = "The programs with TODO first, those ready as is in one line."
     body = [
         "<h2>RAPID and TP side by side</h2>",
-        ("<p>Each program as written in its <code>.LS</code> file, next to the RAPID routine it comes from: every"
-        " RAPID line on the left, the TP lines written from it on the right (numbered as in the <code>.LS</code>)."
-        " A TP line written further down for a RAPID line already shown (an <code>ENDIF</code>, a branch moved"
-        " behind its <code>SELECT</code>) is marked ↑. Lines left TODO are marked, with their cause and why.</p>"),
-        ready_line,
+        (f"<p>{how} Each program as written in its <code>.LS</code> file, next to the RAPID routine it comes from:"
+         " every RAPID line on the left, the TP lines written from it on the right (numbered as in the"
+         " <code>.LS</code>). A program with TODO or warnings opens on them, two lines around; the lines between are"
+         " one click away. A TP line written further down for a RAPID line already shown (an <code>ENDIF</code>,"
+         " a branch moved behind its <code>SELECT</code>) is marked ↑.</p>"),
         ('<div class="bar js-only"><input id="p-text" type="search" placeholder="Filter programs" aria-label="Filter'
-        ' programs"> <button type="button" id="p-open">Expand the programs shown</button> <button type="button"'
-        ' id="p-close">Collapse all</button> <span id="p-count" class="muted"></span></div>'),
-        '<div id="p-box">' if with_todo else '<div id="p-box" class="show-ready">',
-        '<div class="table-wrap"><table class="index"><thead><tr><th>TP program</th><th>RAPID routine</th>'
-        "<th>Lines</th><th>Points</th><th>TODO</th><th>Warnings</th></tr></thead><tbody>"
-        + "".join(index) + "</tbody></table></div>",
-        *views,
-        "</div>",
+         ' programs"> <button type="button" id="p-open">Open every folder</button> <button type="button"'
+         ' id="p-close">Collapse all</button> <span id="p-count" class="muted"></span></div>'),
+        f'<div id="p-box" data-n-ready="{ready}" data-with-todo="{with_todo}">{listing}</div>',
     ]  # fmt: skip
     return "code", "RAPID and TP", "\n".join(body)
 
@@ -634,9 +788,10 @@ def _header(head: list[str], sources: list[str]) -> str:
 
 _CSS = """
 :root { --row: #fafbfc; --todo-bg: #fff1e5; --warn-bg: #fff8db; --ok: #1a7f37; --mark: #8250df; --bad: #cf222e;
-  --stick: 92px; }
+  --stick: 92px; --hit: #ddf4ff; }
 @media (prefers-color-scheme: dark) {
-  :root { --row: #11161d; --todo-bg: #3a2414; --warn-bg: #33290f; --ok: #3fb950; --mark: #a371f7; --bad: #f85149; }
+  :root { --row: #11161d; --todo-bg: #3a2414; --warn-bg: #33290f; --ok: #3fb950; --mark: #a371f7; --bad: #f85149;
+    --hit: #0c2d4a; }
 }
 main { max-width: 1400px; padding-top: 14px; }
 header.top h1 { margin: 0 0 .15em; font-size: 1.5em; padding-bottom: .15em; }
@@ -732,7 +887,31 @@ details.sec > summary h2 { margin: 0; padding: 0; border: 0; font-size: 1.12em; 
 .sline { color: var(--muted); font-size: .92em; }
 .sline b { color: var(--fg); }
 p.ready { margin: .6em 0; }
-#p-box:not(.show-ready) [data-ready] { display: none; }
+details.pf { border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; }
+details.pf > summary { cursor: pointer; padding: 6px 10px; border-radius: 8px; }
+details.pf > summary:hover { background: var(--head); }
+details.pf[open] > summary { border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; background: var(--head); }
+.fn { font-weight: 700; font-family: ui-monospace, Consolas, "Courier New", monospace; margin-right: .3em; }
+.pfb { padding: 2px 10px 6px; }
+p.pready { margin: .5em 0; font-size: .92em; }
+p.pready button { font: inherit; font-size: .92em; padding: 1px 8px; color: var(--fg); background: var(--head);
+  border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+#p-box.filtering .pf-ready { display: block !important; }
+.tag.kar { color: var(--mark); } .tag.inl, .tag.ext { color: var(--accent); }
+ul.pdid { margin: 6px 10px; padding-left: 1.2em; font-size: .88em; }
+ul.pdid li { margin: .15em 0; }
+.pv { gap: 6px; align-items: center; margin: 6px 10px; font-size: .88em; }
+.pv button { font: inherit; padding: 1px 10px; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; cursor: pointer; }
+.pv button[aria-pressed=true] { background: var(--head); border-color: var(--accent); font-weight: 600; }
+table.sbs.only tr.f { display: none; }
+table.sbs:not(.only) tr.gap { display: none; }
+table.sbs tr.gap td { padding: 0; border-bottom: 1px dashed var(--line); }
+tr.gap button { display: block; width: 100%; font: inherit; font-size: .88em; color: var(--muted); background: none;
+  border: 0; padding: 2px; cursor: pointer; }
+tr.gap button:hover { color: var(--accent); background: var(--head); }
+table.sbs tr.hit > td { background: var(--hit) !important; }
+table.sbs tr.hit > td.c { box-shadow: inset 3px 0 0 var(--accent); }
 details.pts { border-bottom: 1px solid var(--line); }
 details.pts > summary { cursor: pointer; padding: 5px 4px; }
 details.pts > summary b { margin: 0 .6em; }
@@ -860,7 +1039,9 @@ _JS = r"""
     if (!el) { return; }
     if (el.tagName === 'SECTION') { var f = el.querySelector('details.sec'); if (f) { open(f); } }
     openTo(el);
-    if (el.closest('[data-ready]') && $('p-box')) { ready(true); }
+    var box = el.closest('.pf-ready');
+    if (box) { showReady(box, true); }
+    if (el.tagName === 'TR') { hit(el); }
     el.scrollIntoView({block: el.tagName === 'TR' ? 'center' : 'start'});
     if (el.tagName === 'TR') { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
   }
@@ -934,33 +1115,73 @@ _JS = r"""
     sec.scrollIntoView({block: 'start'});
   }
 
-  // Programs side by side: the ready ones on demand, a filter by name, expand or collapse.
+  // Programs side by side: in folders, the ready ones on demand, a filter by name; each program on its TODO.
   var P = null;
-  function ready(on) {
-    var box = $('p-box'), b = $('p-ready');
-    if (!box) { return; }
-    box.classList.toggle('show-ready', on);
+  function showReady(box, on) {
+    box.hidden = !on;
+    var b = box.previousElementSibling && box.previousElementSibling.querySelector('button.pf-show');
     if (b) { b.textContent = on ? 'hide them' : 'show them'; }
   }
+  function setView(prog, only) {  // a program's TODO-only view, or its full view
+    if (!prog) { return; }
+    each(prog.querySelectorAll('table.sbs:not(.loose)'), function (t) {
+      if (t.querySelector('tr.gap')) { t.classList.toggle('only', only); }
+    });
+    each(prog.querySelectorAll('.pv button'), function (b) {
+      b.setAttribute('aria-pressed', String((b.getAttribute('data-v') === 'todo') === only));
+    });
+  }
+  function expand(table, g) {  // the rows behind one separator
+    each(table.querySelectorAll('tr[data-g="' + g + '"]'), function (r) {
+      if (r.classList.contains('gap')) { r.parentNode.removeChild(r); } else { r.classList.remove('f'); }
+    });
+  }
+  function hit(el) {  // a RAPID line and the TP lines written from it, highlighted together
+    var table = el.closest('table.sbs'), l = el.getAttribute('data-l');
+    each(d.querySelectorAll('tr.hit'), function (r) { r.classList.remove('hit'); });
+    if (!table || !l) { return; }
+    if (el.classList.contains('todo') || el.classList.contains('warn')) { setView(el.closest('details.prog'), true); }
+    each(table.querySelectorAll('tr[data-l="' + l + '"]'), function (r) {
+      if (r.classList.contains('f')) { expand(table, r.getAttribute('data-g')); }
+      r.classList.add('hit');
+    });
+  }
+  d.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('button');
+    if (!b) { return; }
+    if (b.classList.contains('pf-show')) {
+      var box = b.closest('p').nextElementSibling;
+      if (box) { showReady(box, box.hidden); }
+    } else if (b.classList.contains('gap')) {
+      var tr = b.closest('tr');
+      expand(tr.closest('table'), tr.getAttribute('data-g'));
+    } else if (b.closest('.pv')) {
+      setView(b.closest('details.prog'), b.getAttribute('data-v') === 'todo');
+    }
+  });
   function programsInit() {
     if (P || !$('p-text')) { return; }
-    P = [].slice.call(d.querySelectorAll('#p-box details.prog, #p-box table.index tbody tr'));
-    function programs() {
-      var q = $('p-text').value.trim().toLowerCase(), n = 0;
-      P.forEach(function (el) {
-        var name = (el.dataset.p + ' ' + el.dataset.r).toLowerCase();
-        el.hidden = !!q && name.indexOf(q) < 0;
-        if (!el.hidden && el.tagName === 'DETAILS') { n++; }
+    P = true;
+    var box = $('p-box');
+    function folds() { return d.querySelectorAll('#p-box details.pf'); }
+    $('p-text').addEventListener('input', function () {
+      var q = this.value.trim().toLowerCase(), n = 0;
+      box.classList.toggle('filtering', !!q);
+      each(folds(), function (f) {
+        var on = !q || f.getAttribute('data-names').indexOf(q) >= 0;
+        f.hidden = !on;
+        if (q && on) { open(f); }
+      });
+      each(box.querySelectorAll('details.prog'), function (p) {
+        p.hidden = !!q && (p.dataset.p + ' ' + p.dataset.r).toLowerCase().indexOf(q) < 0;
+        if (!p.hidden) { n++; }
       });
       $('p-count').textContent = q ? n + ' matching' : '';
-      if (q) { ready(true); }
-    }
-    $('p-text').addEventListener('input', programs);
-    if ($('p-ready')) { $('p-ready').addEventListener('click', function () { ready(!$('p-box').classList.contains('show-ready')); }); }
-    $('p-open').addEventListener('click', function () {
-      P.forEach(function (p) { if (p.tagName === 'DETAILS' && p.offsetParent !== null) { open(p); } });
     });
-    $('p-close').addEventListener('click', function () { P.forEach(function (p) { p.open = false; }); });
+    $('p-open').addEventListener('click', function () { each(folds(), function (f) { if (!f.hidden) { open(f); } }); });
+    $('p-close').addEventListener('click', function () {
+      each(box.querySelectorAll('details.pf, details.prog'), function (f) { f.open = false; });
+    });
   }
 
   // Points: one line per program, searched by program or RAPID target.
@@ -1011,7 +1232,7 @@ _JS = r"""
     if ($('depth')) { $('depth').value = v; }
     if (!quiet) { try { window.localStorage.setItem('crossarm-view', v); } catch (e) { /* not kept */ } }
   }
-  window.CrossArm = {open: open, reveal: reveal, view: view};
+  window.CrossArm = {open: open, reveal: reveal, view: view, go: go};
   function start() {
     each(d.querySelectorAll('details[open]'), buildIn);
     var v = 's';
@@ -1070,8 +1291,10 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     sid, label, body = _fold(review, (f"<b>{todo:,}</b> TODO · <b>{warnings:,}</b> warning{'s' if warnings != 1 else ''},"
                                       f" {REVIEW_PAGE} at a time, by cause and program"), INTEGRATOR + DETAIL)
     sections.append((sid, label, '<span id="todo"></span>' + body))
+    in_folders = len(folders([(info.program.name, info.module) for info in result.programs]))
     sections.append(_fold(code, (f"<b>{ready:,}</b> program{'s' if ready != 1 else ''} ready as is ·"
-                                 f" <b>{with_todo:,}</b> with TODO"), INTEGRATOR + DETAIL))
+                                 f" <b>{with_todo:,}</b> with TODO"
+                                 + (f" · in {in_folders} folders" if in_folders else "")), INTEGRATOR + DETAIL))
     if points is not None:
         line = (f"<b>{total_points:,}</b> point{'s' if total_points != 1 else ''} in"
                 f" {_s(sum(1 for i in result.programs if i.points), 'program')}"

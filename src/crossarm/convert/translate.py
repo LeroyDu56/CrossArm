@@ -429,6 +429,9 @@ class ConversionResult:
     karel_todo: int = 0
     # --karel: each library program -> the TP programs calling it -> how many calls ({}: none used); None: no --karel.
     karel_calls: dict[str, dict[str, int]] | None = None
+    # Each FUNC of the backup copied into its calls (crossarm.convert.func_inline) -> the (TP program, RAPID line) of
+    # each call written so; the HTML report shows them program by program.
+    inlined_sites: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
 
     @property
     def todo_count(self) -> int:
