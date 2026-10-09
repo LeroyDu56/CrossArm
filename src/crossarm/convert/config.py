@@ -42,6 +42,8 @@ be pinned in a JSON file passed with --map:
   "flag_arrays":     {"bSlotFull": 1001}       the first of the flags an array of bools is kept in
   "programs":        {"PickPart": "PICKPART"}  the TP name of a program CrossArm writes: a routine, an
                                                interrupt's condition program, CROSSARM.TEXT (texts)
+  "task":            "T_ROB1"                 the backup task the file was written for (several tasks): given
+                                               back to the whole backup, "programs" names that task's programs only
   "external_routines": {"WriteLog": {"program": "WRITE_LOG"}}  a routine the integrator provides as a TP or
                                                KAREL program: its calls are CALL WRITE_LOG(...), it is not
                                                written ("program": null: not provided, as CrossArm writes the
@@ -180,6 +182,14 @@ class ConversionConfig:
     # CrossArm's library (crossarm.karel); a real robot needs the KAREL option (R632).
     karel: bool = False
 
+    # The backup task the mapping file was written for ("task", written for a backup of several tasks), and the
+    # folder it was read from (CrossArm writes one per task, named after it): the pipeline works out which task
+    # "programs" names (pipeline.mapping_task). programs_elsewhere (not in the file): the names "programs" gives
+    # the programs of another task of the backup, which this one leaves free.
+    task: str | None = None
+    mapping_folder: str = ""
+    programs_elsewhere: frozenset[str] = frozenset()
+
     timestamp: datetime = field(default_factory=lambda: datetime.now().replace(microsecond=0))
 
     def free_position_registers(self) -> tuple[list[int], bool]:
@@ -201,7 +211,7 @@ class ConversionConfig:
             "joint_speed_ref_mm_s", "cnt_per_mm", "config_mapping", "joint_mapping", "default_config",
             "program_name_max_length", "tpwrite_values", "tool_pin", "limits", "reserved", "move_routines",
             "zone_mapping", "motion_profile", "frame_registers", "analog_scales", "payloads", "point_registers",
-            "point_arrays", "number_arrays", "flag_arrays", "programs", "external_routines",
+            "point_arrays", "number_arrays", "flag_arrays", "programs", "external_routines", "task",
         }  # fmt: skip
         if unknown:
             raise ValueError(f"unknown keys in mapping file: {', '.join(sorted(unknown))}")
@@ -270,6 +280,11 @@ class ConversionConfig:
             raise ValueError(f"zone_mapping: expected 'measured' or 'linear', got {config.zone_mapping!r}")
         if config.tool_pin not in TOOL_PINS:
             raise ValueError(f"tool_pin: expected '-x' or '+x', got {config.tool_pin!r}")
+        task = data.get("task")
+        if task is not None and not isinstance(task, str):
+            raise TypeError(f"task: expected the name of a task of the backup, got {task!r}")
+        config.task = task
+        config.mapping_folder = Path(path).resolve().parent.name
         for key, name in data.get("programs", {}).items():
             config.programs[key.upper()] = _program_name(f"programs.{key}", name, config.program_name_max_length)
         external = data.get("external_routines", {})

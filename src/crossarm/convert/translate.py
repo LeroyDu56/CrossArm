@@ -1633,6 +1633,8 @@ class Converter:
             if name != base:
                 if base == self.config.programs.get(key):
                     why = f"the mapping file gives it {base}, the name of another program of this conversion"
+                elif base in self.config.programs_elsewhere:
+                    why = f"the mapping file gives {base} to a program of another task of this backup"
                 elif base in {e.program for e in self.externals.values()}:
                     why = f"the mapping file gives {base} to a program the integrator provides (external_routines)"
                 elif base in mine:
@@ -1675,6 +1677,7 @@ class Converter:
         start = pinned or base
         others = {name for k, name in self.config.programs.items() if k != key.upper()}
         others |= {entry.program for entry in self.externals.values()}  # the integrator's programs
+        others |= self.config.programs_elsewhere  # the mapping file names another task's programs so
         return suffixed(start, taken | others, self.config.program_name_max_length), start
 
     def _name_conditions(self, selected: list[tuple[n.Module, n.Routine]]) -> None:

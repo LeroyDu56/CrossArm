@@ -7,6 +7,11 @@ Frames past what the controller holds are kept in position registers ("banks") a
 reserved number before use; the mapping file names them by the numbers past the limit they were
 counted as. Up to 1.7 those numbers, given back, were selected directly (`UTOOL_NUM=11`, refused by
 the controller): they mean banks, as in the conversion that wrote them.
+
+A backup of several tasks has a mapping file per task, and one file is given back to the whole backup. Up to 1.7
+its program names applied to the routines of those names in every task: the MAIN of the other tasks was renamed
+(MAIN_2_2). They now name the programs of the task the file was written for only ("task", or the task folder it
+was read from, or the only task declaring every routine it names).
 """
 
 import json
@@ -68,24 +73,64 @@ def test_a_mapping_written_by_an_earlier_version_still_means_banks(tmp_path):
     assert first.tasks[0].todo == 0
 
 
+def _two_tasks(root: Path, own_routine: bool = False) -> Path:
+    """Two task folders with modules of the same names: two tasks, each with its main."""
+    for task in ("TaskA", "TaskB"):
+        extra = "  PickB;\n" if own_routine and task == "TaskB" else ""
+        body = ("MODULE MainMod\nVAR num nCount:=0;\nPROC main()\n  nCount:=nCount+1;\n" + extra + "ENDPROC\n")
+        if own_routine and task == "TaskB":
+            body += "PROC PickB()\n  nCount:=0;\nENDPROC\n"
+        (root / "cell" / task).mkdir(parents=True, exist_ok=True)
+        (root / "cell" / task / "MainMod.mod").write_text(body + "ENDMODULE\n", encoding="utf-8")
+    return root / "cell"
+
+
+def test_a_task_mapping_given_back_names_that_task_programs_only(tmp_path):
+    cell = _two_tasks(tmp_path)
+    first = _run([cell], tmp_path / "a")
+    assert sorted(_programs(tmp_path / "a")) == [str(Path("TaskA", "MAIN.LS")), str(Path("TaskB", "MAIN_2.LS"))]
+    for task in first.tasks:
+        written = json.loads((task.folder / "crossarm_mapping.json").read_text(encoding="utf-8"))
+        assert written["task"] == task.task
+        _run([cell], tmp_path / f"b_{task.task}", task.folder / "crossarm_mapping.json")
+        assert _programs(tmp_path / f"b_{task.task}") == _programs(tmp_path / "a"), task.task
+
+    # Written before 1.8 (no "task") and moved out of its folder: the routines it names are in both tasks.
+    old = json.loads((tmp_path / "a" / "TaskB" / "crossarm_mapping.json").read_text(encoding="utf-8"))
+    del old["task"], old["_task"]
+    (tmp_path / "old.json").write_text(json.dumps(old), encoding="utf-8")
+    again = _run([cell], tmp_path / "c", tmp_path / "old.json")
+    assert sorted(_programs(tmp_path / "c")) == [str(Path("TaskA", "MAIN_2.LS")), str(Path("TaskB", "MAIN_2_2.LS"))]
+    assert all(any('add "task"' in n.message.lower() for n in t.result.notes) for t in again.tasks)
+    # Given in its folder, it is that task's.
+    _run([cell], tmp_path / "d", tmp_path / "a" / "TaskB" / "crossarm_mapping.json")
+    assert _programs(tmp_path / "d") == _programs(tmp_path / "a")
+
+
+def test_an_older_task_mapping_is_known_by_its_routines(tmp_path):
+    cell = _two_tasks(tmp_path, own_routine=True)
+    _run([cell], tmp_path / "a")
+    old = json.loads((tmp_path / "a" / "TaskB" / "crossarm_mapping.json").read_text(encoding="utf-8"))
+    del old["task"], old["_task"]
+    (tmp_path / "old.json").write_text(json.dumps(old), encoding="utf-8")
+    again = _run([cell], tmp_path / "b", tmp_path / "old.json")
+    assert _programs(tmp_path / "b") == _programs(tmp_path / "a")
+    assert not any("mapping file" in n.message for t in again.tasks for n in t.result.notes)
+
+
+def test_a_single_task_mapping_has_no_task(tmp_path):
+    source = tmp_path / "Banks.mod"
+    source.write_text(_module(), encoding="utf-8")
+    _run([source], tmp_path / "a")
+    assert "task" not in json.loads((tmp_path / "a" / "crossarm_mapping.json").read_text(encoding="utf-8"))
+
+
 @pytest.mark.skipif(not BACKUPS, reason="no local test corpus")
 @pytest.mark.parametrize("backup", BACKUPS, ids=lambda p: p.name)
 def test_every_backup_given_its_mapping_back_gives_the_same_programs(backup, tmp_path):
-    """Each task's file given back gives that task's programs. One file is given to every task of the backup, so a
-    routine of another task with the same name takes the name the file pins: programs are matched by routine."""
+    """Each task's file given back to the whole backup gives every task's programs, names included."""
     first = _run([backup], tmp_path / "a")
+    before = _programs(tmp_path / "a")
     for task in first.tasks:
-        mapping = task.folder / "crossarm_mapping.json"
-        again = _run([backup], tmp_path / f"b_{task.task}", mapping)
-        other = next(t for t in again.tasks if t.task == task.task)
-        names = {first_name: other.result.program_keys.get(key, first_name)
-                 for key, first_name in task.result.program_keys.items()}  # fmt: skip
-        before = _programs(task.folder)
-        after = _programs(other.folder)
-        renamed = {}
-        for name, text in before.items():
-            stem = name[:-3]
-            for old_name, new_name in names.items():
-                text = re.sub(rf"\b{re.escape(old_name)}\b", new_name, text)
-            renamed[names.get(stem, stem) + ".LS"] = text
-        assert renamed == after, task.task
+        _run([backup], tmp_path / f"b_{task.task}", task.folder / "crossarm_mapping.json")
+        assert _programs(tmp_path / f"b_{task.task}") == before, task.task

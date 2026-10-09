@@ -146,7 +146,8 @@ def open_in_explorer(path: Path) -> None:
 def mapping_description(path: Path) -> str:
     data = json.loads(path.read_text(encoding="utf-8"))
     pinned = sum(len(v) for k, v in data.items() if isinstance(v, dict) and k not in ("limits", "reserved"))
-    return f"{path.name}: {plural(pinned, 'number')} pinned."
+    task = f" (task {data['task']})" if isinstance(data.get("task"), str) else ""
+    return f"{path.name}{task}: {plural(pinned, 'number')} pinned."
 
 
 class Step:

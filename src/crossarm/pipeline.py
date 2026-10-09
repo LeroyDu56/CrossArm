@@ -29,6 +29,7 @@ from pathlib import Path
 
 from crossarm.backup import Source, TaskSource, open_source
 from crossarm.convert import ConversionConfig, ConversionResult, build_mapping, build_report, convert
+from crossarm.convert.blockers import Blocker
 from crossarm.convert.compute import Written
 from crossarm.convert.coverage import Coverage, fmt_percent
 from crossarm.convert.html_report import build_html_report
@@ -48,7 +49,7 @@ from crossarm.convert.taught import (
     records,
 )
 from crossarm.convert.taught import report_section as taught_section
-from crossarm.convert.translate import ControllerScope, remark_lines
+from crossarm.convert.translate import ControllerScope, Note, remark_lines
 from crossarm.fanuc import ktrans
 from crossarm.fanuc.ktrans import KarelExport, KarelRequest
 from crossarm.fanuc.ls_writer import write_ls
@@ -234,7 +235,7 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
                   config: ConversionConfig, signals, routines, source: Source, log: Log, numbers: ControllerScope,
                   other_tasks: list[str], licence: LicenceStatus,
                   tp: tuple[TpRequest, Path] | None = None, keeping: _Keeping | None = None,
-                  karel: tuple[KarelRequest, Path] | None = None) -> TaskOutput:  # fmt: skip
+                  karel: tuple[KarelRequest, Path] | None = None, mapping_warning: str = "") -> TaskOutput:  # fmt: skip
     out = TaskOutput(task.name, folder)
     parsed, out.syntax_errors = parsed_task
     modules = [p.module for p in parsed if p.module is not None]
@@ -246,6 +247,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         program_modules=program_names if source.kind == "backup" else None, shared=numbers,
     )  # fmt: skip
     result.shared_with = other_tasks
+    if mapping_warning:
+        result.notes.append(Note("", None, "WARNING", mapping_warning, Blocker.OTHER))
     points = records(result, task.name)  # theoretical, before any taught value is kept
     if keeping is not None:
         earlier = earlier_for(task.name, keeping.earlier, keeping.tasks)
@@ -294,7 +297,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
                              taught_where=keeping.where if keeping is not None else "")  # fmt: skip
     out.report_html.write_text(page, encoding="utf-8")
     # The numbering this run used, ready to edit and feed back with --map.
-    (folder / "crossarm_mapping.json").write_text(build_mapping(result, config), encoding="utf-8")
+    (folder / "crossarm_mapping.json").write_text(build_mapping(result, config, task.name if other_tasks else None),
+                                                  encoding="utf-8")  # fmt: skip
     # The points written, for a later conversion keeping what is touched up on the robot (--keep-taught).
     (folder / POINTS_FILE).write_text(build_points(points), encoding="utf-8")
 
@@ -403,16 +407,50 @@ def run(
             karel = karel or KarelRequest(tp.robot if tp is not None else None)
             log("KAREL: what TP cannot compute is called in CrossArm's KAREL programs (the robot needs the KAREL "
                 "option, R632)")  # fmt: skip
+        owner, warning = None, ""
+        if len(names) > 1 and config.programs:  # one file for several tasks: whose programs does it name?
+            owner = mapping_task(config, [(t.name, [p.module for p in modules if p.module is not None])
+                                          for t, (modules, _) in zip(source.tasks, parsed, strict=True) if t.files])  # fmt: skip
+            if owner is None:
+                warning = (f"the mapping file names programs (\"programs\") and the backup has {len(names)} tasks: which"
+                           " task it was written for is not known, so its names apply to the routines of those names"
+                           " in every task, which renames the programs of the others (MAIN_2_2). Add \"task\":"
+                           " \"<task>\" to the file, as CrossArm writes it, and convert again")  # fmt: skip
+                log(f"  mapping file: {warning}")
+            else:
+                log(f"  mapping file written for task {owner}: its program names apply to {owner} only")
         for task, parsed_task in zip(source.tasks, parsed, strict=True):
             task_folder = folder / task.name if source.kind == "backup" or len(source.tasks) > 1 else folder
             others = [name for name in names if name != task.name]
-            tasks.append(_convert_task(task, parsed_task, task_folder, config, signals, routines, source, log, shared,
-                                       others, licence, (tp, folder / TP_FOLDER) if tp else None,
-                                       keeping, (karel, folder / ktrans.FOLDER) if config.karel and karel else None))  # fmt: skip
+            task_config = config
+            if owner is not None and task.name != owner:  # another task's names: left free, not given
+                task_config = replace(config, programs={}, programs_elsewhere=frozenset(config.programs.values()))
+            tasks.append(_convert_task(task, parsed_task, task_folder, task_config, signals, routines, source, log,
+                                       shared, others, licence, (tp, folder / TP_FOLDER) if tp else None,
+                                       keeping, (karel, folder / ktrans.FOLDER) if config.karel and karel else None,
+                                       warning))  # fmt: skip
         log(f"Output: {folder}")
         # What a user can send when a result looks wrong: stays next to the report.
         (folder / "crossarm_log.txt").write_text(log_text(given, fanuc, lines), encoding="utf-8")
         return RunOutput(source.name, source.kind, folder, tasks, eio_path, controller, licence, config)
+
+
+def mapping_task(config: ConversionConfig, tasks: list[tuple[str, list]]) -> str | None:
+    """The task of the backup a mapping file naming programs was written for: the one its "task" key names, else the
+    one whose folder it was read from (CrossArm writes one file per task folder), else the only task declaring every
+    routine and interrupt it names. None: not known (a file written by hand, or before CrossArm 1.8, for a backup
+    whose tasks have the same routines)."""
+    upper = {name.upper(): name for name, _ in tasks}
+    for hint in (config.task, config.mapping_folder):
+        if hint and hint.upper() in upper:
+            return upper[hint.upper()]
+    keys = {key.split(".")[0] for key in config.programs if not key.startswith("CROSSARM.")}
+    matches = []
+    for name, modules in tasks:
+        declared = {item.name.upper() for module in modules for item in (*module.routines, *module.declarations)}
+        if keys <= declared:
+            matches.append(name)
+    return matches[0] if len(matches) == 1 else None
 
 
 def _keeping(keep: KeepTaught, tp: TpRequest | None, log: Log) -> _Keeping:

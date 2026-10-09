@@ -87,6 +87,10 @@ EXTERNAL_ROUTINES_README = (
     "called as x := F(...), whose program writes its result in the register its last argument names. _why: why "
     "CrossArm does not write it."
 )
+TASK_README = (
+    "The backup task this file was written for. Given back to the whole backup, \"programs\" names this task's "
+    "programs only; the other tasks keep the names CrossArm gives them (each task's folder has its own file)."
+)
 TOOL_PIN_README = (
     "The pin hole of the FANUC flange the tool's guide pin goes in, which the adapter plate decides. "
     "-x: where the ABB pin was, tool frames as they are. +x: the ISO 9409-1 hole, tool frames turned "
@@ -94,8 +98,9 @@ TOOL_PIN_README = (
 )
 
 
-def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
-    """The JSON text of a mapping file reproducing this conversion's numbering."""
+def build_mapping(result: ConversionResult, config: ConversionConfig, task: str | None = None) -> str:
+    """The JSON text of a mapping file reproducing this conversion's numbering; task: the backup task it is for,
+    when the backup has several (written as "task")."""
     tables = [
         ("registers", result.registers),
         ("flags", result.flags),
@@ -110,6 +115,9 @@ def build_mapping(result: ConversionResult, config: ConversionConfig) -> str:
         ("utools", result.utools),
     ]
     data: dict[str, object] = {"_README": README}
+    if task is not None:
+        data["_task"] = TASK_README
+        data["task"] = task
     for key, allocations in tables:
         if allocations:  # an empty table would only be noise
             if key == "string_registers":

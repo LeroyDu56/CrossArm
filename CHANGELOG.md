@@ -38,6 +38,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `UTOOL_NUM=10`). Versions 1.0.0 to 1.7.0 are affected: convert again with the same mapping file, which keeps its
   meaning (a number past the limit is a frame kept in a register).
 - A robtarget whose confdata does not have 4 values is a TODO saying so, no longer an internal error.
+- A backup of several tasks: one task's mapping file given back renamed the main program of the other tasks
+  (`MAIN_2_2`). The file now says which task it was written for (`"task"`, a new key); its program names apply to
+  that task only, the other tasks keep theirs. An older file is recognised by the task folder it is in, or by the
+  routines it names; otherwise the report warns and asks for `"task"`.
 
 ## 1.7.0 — 2026-10-08
 
