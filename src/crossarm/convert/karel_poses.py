@@ -160,6 +160,8 @@ class KarelPoses:
 
     def kept_pose(self, expr: n.Expr) -> str | None:
         """PR[k] of a pose, or a point, kept in a register (read: set by then); None for anything else."""
+        if (result := self.provided_point(expr)) is not None:  # type: ignore[attr-defined]  # convert.calls
+            return result
         if not isinstance(expr, n.Name) or (key := self.runtime_key(expr.name)) is None \
                 or self.c.runtime_points.get(key) not in (POSE, "robtarget"):  # fmt: skip
             return None
@@ -299,7 +301,8 @@ class KarelPoses:
         kind = "UT" if root_type == "tooldata" else "UF"
         if not path or len(path) != 2 or (kind, path[1]) not in _FIELDS:
             return False
-        if self.pose_function(a.value) is None and self.kept_pose_key(a.value) is None:
+        provided = self.provided_point(a.value) is not None  # type: ignore[attr-defined]  # convert.calls
+        if self.pose_function(a.value) is None and self.kept_pose_key(a.value) is None and not provided:
             return False
         if path[0] not in self.c.frames_in_moves[kind]:
             return False
@@ -313,6 +316,9 @@ class KarelPoses:
             source = self.c.point_register(FRAME)
             self.pose_computed(a.value, source, 1)
         if other is not None and not _identity(other):
+            if not self.c.config.karel:
+                raise Untranslatable(f"{what}: its oframe is not the identity: the uframe x oframe UFRAME holds is"
+                                     " worked out by KAREL: convert with --karel", Blocker.RUNTIME_FRAME)  # fmt: skip
             scratch = self.c.point_register(f"{SCRATCH}1")
             self.pose_written(n.Component(span, root, "oframe"), scratch)
             self.emit(karel_call(self.c, "CA_POSEMULT", [source, scratch, self.c.point_register(FRAME)]))
@@ -323,8 +329,8 @@ class KarelPoses:
         else:
             self.active_uf = None  # type: ignore[attr-defined]
         self.frame_loaded(kind, path[0], span.line, self.measured_point(a.value) is not None, warn=False)  # type: ignore[attr-defined]
-        self.c.warn_once(f"karel-frame|{kind}|{decl.name}", self.name, span.line, f"{what} computed at run time by"
-                         " KAREL and loaded where the RAPID sets it: the moves in it go to their points in the new frame,"
+        self.c.warn_once(f"karel-frame|{kind}|{decl.name}", self.name, span.line, f"{what} computed at run time"
+                         f" {'by a provided program' if provided else 'by KAREL'} and loaded where the RAPID sets it: the moves in it go to their points in the new frame,"
                          " with the configuration (and turns) CrossArm worked out for its saved value. A frame turned far"
                          " from it may need another configuration: the move then stops (MOTN-017/018) or takes"
                          " another posture: check the moves after a calibration", Blocker.RUNTIME_FRAME)  # fmt: skip

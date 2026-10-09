@@ -46,7 +46,9 @@ be pinned in a JSON file passed with --map:
                                                KAREL program: its calls are CALL WRITE_LOG(...), it is not
                                                written ("program": null: not provided, as CrossArm writes the
                                                candidates); "arguments": ["num", "string", "INOUT num"] types the
-                                               arguments of one the backup does not declare
+                                               arguments of one the backup does not declare ("robtarget", "pos",
+                                               "pose": passed by position register number); "returns": "pose" (or
+                                               "num", "pos", "robtarget") what such a function gives back
                                                (crossarm.convert.external)
 }
 
@@ -62,7 +64,7 @@ from pathlib import Path
 
 from crossarm.convert.arguments import MAX_ARGS
 from crossarm.convert.configuration import TOOL_PIN_DEFAULT, TOOL_PINS
-from crossarm.convert.external import ARGUMENT_TYPES, ProvidedRoutine
+from crossarm.convert.external import ARGUMENT_TYPES, RETURN_TYPES, ProvidedRoutine
 from crossarm.convert.motion import M20ID_25, MotionProfile
 
 _MAPPING_KEYS = (
@@ -302,9 +304,13 @@ def _provided(where: str, key: str, entry: object, max_length: int) -> ProvidedR
     if not isinstance(entry, dict):
         raise TypeError(f'{where}: expected {{"program": "NAME"}}, got {entry!r}')
     fields = {k: v for k, v in entry.items() if not k.startswith("_")}
-    unknown = set(fields) - {"program", "arguments"}
+    unknown = set(fields) - {"program", "arguments", "returns"}
     if unknown:
-        raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (expected program, arguments)")
+        raise ValueError(f"{where}: unknown keys {', '.join(sorted(unknown))} (expected program, arguments, returns)")
+    returns = fields.get("returns")
+    if returns is not None and returns not in RETURN_TYPES:
+        raise ValueError(f"{where}.returns: expected one of {', '.join(repr(t) for t in RETURN_TYPES)} or null, got"
+                         f" {returns!r}")  # fmt: skip
     arguments = fields.get("arguments")
     if arguments is not None:
         if not isinstance(arguments, list) or any(a is not None and a not in ARGUMENT_TYPES for a in arguments):
@@ -315,4 +321,4 @@ def _provided(where: str, key: str, entry: object, max_length: int) -> ProvidedR
     if fields.get("program") is None:
         return None
     program = _program_name(f"{where}.program", fields["program"], max_length)
-    return ProvidedRoutine(key, program, tuple(arguments) if arguments is not None else None)
+    return ProvidedRoutine(key, program, tuple(arguments) if arguments is not None else None, returns)

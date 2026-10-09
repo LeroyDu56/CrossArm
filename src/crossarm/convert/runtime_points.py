@@ -68,10 +68,11 @@ def find_runtime_points(c: "Converter", routines: list[n.Routine]) -> dict[str, 
     An assignment is known at run time only when it reads what changes then: data the programs change, a
     routine's own data or parameter, an input or the robot's position (CRobT...), or such a point. One
     reading the point itself and fixed data (`pTmp.trans.z:=pTmp.trans.z-100`) is worked out where it is,
-    as before: the point stays a P of each move."""
+    as before: the point stays a P of each move. A pose set to a provided function's result
+    (convert.external) is kept too, without --karel."""
     assignments: list[tuple[str, n.Assign, set[str], set[str]]] = []  # key, statement, own names, params
-    kept = (*KEPT, "pose") if c.config.karel else KEPT  # a pose: computed by KAREL (convert.karel_poses)
     kinds: dict[str, str] = {}
+    poses = c.config.karel or {key for key, _decl, stmt in _assignments(c, routines) if provided_result(c, stmt.value)}
     for routine in routines:
         own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
         read = parameters(routine.params)
@@ -81,9 +82,11 @@ def find_runtime_points(c: "Converter", routines: list[n.Routine]) -> dict[str, 
             if not isinstance(stmt, n.Assign) or not (path := path_of(stmt.target)):
                 continue
             decl = own.get(path[0]) or c.symbols.get_global(path[0])
-            if decl is None or decl.type_name.lower() not in kept or decl.dims or decl.storage == "CONST":
+            if decl is None or decl.type_name.lower() not in (*KEPT, "pose") or decl.dims or decl.storage == "CONST":
                 continue
             key = f"{routine.name}.{decl.name}".upper() if path[0] in own else path[0]
+            if decl.type_name.lower() == "pose" and not (poses is True or key in poses):
+                continue  # a pose: computed by KAREL (convert.karel_poses), or a provided function's result
             assignments.append((key, stmt, set(own), params))
             kinds[key] = decl.type_name.lower()
     found: set[str] = set()
@@ -114,9 +117,29 @@ def find_runtime_points(c: "Converter", routines: list[n.Routine]) -> dict[str, 
         found |= more
 
 
+def provided_result(c: "Converter", value: n.Expr) -> bool:
+    """Whether a value is a call to a function the integrator provides that gives back a value (convert.external)."""
+    return isinstance(value, n.FuncCall) and value.name.upper() in c.externals \
+        and c.provided[value.name.upper()].returns is not None  # fmt: skip
+
+
+def _assignments(c: "Converter", routines: list[n.Routine]) -> Iterable[tuple[str, n.DataDecl, n.Assign]]:
+    """(key, declaration, statement) of each assignment to whole data of the routines (find_runtime_points)."""
+    for routine in routines:
+        own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
+        for stmt in walk_statements(routine.body):
+            if not isinstance(stmt, n.Assign) or not (path := path_of(stmt.target)):
+                continue
+            decl = own.get(path[0]) or c.symbols.get_global(path[0])
+            if decl is not None:
+                yield (f"{routine.name}.{decl.name}".upper() if path[0] in own else path[0]), decl, stmt
+
+
 def at_run_time(c: "Converter", stmt: n.Assign, own: set[str], params: set[str], found: set[str]) -> bool:
     """Whether an assignment to a point reads what is only known at run time (_runtime_points)."""
     target = path_of(stmt.target)[0]  # type: ignore[index]
+    if provided_result(c, stmt.value):
+        return True
     try:
         c.computer.value(stmt.value)
         return False

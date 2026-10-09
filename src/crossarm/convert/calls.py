@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING
 
 from crossarm.convert.arguments import Signature
 from crossarm.convert.blockers import Blocker, Untranslatable
-from crossarm.convert.external import ProvidedRoutine, arguments_of, literal_kind, undeclared_layout
+from crossarm.convert.external import (
+    POINT_TYPES,
+    RESULT,
+    ProvidedRoutine,
+    arguments_of,
+    literal_kind,
+    undeclared_layout,
+)
 from crossarm.convert.records import nodes
 from crossarm.convert.tp_numbers import NUMBER_TYPES as _NUMBERS
 from crossarm.convert.tp_numbers import ascii_text, decimal
@@ -32,21 +39,121 @@ class RoutineCalls:
         a routine CrossArm converts is given them; what TP cannot pass leaves the call TODO, with why."""
         use = self.c.provided[call.name.upper()]
         try:
-            if use.problem:
-                raise Untranslatable(use.problem, Blocker.CALL_ARGS)
-            layout = use.layout
-            if layout is None:  # the backup does not declare it: typed from the mapping file or from this call
-                found = undeclared_layout(call, provided, self.argument_kind)
-                if isinstance(found, str):
-                    raise Untranslatable(found, Blocker.CALL_ARGS)
-                layout = found
-                if use.arguments is None:
-                    use.arguments = arguments_of(layout, False)
-            self.call_with_args(call, layout)
+            self.call_with_args(call, self.provided_layout(call, provided), numbered=True)
         except Untranslatable as exc:
             use.todo[(self.name, call.span.line)] = str(exc)
             raise Untranslatable(f"{call.name}, provided as {provided.program} (external_routines): {exc}",
                                  exc.category) from exc  # fmt: skip
+
+    def provided_layout(self, call: n.ProcCall | n.FuncCall, provided: ProvidedRoutine) -> Signature:
+        """The AR[n] layout of a call to a provided program: from its declaration, else from the mapping file or
+        this call (external.undeclared_layout); Untranslatable when its arguments cannot be passed."""
+        use = self.c.provided[call.name.upper()]
+        if use.problem:
+            raise Untranslatable(use.problem, Blocker.CALL_ARGS)
+        if use.layout is not None:
+            return use.layout
+        extra = 1 if use.returns is not None and isinstance(call, n.FuncCall) else 0
+        found = undeclared_layout(call, provided, self.argument_kind, extra)
+        if isinstance(found, str):
+            raise Untranslatable(found, Blocker.CALL_ARGS)
+        if use.arguments is None:
+            use.arguments = arguments_of(found, False, use.returns if extra else None)
+        return found
+
+    def provided_result_call(self, a: n.Assign) -> n.FuncCall | None:
+        """The call of `x := F(args)`, F a function the integrator provides that gives back a value a register
+        holds, not written yet; None otherwise."""
+        call = a.value
+        if not (isinstance(call, n.FuncCall) and (key := call.name.upper()) in self.c.externals):
+            return None
+        if id(call) in self.provided_results or self.c.provided[key].returns is None:
+            return None
+        return call
+
+    def provided_assign(self, a: n.Assign, call: n.FuncCall) -> None:
+        """`x := F(args)`, F provided (external_routines) and returning a num, pos, pose or robtarget: `CALL PROG(args,k)`
+        with k its result register of its own, R[k] (num) or PR[k], then the assignment written from that register
+        (provided_operand, provided_point)."""
+        use = self.c.provided[call.name.upper()]
+        provided = self.c.externals[call.name.upper()]
+        kind = use.returns
+        key = f"{provided.program}.{RESULT}"
+        try:
+            layout = self.provided_layout(call, provided)
+            if kind == "num":
+                register = self.c.written_register(RESULT, key=key)
+                number = register[2 : register.index(":")]
+            else:
+                register = self.c.point_register(key)
+                number = register[3:-1]  # {PA:KEY}, numbered with the other position registers
+            self.call_with_args(n.ProcCall(call.span, call.name, call.args), layout, numbered=True, result=number)
+            self.provided_results[id(call)] = (register, kind)  # type: ignore[assignment]
+            try:
+                self.assign(a)  # type: ignore[attr-defined]
+            finally:
+                del self.provided_results[id(call)]
+        except Untranslatable as exc:
+            use.todo[(self.name, call.span.line)] = str(exc)  # type: ignore[attr-defined]
+            raise Untranslatable(f"{call.name}, provided as {provided.program} (external_routines): {exc}",
+                                 exc.category) from exc  # fmt: skip
+
+    def provided_operand(self, expr: n.Expr) -> str | None:
+        """R[k] for the value of a provided function just called (provided_assign), PR[k,i] for x, y, z of its
+        point, pos or pose; None for anything else."""
+        if not self.provided_results:
+            return None
+        if isinstance(expr, n.FuncCall) and id(expr) in self.provided_results:
+            register, kind = self.provided_results[id(expr)]
+            if kind != "num":
+                raise Untranslatable(f"{format_expr(expr)} gives back a {kind}, not a number", Blocker.VALUE)
+            return register
+        if not isinstance(expr, n.Component) or (axis := {"X": 1, "Y": 2, "Z": 3}.get(expr.field.upper())) is None:
+            return None
+        base = expr.base  # F().x of a pos, F().trans.x of a point or pose
+        if isinstance(base, n.Component) and base.field.upper() == "TRANS":
+            base = base.base
+        if isinstance(base, n.FuncCall) and id(base) in self.provided_results:
+            register, kind = self.provided_results[id(base)]
+            if kind != "num" and (kind == "pos") == (base is expr.base):
+                return f"{register[:-1]},{axis}]"
+        return None
+
+    def provided_point(self, expr: n.Expr) -> str | None:
+        """PR[k] of a provided function's point, pos or pose just called (provided_assign); None otherwise."""
+        if self.provided_results and isinstance(expr, n.FuncCall) and id(expr) in self.provided_results:
+            register, kind = self.provided_results[id(expr)]
+            return register if kind != "num" else None
+        return None
+
+    def point_number(self, expr: n.Expr | None, slot, layout: Signature) -> str:
+        """The number of the position register a point (robtarget, pos, pose) passed to a provided program is in:
+        its own, kept in one, else copied into a register of CrossArm's own ('PROG.parameter')."""
+        if expr is None:
+            raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
+        source = self.kept_pose(expr) or self.point_source(expr)  # type: ignore[attr-defined]
+        if source is None and isinstance(expr, n.Component) and expr.field.upper() in ("TFRAME", "UFRAME"):
+            source = self.c.point_register(f"{self.c.program_names[layout.routine.upper()]}.{slot.name}")
+            if not self.frame_read(expr, source):  # type: ignore[attr-defined]
+                source = None
+        if source is None:
+            register = self.c.point_register(f"{self.c.program_names[layout.routine.upper()]}.{slot.name}")
+            if not self.c.config.karel and self.pose_function(expr) is not None:  # type: ignore[attr-defined]
+                raise Untranslatable(f"argument {slot.name}: {format_expr(expr)} is worked out by KAREL: convert with"
+                                     " --karel", Blocker.RUNTIME_POSITION)  # fmt: skip
+            if slot.kind == "robtarget":
+                try:
+                    target = self.c.evaluator.robtarget(expr)
+                except Unresolvable:
+                    target = None
+                if target is not None:
+                    self.emit(f"{register}={self.known_point(expr, target, expr.span.line)}")  # type: ignore[attr-defined]
+                    return register[3:-1]
+            if not (self.pose_written(expr, register) or self.pose_computed(expr, register, 1)):  # type: ignore[attr-defined]
+                raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' is neither known now nor kept in a"
+                                     " position register", Blocker.RUNTIME_POSITION)  # fmt: skip
+            source = register
+        return source[3:-1]
 
     def argument_kind(self, expr: n.Expr) -> str | None:
         """num, bool or string for what a call passes, as far as it can be told: this routine's own parameter, data of
@@ -56,19 +163,34 @@ class RoutineCalls:
         return literal_kind(expr, self.c.symbols.type_of)
 
     def provided_function(self, stmt: n.Stmt) -> str | None:
-        """Why a statement using a function the integrator provides stays TODO; None when it uses none."""
+        """Why a statement using a function the integrator provides stays TODO; None when it uses none, or uses one
+        as the whole right-hand side of an assignment, giving back a value a register holds (provided_assign)."""
+        whole = stmt.value if isinstance(stmt, n.Assign) and isinstance(stmt.value, n.FuncCall) else None
         for node in nodes(stmt):
             if isinstance(node, n.FuncCall) and (provided := self.c.externals.get(node.name.upper())) is not None:
-                why = (f"{node.name} is a function, provided as {provided.program} (external_routines): a TP CALL"
-                       " gives no value back to an expression")  # fmt: skip
                 use = self.c.provided[node.name.upper()]
+                if node is whole and use.returns is not None:
+                    use.function = True
+                    continue
+                if use.returns is not None:
+                    why = (f"{node.name} is a function, provided as {provided.program} (external_routines): its value"
+                           f" comes back to `x := {node.name}(...)` only, not inside an expression")  # fmt: skip
+                elif use.module is None:
+                    why = (f"{node.name} is a function, provided as {provided.program} (external_routines): a TP CALL"
+                           " gives no value back to an expression; say what it returns in external_routines."
+                           f"{provided.name}.returns (num, pos, pose, robtarget) to call it as `x := {node.name}(...)`")  # fmt: skip
+                else:
+                    why = (f"{node.name} is a function, provided as {provided.program} (external_routines): a TP CALL"
+                           " gives no value back to an expression")  # fmt: skip
                 use.function = True
                 use.todo[(self.name, stmt.span.line)] = why
                 return why
         return None
 
-    def call_with_args(self, call: n.ProcCall, layout: Signature) -> None:
-        """CALL NAME(a,b,...): required arguments in order, then 1 / 0 for every optional switch."""
+    def call_with_args(self, call: n.ProcCall, layout: Signature, numbered: bool = False, result: str = "") -> None:
+        """CALL NAME(a,b,...): required arguments in order, then 1 / 0 for every optional switch. `numbered`: a
+        provided program, given its points by the number of their position register; `result`: the number of the
+        register a provided function writes its result in, its last argument."""
         positional = [a for a in call.args if a.name is None]
         required = list(layout.required)
         if len(positional) != len(required):
@@ -94,7 +216,12 @@ class RoutineCalls:
                   if s.kind in ("tooldata", "wobjdata") and isinstance(value, n.Name)
                   and not (self.args and self.args.frame(value.name))}  # fmt: skip
         for a, slot in zip(positional, required, strict=True):
-            if slot.kind == "robtarget":
+            if numbered and slot.kind in POINT_TYPES:
+                if slot.key in returned:
+                    raise Untranslatable(f"argument {slot.name}: a {slot.kind} the program changes does not come back",
+                                         Blocker.CALL_ARGS)  # fmt: skip
+                values.append(self.point_number(a.value, slot, layout))
+            elif slot.kind == "robtarget":
                 points.append(self.point_argument(a.value, slot, layout, call.span.line, frames))
                 if slot.by_reference and slot.key in layout.points_changed:  # VAR, INOUT: the point comes back
                     back.append(f"{self.point_back(a.value, slot)}={self.c.point_register(f'{layout.routine}.{slot.name}')}")
@@ -131,6 +258,8 @@ class RoutineCalls:
                 values.append(forwarded)
             else:
                 values.append("1")
+        if result:
+            values.append(result)
         for text in filter(None, points):
             self.emit(text)
         self.emit(f"CALL {name}({','.join(values)})" if values else f"CALL {name}")

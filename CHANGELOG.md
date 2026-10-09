@@ -17,6 +17,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   only assignments and pose functions) from a frame calibrated at run time is copied into each call: TP when the
   base frame's orientation is known (`PR[k,i]=PR[k,i]+d`), else KAREL (`--karel`); other bodies stay TODO naming the
   FUNC and the statement, and the report says at how many calls each FUNC was copied. Measured (probe `funcinline`).
+- `external_routines` provides functions too: `x := F(args)` with F returning a num, pos, pose or robtarget
+  (`"returns": "pose"` for one the backup does not declare) is `CALL PROG(args,k)`, the program writing its result in
+  R[AR[n]] / PR[AR[n]] for the caller to read; points are passed by their position register's number. The mapping
+  file offers the functions missing from the backup this way. Measured on ROBOGUIDE (probe `funcresult`).
 
 ## 1.7.0 — 2026-10-08
 

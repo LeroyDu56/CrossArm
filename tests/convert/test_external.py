@@ -185,12 +185,12 @@ def test_what_cannot_be_passed_to_an_undeclared_routine_stays_todo(call, why):
 
 
 def test_a_parameter_tp_cannot_pass_leaves_the_calls_todo_with_why():
-    source = SOURCE.replace("PROC WriteLog(string text,num n)", "PROC WriteLog(string text,robtarget n)")
-    source = source.replace('WriteLog "start",nCount;', 'WriteLog "start",pHome;')
+    source = SOURCE.replace("PROC WriteLog(string text,num n)", "PROC WriteLog(string text,speeddata n)")
+    source = source.replace('WriteLog "start",nCount;', 'WriteLog "start",v100;')
     result = run(source, None, WriteLog="WRITE_LOG")
-    assert any("robtarget parameter n: a provided program is not given points" in t for t in todos(result))
+    assert any("speeddata parameter n: CrossArm passes a speed" in t for t in todos(result))
     assert "WRITELOG" not in [i.program.name for i in result.programs]
-    assert "is not given points" in result.provided[0].problem
+    assert "a provided program's moves are not known" in result.provided[0].problem
 
 
 def test_a_string_read_back_cannot_be_given_back():

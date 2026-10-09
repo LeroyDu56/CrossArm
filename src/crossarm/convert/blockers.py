@@ -44,7 +44,7 @@ class Blocker:
     REAL_CONTROLLER = "RobOS() taken as TRUE (real controller)"
     HANDLER = "error handler: other errors stop the program"
     OPTIONS_IGNORED = "instruction options dropped"
-    PROVIDED_FUNCTION = "function provided as a TP program: TP gives no value back"
+    PROVIDED_FUNCTION = "function provided as a TP program, used inside an expression: TP gives no value back"
     MOTION_SETTING = "motion setting (ConfL, SingArea, AccSet, VelSet...)"
     INTERRUPT = "interrupt (CONNECT, ISignalDI...) and its TRAP"
     MONITOR = "interrupt watched by a condition monitor (checked periodically)"

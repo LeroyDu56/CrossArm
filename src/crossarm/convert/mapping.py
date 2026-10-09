@@ -82,7 +82,9 @@ EXTERNAL_ROUTINES_README = (
     "provide that does the job: each call is then CALL NAME(arguments), the routine is not written, and the report "
     "lists the arguments the program reads (AR[1], AR[2]...) and the registers it gives a value back in. null: not "
     "provided, its calls stay TODO. \"arguments\" types the arguments of a routine the backup does not declare "
-    "(num, bool, string, INOUT num: a num given back), as the calls pass them; null where not known. _why: why "
+    "(num, bool, string, INOUT num: a num given back; robtarget, pos, pose: the number of the position register "
+    "holding it), as the calls pass them; null where not known. \"returns\" (num, pos, pose, robtarget): a function "
+    "called as x := F(...), whose program writes its result in the register its last argument names. _why: why "
     "CrossArm does not write it."
 )
 TOOL_PIN_README = (
@@ -168,6 +170,8 @@ def external_routines(result: ConversionResult, config: ConversionConfig) -> dic
         out[entry.name] = {"program": entry.program}
         if entry.arguments is not None:
             out[entry.name]["arguments"] = list(entry.arguments)
+        if entry.returns is not None:
+            out[entry.name]["returns"] = entry.returns
     given = {key.upper() for key in out}
     for candidate in result.provided_candidates:
         if candidate.name.upper() in given:
@@ -175,5 +179,7 @@ def external_routines(result: ConversionResult, config: ConversionConfig) -> dic
         out[candidate.name] = {"program": None}
         if candidate.arguments is not None:
             out[candidate.name]["arguments"] = list(candidate.arguments)
+        if candidate.returns is not None:
+            out[candidate.name]["returns"] = candidate.returns
         out[candidate.name]["_why"] = candidate.why
     return out

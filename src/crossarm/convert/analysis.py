@@ -50,7 +50,7 @@ BLOCKING = frozenset({
     Blocker.SEARCH,
     Blocker.STATIONARY,  # stationary tool, robot-held work object
     Blocker.MOTION,  # a move TP has no form for
-    Blocker.PROVIDED_FUNCTION,  # a FUNC provided as a program: TP gives no value back
+    Blocker.PROVIDED_FUNCTION,  # a FUNC provided as a program, inside an expression: TP gives no value back
     Blocker.INTERNAL,  # a CrossArm bug: nobody knows the fix until it is reported
 })  # fmt: skip
 

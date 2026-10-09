@@ -75,6 +75,7 @@ from crossarm.convert.external import (
     arguments_of,
     candidates,
     declared_layout,
+    provided_returns,
 )
 from crossarm.convert.frame_fields import FrameFields
 from crossarm.convert.frame_writes import FrameWrites
@@ -869,16 +870,17 @@ class Converter:
                 routine.name if routine is not None else entry.name, entry.program,
                 module.name if module is not None else None,
                 f"{routine.kind} {routine.name}({routine.params})" if routine is not None else "", "",
-                function=routine is not None and routine.kind == "FUNC",
+                function=routine.kind == "FUNC" if routine is not None else entry.returns is not None,
+                returns=provided_returns(routine, entry),
                 on_robot=entry.program in existing if existing else None,
             )  # fmt: skip
-            if routine is not None and routine.kind == "PROC":
-                layout = declared_layout(routine)
+            if routine is not None and routine.kind in ("PROC", "FUNC"):
+                layout = declared_layout(routine, 1 if routine.kind == "FUNC" else 0)
                 if isinstance(layout, str):
                     use.problem = layout
                 else:
                     use.layout = layout
-                    use.arguments = arguments_of(layout, True)
+                    use.arguments = arguments_of(layout, True, use.returns)
             self.provided[key] = use
 
     def _fine_now(self, expr: n.Expr) -> bool | None:
@@ -2040,6 +2042,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         layout = conv.signatures.get(routine.name.upper())
         self.args: Signature | None = layout if isinstance(layout, Signature) else None  # its parameters: AR[n]
         self.copies: dict[str, str] = {}  # parameters it changes: upper name -> register holding the copy
+        # id() of a provided function's call being assigned -> (its result register, what it returns): calls.py
+        self.provided_results: dict[int, tuple[str, str]] = {}
         self.given: dict[str, str] = {}  # its speeds and corners given as arguments ('V.TCP') -> their register
         self.both_ways: str | None = None  # the move being written: the register of a CNT some calls pass fine for
         self._on_timeout: OnTimeout | None | bool = False  # what its ERROR handler does when a wait times out
@@ -2638,6 +2642,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
     def point_source(self, expr: n.Expr) -> str | None:
         """PR[k] for a robtarget parameter, PR[R[n]] for an array of points indexed at run time (the index worked
         out in a register first); None for anything else."""
+        if (result := self.provided_point(expr)) is not None:  # a provided function's point (calls.py)
+            return result
         if isinstance(expr, n.Name) and self.args and self.args.kind(expr.name) == "robtarget":
             return self.c.point_register(f"{self.args.routine}.{expr.name}")
         if isinstance(expr, n.Name) and (key := self.runtime_key(expr.name)):
@@ -3653,6 +3659,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
     # -- data -----------------------------------------------------------------------
 
     def assign(self, a: n.Assign) -> None:
+        if self.c.externals and (call := self.provided_result_call(a)) is not None:  # x := F(args), F provided
+            self.provided_assign(a, call)
+            return
         path = path_of(a.target)
         if path and (key := self.runtime_key(path[0])):
             self.runtime_assign(a, key, path)
@@ -4275,6 +4284,12 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         remark = ("!" + ascii_text(f"l.{line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip()
         if is_frame and self.field_without_frame(a, remark):  # ufprog, ufmec, a field kept as declared: no frame
             return
+        if self.provided_point(a.value) is not None:  # a provided function's pose (calls.py): loaded, or a part of it
+            if is_frame and (self.frame_written(a, root_type, remark, False) or self.frame_at_run_time(a, root_type, remark)):
+                return
+            raise Untranslatable(f"{what} set to {format_expr(a.value)}: a provided function's result is written to num"
+                                 " data, a point or pose kept in a position register, a frame's uframe or tframe, or"
+                                 " its trans", category)  # fmt: skip
         try:
             root, new = self.c.computer.assigned(a)
         except MeasuredAtRunTime as exc:
@@ -4282,7 +4297,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 return
             if is_frame and self.frame_written(a, root_type, remark, True, str(exc)):  # part by part, or copied: frame_writes
                 return
-            if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):  # convert.karel_poses
+            if is_frame and self._kept_frame(a) and self.frame_at_run_time(a, root_type, remark):  # convert.karel_poses
                 return
             raise Untranslatable(self.measured_why(a, root_type, what, exc), Blocker.CALIBRATION) from exc
         except Unresolvable as exc:
@@ -4290,7 +4305,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 return
             if is_frame and self.frame_written(a, root_type, remark, self.measured_point(a.value) is not None, str(exc)):
                 return
-            if is_frame and self.c.config.karel and self.frame_at_run_time(a, root_type, remark):
+            if is_frame and self._kept_frame(a) and self.frame_at_run_time(a, root_type, remark):
                 return
             if is_frame and (measured := self.measured_point(a.value)) is not None:  # a point set to CRobT()
                 raise Untranslatable(self.measured_why(a, root_type, what, measured), Blocker.CALIBRATION) from exc
@@ -4319,6 +4334,11 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 return
         self.emit(remark)
         self.known[root] = new
+
+    def _kept_frame(self, a: n.Assign) -> bool:
+        """Whether a frame set at run time may be loaded from a position register: with --karel; without, from a
+        pose kept in one (a provided function's result: convert.external), the oframe the identity."""
+        return self.c.config.karel or self.kept_pose_key(a.value) is not None
 
     def measured_point(self, value: n.Expr) -> MeasuredAtRunTime | None:
         """"'pMeas' is measured on the robot at l.4" when the value reads a point kept in a position register
@@ -4414,6 +4434,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
 
     def numeric(self, expr: n.Expr) -> str:
         """A single TP numeric operand: a constant (CONST or literal), a register or a group input."""
+        if (result := self.provided_operand(expr)) is not None:  # a provided function's result (calls.py)
+            return result
         if isinstance(expr, n.FuncCall) and expr.name.upper() == "GINPUT" and len(expr.args) == 1 and expr.args[0].value:
             return self.group(expr.args[0].value, "GI", expr.span.line)
         if isinstance(expr, n.FuncCall) and expr.name.upper() == "CLKREAD" and expr.args and expr.args[0].value:
