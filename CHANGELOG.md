@@ -22,6 +22,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   R[AR[n]] / PR[AR[n]] for the caller to read; points are passed by their position register's number. The mapping
   file offers the functions missing from the backup this way. Measured on ROBOGUIDE (probe `funcresult`).
 
+### Fixes
+- A mapping file given back with frames past the controller's limit (kept in position registers) selected them by
+  their number (`UTOOL_NUM=11`, refused by the controller) instead of loading them (`UTOOL[10]=PR[90]`,
+  `UTOOL_NUM=10`). Versions 1.0.0 to 1.7.0 are affected: convert again with the same mapping file, which keeps its
+  meaning (a number past the limit is a frame kept in a register).
+
 ## 1.7.0 — 2026-10-08
 
 For what TP cannot compute. The new option `--karel` (off by default; step 6 of the window) writes some of it

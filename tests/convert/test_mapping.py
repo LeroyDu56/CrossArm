@@ -94,15 +94,24 @@ def test_editing_the_mapping_changes_the_numbers(tmp_path):
     assert mapping_of(result, cfg)["digital_outputs"] == {"doGrip": 7}
 
 
-def test_a_mapping_that_exceeds_the_controller_is_still_reported(tmp_path):
-    """Pinning numbers by hand is exactly when someone goes past the limit."""
+def test_a_number_pinned_past_the_controller_is_a_bank(tmp_path):
+    """A frame number past the limit is what a mapping file says for a frame kept in a register bank:
+    loaded into the reserved number, as the conversion that wrote it did. Past the limit with no number
+    left to load it into, it stays reported."""
     path = tmp_path / "map.json"
     path.write_text('{"_note": "hand written", "utools": {"tGrip": 30}}', encoding="utf-8")
     cfg = ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1))
     source = f"MODULE M\n{DATA}\nPROC main()\n{BODY}\nENDPROC\nENDMODULE\n"
     result = convert([parse_module(source)], cfg, routines=["main"], sources={"M": source})
-    utool = next(c for c in result.capacity if c.resource == "UTOOL")
-    assert utool.over == ("tGrip",)
+    text = "\n".join(line.text for line in result.programs[0].program.lines if hasattr(line, "text"))
+    assert "UTOOL[10]=PR[" in text and "UTOOL_NUM=10" in text and "UTOOL_NUM=30" not in text
+    assert next(c for c in result.capacity if c.resource == "UTOOL").over == ()
+
+    tools = {f"t{i}": i for i in range(1, 11)} | {"tGrip": 30}  # every number the controller holds taken
+    path.write_text(json.dumps({"utools": tools}), encoding="utf-8")
+    cfg = ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1))
+    result = convert([parse_module(source)], cfg, routines=["main"], sources={"M": source})
+    assert next(c for c in result.capacity if c.resource == "UTOOL").over == ("tGrip",)
 
 
 def test_analog_scales_are_written_for_the_user_to_fill_in(tmp_path):

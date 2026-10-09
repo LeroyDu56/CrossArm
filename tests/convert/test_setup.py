@@ -62,7 +62,7 @@ def test_the_program_is_valid_ls_text():
 
 
 def test_frames_it_must_not_write_are_left_out_and_said():
-    """Unknown, unusable, beyond the controller, or already the robot's own: never overwritten."""
+    """Unknown, unusable, or already the robot's own: never overwritten. Pinned past the controller's limit: a bank."""
     held = 'PERS wobjdata wHeld:=[TRUE,TRUE,"",[[0,0,0],[1,0,0,0]],[[0,0,0],[1,0,0,0]]];'
     var_tool = "VAR tooldata tVar:=[TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,1],[1,0,0,0],0,0,0]];"
     body = "tVar.tframe.trans.z:=120;\nMoveL pHome,v500,fine,tVar;\n" + MOVES + "\nMoveL pHome,v500,fine,tool0;\nMoveL pHome,v500,fine,tool0\\WObj:=wHeld;"
@@ -70,10 +70,9 @@ def test_frames_it_must_not_write_are_left_out_and_said():
     setup = build_setup(run(body, HOME + TOOL + WOBJ + held + var_tool, cfg), cfg, "SETUP_FRAMES")
     reasons = {f.rapid_name: why for _, f, why in setup.skipped}
     assert "assigned at run time" in reasons["tVar"]
-    assert reasons["tGrip"] == "number above the 10 the controller holds"
     assert reasons["wFix"] == "already used on the robot by PICK: not overwritten"
     assert "robot-held" in reasons["wHeld"]
-    assert [f.rapid_name for _, f in setup.written] == ["tool0"]
+    assert [(f.rapid_name, f.bank is not None) for _, f in setup.written] == [("tool0", False), ("tGrip", True)]
     assert "!UFRAME[4] wFix: not set" in texts(setup.program)
 
 

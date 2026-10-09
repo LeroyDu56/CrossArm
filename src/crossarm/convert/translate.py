@@ -1048,7 +1048,10 @@ class Converter:
             automatic = [name for name in used[kind] if name not in table.fixed]
             free = [k for k in range(table.first, limit + 1)
                     if k not in table.fixed.values() and k not in table.reserved]  # fmt: skip
-            if len(automatic) > len(free) and free and self._banks:  # no register to keep them in: over, as before
+            # A mapping file given back pins the banked frames at the numbers past the limit it was written with
+            # (every version so far): they still mean banks, loaded into the same reserved number.
+            pinned_over = any(table.fixed[name] > limit for name in used[kind] if name in table.fixed)
+            if (len(automatic) > len(free) or pinned_over) and free and self._banks:  # no register: over, as before
                 self.slots[kind] = free[-1]
                 table.reserved = table.reserved | {free[-1]}
 
