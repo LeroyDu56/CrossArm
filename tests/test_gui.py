@@ -376,3 +376,19 @@ def test_the_steps_scroll_and_convert_stays_in_view_on_a_short_window(app):
     finally:
         app.withdraw()
 
+
+
+def test_every_step_title_and_tag_fit_on_a_narrow_window(app):
+    """At 820 x 560, the smallest window the steps are drawn for, no step's tag is cut (step 5's was, up to 1.7)."""
+    app.deiconify()
+    try:
+        app.geometry("820x560")
+        for _ in range(5):
+            app.update()
+        steps = [app.step_source, app.step_target, app.step_mapping, app.step_tp, app.step_keep, app.step_karel]
+        for step in steps:
+            head = step.frame.winfo_children()[0].winfo_children()[0]
+            tag = [w for w in head.winfo_children() if isinstance(w, tk.Label)][-1]
+            assert tag.winfo_x() + tag.winfo_reqwidth() <= head.winfo_width(), tag.cget("text")
+    finally:
+        app.withdraw()

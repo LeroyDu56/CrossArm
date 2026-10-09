@@ -361,7 +361,7 @@ class App(tk.Tk):
         self.inputs.append(self.step_tp.button("robot.ini...", self.pick_tp_ini))
         self.clear_tp = self.step_tp.link("Clear", self.forget_tp_robot)
         self.step_keep = Step(
-            column, 5, "Positions touched up on the robot", "optional · converting again",
+            column, 5, "Positions touched up", "optional · converting again",
             "The robot's programs as they are now (.LS or .TP, folder or .zip) and the CrossArm output they were "
             "converted into: the points touched up there are kept where the ABB point did not change.",
         )  # fmt: skip
