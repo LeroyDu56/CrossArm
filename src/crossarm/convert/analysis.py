@@ -578,6 +578,7 @@ def analysis_markdown(result: ConversionResult, config: ConversionConfig | None 
         *([f"- {karel_use(result)}"] if karel_use(result) else []),
         (f"- {clean} of {len(result.programs)} programs with no TODO, {len(result.programs) - clean} with TODO"
          f" ({_plural(result.todo_count, 'TODO', 'TODO')})."),
+        *([f"- {result.since.text()}"] if result.since is not None else []),
         "",
     ]  # fmt: skip
     actions = priority_actions(result, config)

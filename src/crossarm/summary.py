@@ -130,6 +130,24 @@ class Summary:
     decision: Verdict | None = None
     # With --keep-taught: the points kept as touched up and to touch up again.
     taught: TaughtLine | None = None
+    # What changed since the previous conversion (crossarm_summary.json), one line per task compared.
+    since: list[str] = field(default_factory=list)
+
+
+def describe_since(run: RunOutput) -> list[str]:
+    """What changed since the previous conversion, in one short line: a task's own (run_summary.Since.short), or the
+    TODO of the tasks compared added up, saying when a backup changed and which options differ. [] when nothing was
+    compared."""
+    compared = [t.result.since for t in run.tasks if t.result and t.result.since is not None]
+    if len(compared) <= 1:
+        return [since.short() for since in compared]
+    then, now = sum(s.todo[0] for s in compared), sum(s.todo[1] for s in compared)
+    changed = sum(s.files_differ for s in compared)
+    options = list(dict.fromkeys(option for s in compared for option in s.options))
+    lead = ("Since the previous conversion" if not changed else
+            f"Backup changed ({plural(changed, 'file')} differ) since the previous conversion")  # fmt: skip
+    return [f"{lead}: TODO {then:,} -> {now:,} in {plural(len(compared), 'task')}"
+            + (f" (options differ: {'; '.join(options)})" if options else "") + "."]
 
 
 def summarize(run: RunOutput) -> Summary:
@@ -147,6 +165,7 @@ def summarize(run: RunOutput) -> Summary:
         causes=todo_causes(notes),
     )  # fmt: skip
     summary.taught = describe_taught(run)
+    summary.since = describe_since(run)
 
     # 1. What stops the programs from loading at all.
     for task in run.tasks:
@@ -284,6 +303,16 @@ def summarize(run: RunOutput) -> Summary:
 
 
 __all__ = [
-    "GOOD", "INFO", "RESOURCE_NAMES", "WARN", "Summary", "describe_controller", "describe_keep", "describe_source",
-    "describe_taught", "plural", "summarize",
+    "GOOD",
+    "INFO",
+    "RESOURCE_NAMES",
+    "WARN",
+    "Summary",
+    "describe_controller",
+    "describe_keep",
+    "describe_since",
+    "describe_source",
+    "describe_taught",
+    "plural",
+    "summarize",
 ]  # fmt: skip

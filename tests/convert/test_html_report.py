@@ -3,6 +3,8 @@
 
 """The HTML report: RAPID and TP side by side, the TODO list, one page that loads nothing."""
 
+import html
+import json
 import re
 from datetime import datetime
 from html.parser import HTMLParser
@@ -408,3 +410,37 @@ def test_programs_ready_as_is_are_one_line_and_points_one_line_per_program():
     assert section.count('<details class="pts"') == 3 and 'data-s="r1 phome offs(phome, 1, 0, 0)"' in section
     assert "<b>2 points</b>" in section and "Value (theoretical)" in section
     assert "<h2>Points</h2>" not in page.split('<section id="details">')[1]  # not twice
+
+
+def test_the_integrator_view_shows_the_checklist_groups_folded_and_the_next_items_only():
+    page = build_html_report(_convert(CELL), ConversionConfig(), ["cell.mod"], title="t")
+    assert '<div class="bar ck-nextbar"><span id="ck-next"></span> <button type="button" id="ck-all">Show all' in page
+    # Folded by the style of the integrator view only; "show all" lifts it; printed, every item is there.
+    assert 'html[data-view="i"] #ck:not(.all) .ckg:not(.shown) li:not(.next) { display: none; }' in page
+    printed = page.split("@media print {")
+    assert any("#ck li[data-id] { display: flex !important; }" in part for part in printed)
+    # The script marks the next items: the first unfinished group's, NEXT of them; a tick keeps them in sight.
+    assert "var NEXT = 5;" in CHECKLIST_JS and "save(); count(); nextUp(true);" in CHECKLIST_JS
+    assert '.ckg:not(.shown):not(.has-next) h3::before { content: "\\25B8";' in page  # a CSS escape, not a control
+
+
+def test_the_items_and_the_checklist_export_as_csv_with_who_acts():
+    result = _convert(CELL)
+    page = build_html_report(result, ConversionConfig(), ["cell.mod"], title="t")
+    assert '<button type="button" id="f-csv"' in page and '<button type="button" id="ck-csv"' in page
+    meta = json.loads(html.unescape(re.search(r'<div class="table-wrap" id="f-wrap" data-meta="([^"]*)"', page)[1]))
+    assert set(meta) == {note.category for note in result.notes}
+    for family, who in meta.values():
+        assert family and who
+    todo = next(n.category for n in result.notes if n.kind == "TODO")
+    assert meta[todo][1].startswith("FANUC integrator")
+    # The file: UTF-8 with a BOM, separators and quotes escaped, nothing sent anywhere (a Blob).
+    assert "'\\ufeff' + rows.map" in page and "new Blob([text]" in page and "a.download = name" in page
+    assert ".replace(/\"/g, '\"\"')" in page and "csv('crossarm_todo.csv', reviewRows(), b)" in page
+    assert "'crossarm_checklist.csv'" in CHECKLIST_JS
+
+
+def test_two_print_profiles_the_summary_and_the_site_checklist():
+    page = build_html_report(_convert(CELL), ConversionConfig(), ["cell.mod"], title="t")
+    assert 'data-print="sum"' in page and 'data-print="ck"' in page
+    assert "html.print-sum main > section:not(#analysis)" in page and "html.print-ck main >" in page

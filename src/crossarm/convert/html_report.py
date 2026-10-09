@@ -27,8 +27,10 @@ menu, the analysis says what to do first, and every other section is one folded 
 A large backup is tens of thousands of lines: the folded sections hold them as inert <template> elements the
 script turns into the page only when their fold is opened (the browser lays out the first screen alone). Three
 views of the same page, chosen at the top, fold it differently: synthesis (the analysis alone), integrator (the
-checklist, the items to review and the programs with TODO open too), detail (every section open; programs and
-points still one fold each). Links '#todo&cause=..&prog=..' (todo_href) open the items to review filtered.
+checklist, its groups one line each and the next items to do, the items to review and the programs open too),
+detail (every section open; programs and points still one fold each). Links '#todo&cause=..&prog=..' (todo_href)
+open the items to review filtered. The items to review and the checklist export as CSV (a Blob: nothing leaves
+the computer); two print profiles: the summary (the analysis, 2 pages) and the site checklist.
 Without its script the page shows the analysis and says the lists are in the Markdown report.
 
 Each section is one function returning (id, menu label, HTML); a new section is one more entry in
@@ -227,11 +229,14 @@ def _program_view(info: ProgramInfo, result: ConversionResult, notes: list[Note]
 
     # One item per row: (classes, attributes, cells, its notes' rows, marked, RAPID lines it shows)
     items: list[tuple[list[str], str, str, str, bool, int]] = []
+    same: list[str | None] = []  # each row's warning causes, when it has warnings and no TODO
     if offset:
         numbers = "\n".join(str(k) for k in range(1, offset + 1))
         cells = f'<td></td><td></td><td class="n">{numbers}</td><td class="c">{_e(chr(10).join(lead))}</td>'
         items.append((["mark"], "", cells, "", False, 0))
+        same.append(None)
     for row in rows:
+        same.append(None)
         numbers, texts = [], []
         for i in row.tp:
             for k, text in enumerate(tp_text(lines[i])):
@@ -249,11 +254,13 @@ def _program_view(info: ProgramInfo, result: ConversionResult, notes: list[Note]
         kind = ["todo"] if any(n.kind == "TODO" for n in here) else ["warn"] if here else []
         text = source[row.rapid - 1] if source and row.rapid <= len(source) else ""
         anchors.add((name, row.rapid))
+        if kind == ["warn"]:
+            same[-1] = ", ".join(sorted({note.category for note in here}))
         items.append((kind, f' id="{_e(line_anchor(name, row.rapid))}" data-l="{row.rapid}"',
                       f'<td class="n">{row.rapid}</td><td class="c">{_e(text.rstrip())}</td>{tp_cells}',
                       _note_rows(here, row.rapid), bool(here), 1))  # fmt: skip
 
-    runs = todo_only([item[4] for item in items]) if marked_lines else []
+    runs = todo_only([item[4] for item in items], same=same) if marked_lines else []
     gaps = [run for run in runs if not run.shown]
     out = []
     if gaps:
@@ -273,12 +280,17 @@ def _program_view(info: ProgramInfo, result: ConversionResult, notes: list[Note]
         if k in starts:
             g = starts[k]
             count = sum(item[5] for item in items[gaps[g].start:gaps[g].end])
-            what = _s(count, "line") + " converted" if count else _s(gaps[g].end - gaps[g].start, "TP row")
+            if gaps[g].same:
+                what = f"{_s(count, 'more line')} with the same warning: {_e(gaps[g].same)}"
+            else:
+                what = _s(count, "line") + " converted" if count else _s(gaps[g].end - gaps[g].start, "TP row")
             out.append(f'<tr class="gap" data-g="{g}"><td colspan="4"><button type="button" class="gap"'
                        f' title="Show these lines">… {what} …</button></td></tr>')  # fmt: skip
         if k in hidden:
             classes = [*classes, "f"]
             attributes += f' data-g="{hidden[k]}"'
+            # a repeated warning's own note rows go with it
+            note_rows = note_rows.replace('<tr class="note ', f'<tr data-g="{hidden[k]}" class="f note ')
         kind = f' class="{" ".join(classes)}"' if classes else ""
         out.append(f"<tr{attributes}{kind}>{cells}</tr>{note_rows}")
     out.append("</tbody></table>")
@@ -403,8 +415,28 @@ def _code_section(result: ConversionResult, lead: list[str], anchors: set[tuple[
 # ---------------------------------------------------------------------------
 
 
-def _review_section(result: ConversionResult, anchors: set[tuple[str, int]]) -> Section:
-    """Every TODO and warning as an inert row; the script shows REVIEW_PAGE of those the filters keep at a time."""
+CHECK = "FANUC integrator (check)"  # who acts on a warning: converted on an assumption, checked on the cell
+
+
+def who_acts(result: ConversionResult, config: ConversionConfig | None = None) -> dict[str, str]:
+    """Each TODO cause -> who acts on it: as the action covering it says (analysis.priority_actions), else the FANUC
+    integrator (and a later CrossArm version, for the causes it may convert: triage.LATER_CAUSES)."""
+    out: dict[str, str] = {}
+    for action in priority_actions(result, config):
+        for cause in action.causes:
+            if action.who:
+                out.setdefault(cause, action.who_text)
+    for note in result.notes:
+        if note.kind == "TODO" and note.category not in out:
+            who = (triage.INTEGRATOR, triage.LATER) if note.category in triage.LATER_CAUSES else (triage.INTEGRATOR,)
+            out[note.category] = " · ".join(who)
+    return out
+
+
+def _review_section(result: ConversionResult, anchors: set[tuple[str, int]],
+                    config: ConversionConfig | None = None) -> Section:  # fmt: skip
+    """Every TODO and warning as an inert row; the script shows REVIEW_PAGE of those the filters keep at a time, and
+    exports those it keeps (every page) as CSV, with each cause's family and who acts on it."""
     notes = sorted(result.notes, key=lambda x: (x.program, x.rapid_line or 0))
     programs = sorted({note.program for note in notes if note.program})
     shown = {info.program.name for info in result.programs}
@@ -425,6 +457,9 @@ def _review_section(result: ConversionResult, anchors: set[tuple[str, int]]) -> 
     cause_options = "".join(f'<option value="{_e(c)}">{_e(c)} ({count})</option>' for c, count in causes.most_common())
     program_options = "".join(f'<option value="{_e(p)}">{_e(p)}</option>' for p in programs)
     default = "TODO" if result.todo_count else ""  # the TODO first; the warnings when there is no TODO
+    who = who_acts(result, config)
+    meta = {c: [triage.family(c), who.get(c, CHECK)] for c in causes}
+    meta_json = json.dumps(meta, ensure_ascii=False)
     body = [
         "<h2>Items to review</h2>",
         ("<p>TODO: not converted, to write by hand. Warning: converted on an assumption, to check. The RAPID line"
@@ -435,8 +470,10 @@ def _review_section(result: ConversionResult, anchors: set[tuple[str, int]]) -> 
         "</select>"
         f' <select id="f-cause" aria-label="Cause"><option value="">Every cause</option>{cause_options}</select>'
         f' <select id="f-prog" aria-label="Program"><option value="">Every program</option>{program_options}</select>'
-        ' <button type="button" id="f-reset" title="The TODO of every cause and program">Reset</button> <span id="f-count" class="muted"></span></div>'),
-        ('<div class="table-wrap"><table class="review"><thead><tr><th>Program</th><th>RAPID line</th><th>Kind</th>'
+        ' <button type="button" id="f-reset" title="The TODO of every cause and program">Reset</button> <span id="f-count" class="muted"></span>'
+        ' <button type="button" id="f-csv" title="The items the filters keep, every page: program, RAPID line, kind, cause,'
+        ' family, who acts, detail, for a spreadsheet">Export CSV</button></div>'),
+        (f'<div class="table-wrap" id="f-wrap" data-meta="{_e(meta_json)}"><table class="review"><thead><tr><th>Program</th><th>RAPID line</th><th>Kind</th>'
          '<th>Cause</th><th>Detail</th></tr></thead><tbody id="f-body"></tbody></table></div>'
          f'<template id="f-rows" data-page="{REVIEW_PAGE}">{"".join(rows)}</template>'
          '<p class="more"><button type="button" id="f-more" hidden>Show more</button></p>')
@@ -577,6 +614,20 @@ def _renumbering(result: ConversionResult, config: ConversionConfig | None) -> s
             f' again with it</h3><ul class="renum">{items}</ul>')  # fmt: skip
 
 
+def _since(result: ConversionResult) -> str:
+    """What changed since the previous conversion (run_summary.Since): the figures then and now, labelled as of other
+    RAPID files when the backup changed; the causes gone and new; the options that differ."""
+    since = result.since
+    if since is None:
+        return ""
+    causes = since.causes()
+    options = f" Options differ: {'; '.join(since.options)}." if since.options else ""
+    kind = "same" if since.same_backup else "changed"
+    text = (f"{since.figures()}." + (f" {causes[0].upper() + causes[1:]}." if causes else "") + options)
+    text = _e(text).replace(" -&gt; ", " → ")  # the arrows kept with the figure before them
+    return f'<p class="since {kind}"><b>{_e(since.headline())}</b> {text}</p>'
+
+
 def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[tuple[str, int]],
                       targets: set[str], checklist_items: int, licence_note: list[str] = (),
                       config: ConversionConfig | None = None) -> Section:  # fmt: skip
@@ -620,7 +671,7 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
         f'<p class="decision"><span class="vtag">{_e(decision.level)}</span> {_e(decision.sentence)}</p>',
         f'<p class="rule">{_e(decision.rule)}</p>{why}'
         + (f'<p class="karel-use">{inline(analysis.karel_use(result))}</p>' if analysis.karel_use(result) else "")
-        + "</div>",
+        + _since(result) + "</div>",
         (f'<div class="vareas"><h3>Converted by area</h3><ul class="areas">{areas}</ul>'
          + (f'<p class="biz">{_e(business(result))}</p>' if business(result) else "") + "</div>" if areas else ""),
         "</div>",
@@ -714,7 +765,11 @@ def _cockpit(result: ConversionResult, config: ConversionConfig, menu: list[tupl
         f'<div class="cline">{line}'
         f'<span class="ver">CrossArm {_e(__version__)} · {config.timestamp:%Y-%m-%d %H:%M}</span>'
         '<label class="view js-only-inline">View <select id="depth" aria-label="View: how much the page opens">'
-        f"{views}</select></label></div>"
+        f"{views}</select></label>"
+        '<span class="prints js-only-inline">Print <button type="button" data-print="sum" title="The analysis alone:'
+        ' the decision, the figures, what to do first">summary (2 pages)</button> <button type="button"'
+        ' data-print="ck" title="The commissioning checklist, every item, to tick on paper">site checklist</button>'
+        "</span></div>"
         '<nav class="menu" aria-label="Sections">'
         + "".join(f'<a href="{_e(href)}">{_e(label)}</a>' for href, label in menu)
         + "</nav></div>"
@@ -801,6 +856,12 @@ header.top blockquote { margin: .4em 0; padding: .35em .9em; font-size: .92em; }
 details.srcs { font-size: .85em; color: var(--muted); margin: 0 0 .4em; }
 .licence-note blockquote { margin: -.4em 0 1em; padding: .35em .9em; font-size: .92em; }
 .verdict .karel-use { font-size: .9em; margin: .3em 0 0; }
+p.since { font-size: .9em; margin: .45em 0 0; padding-left: 8px; border-left: 3px solid var(--ok); }
+p.since.changed { border-left-color: var(--warn); }
+.prints { font-size: .88em; color: var(--muted); }
+.prints button { font: inherit; padding: 1px 8px; color: var(--fg); background: var(--head); border: 1px solid var(--line);
+  border-radius: 6px; cursor: pointer; }
+.said { font-size: .88em; color: var(--muted); }
 details.srcs summary { cursor: pointer; }
 p.nojs { border: 1px solid var(--warn); border-radius: 8px; padding: 8px 14px; background: var(--warn-bg); }
 .cockpit { position: sticky; top: 0; z-index: 3; background: var(--bg); border-bottom: 1px solid var(--line);
@@ -982,7 +1043,18 @@ tr.flash td { animation: flash 2s ease-out; }
   tr, .card, .verdict, ol.actions li, ul.top li, details.sec > summary { break-inside: avoid; }
   .vtag { color: #fff; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .prints, .js .prints, .said { display: none !important; }
+  /* "summary (2 pages)": the head, the line at the top and the analysis; the lists stay on screen. */
+  html.print-sum main > section:not(#analysis), html.print-sum noscript { display: none !important; }
+  html.print-sum body { font-size: 10pt; }
+  html.print-sum #analysis .notice, html.print-sum p.go, html.print-sum details.ext, html.print-sum details.why,
+  html.print-sum ul.top .ex, html.print-sum details.srcs { display: none !important; }
+  html.print-sum .verdict { grid-template-columns: minmax(0, 3fr) minmax(220px, 2fr); padding: 8px 12px; }
+  html.print-sum .an-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  html.print-sum .an-box { padding: 6px 10px; }
+  html.print-sum ol.actions li { margin-bottom: .25em; }
 }
+@page { margin: 12mm; }
 """
 
 _JS = r"""
@@ -1069,13 +1141,17 @@ _JS = r"""
     $('f-more').addEventListener('click', function () { review(true); });
     review();
   }
+  function matching() {
+    var q = $('f-text').value.trim().toLowerCase(), k = $('f-kind').value, c = $('f-cause').value, p = $('f-prog').value;
+    return R.filter(function (r) {
+      return (!k || r.dataset.k === k) && any(c, r.dataset.c) && any(p, r.dataset.p) && (!q || r._text.indexOf(q) >= 0);
+    });
+  }
   function review(more) {
     if (!R) { return; }
     limit = more ? limit + PAGE : PAGE;
-    var q = $('f-text').value.trim().toLowerCase(), k = $('f-kind').value, c = $('f-cause').value, p = $('f-prog').value;
-    var match = R.filter(function (r) {
-      return (!k || r.dataset.k === k) && any(c, r.dataset.c) && any(p, r.dataset.p) && (!q || r._text.indexOf(q) >= 0);
-    });
+    var k = $('f-kind').value;
+    var match = matching();
     var body = $('f-body'), frag = d.createDocumentFragment(), shown = Math.min(limit, match.length);
     while (body.firstChild) { body.removeChild(body.firstChild); }
     match.slice(0, shown).forEach(function (r) { frag.appendChild(r); });
@@ -1197,6 +1273,68 @@ _JS = r"""
   }
   d.addEventListener('crossarm:built', function () { reviewInit(); programsInit(); pointsInit(); });
 
+  // CSV: built here, saved by the browser (a Blob: nothing leaves the computer). UTF-8 with a BOM, which
+  // spreadsheets need to read accents; separators, quotes and line breaks quoted; a cell starting with = or @ is
+  // kept as text.
+  function cell(v) {
+    v = String(v === undefined || v === null ? '' : v);
+    if (/^[=@]/.test(v)) { v = "'" + v; }
+    return /[",;\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+  function say(btn, text) {
+    var s = btn && btn.nextElementSibling;
+    if (!s || !s.classList.contains('said')) {
+      s = d.createElement('span'); s.className = 'said'; s.setAttribute('aria-live', 'polite');
+      if (btn) { btn.parentNode.insertBefore(s, btn.nextSibling); }
+    }
+    s.textContent = ' ' + text;
+  }
+  function csvText(rows) {
+    return '\ufeff' + rows.map(function (r) { return r.map(cell).join(','); }).join('\r\n') + '\r\n';
+  }
+  function csv(name, rows, btn) {
+    var text = csvText(rows);
+    try {
+      var url = URL.createObjectURL(new Blob([text], {type: 'text/csv;charset=utf-8'})), a = d.createElement('a');
+      a.href = url; a.download = name; a.style.display = 'none';
+      d.body.appendChild(a); a.click(); d.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      say(btn, name + ': ' + (rows.length - 1) + ' rows');
+    } catch (e) { say(btn, 'this browser refused to save the file'); }
+    return text;
+  }
+  function reviewRows() {  // the items the filters keep, every page
+    var meta = {};
+    try { meta = JSON.parse($('f-wrap').getAttribute('data-meta')); } catch (e) { meta = {}; }
+    var rows = [['Program', 'RAPID line', 'Kind', 'Cause', 'Family', 'Who acts', 'Detail']];
+    matching().forEach(function (r) {
+      var c = r.dataset.c, m = meta[c] || ['', ''];
+      rows.push([r.dataset.p, r.cells[1].textContent.replace('\u2014', ''), r.dataset.k, c, m[0],
+                 r.dataset.k === 'TODO' ? m[1] : 'FANUC integrator (check)', r.cells[4].textContent]);
+    });
+    return rows;
+  }
+  d.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('#f-csv');
+    if (b && R) { csv('crossarm_todo.csv', reviewRows(), b); }
+  });
+
+  // Print: "summary (2 pages)" the analysis alone; "site checklist" the checklist alone, every item.
+  function printAs(kind) {
+    if (kind === 'ck') {
+      var f = $('ck-fold');
+      if (!f) { return; }
+      buildIn(f);
+      root.classList.add('print-ck');
+    } else { root.classList.add('print-sum'); }
+    window.print();
+  }
+  d.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('button[data-print]');
+    if (b) { printAs(b.getAttribute('data-print')); }
+  });
+  window.addEventListener('afterprint', function () { root.classList.remove('print-sum'); });
+
   // Copy: the example's text to the clipboard; where the browser refuses, selected, for Ctrl+C.
   d.addEventListener('click', function (ev) {
     var b = ev.target.closest && ev.target.closest('button.copy');
@@ -1232,7 +1370,8 @@ _JS = r"""
     if ($('depth')) { $('depth').value = v; }
     if (!quiet) { try { window.localStorage.setItem('crossarm-view', v); } catch (e) { /* not kept */ } }
   }
-  window.CrossArm = {open: open, reveal: reveal, view: view, go: go};
+  window.CrossArm = {open: open, reveal: reveal, view: view, go: go, csv: csv, csvText: csvText,
+                    reviewRows: reviewRows, print: printAs};
   function start() {
     each(d.querySelectorAll('details[open]'), buildIn);
     var v = 's';
@@ -1268,7 +1407,7 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     code = _code_section(result, lead or [], anchors)  # first: the review links to the lines it shows
     checklist = checklist_section(result, config, anchors, identity=f"{title}|{'|'.join(sources)}", tp=tp,
                                   tp_where=tp_where, karel=karel, karel_where=karel_where)  # fmt: skip
-    review = _review_section(result, anchors)
+    review = _review_section(result, anchors, config)
     points = _points_section(result, anchors)
     todo, warnings = result.todo_count, sum(1 for note in result.notes if note.kind == "WARNING")
     with_todo = len({note.program for note in result.notes if note.kind == "TODO"} & {i.program.name for i in result.programs})

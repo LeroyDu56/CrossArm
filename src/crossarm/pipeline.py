@@ -15,6 +15,8 @@ Output layout, created next to the input unless an output folder is given:
       <task>/                   one folder per task of a backup (T_ROB1, T_ROB2...)
         *.LS
         crossarm_report.md / .html
+        crossarm_report_summary.md  one page: the decision, the figures, what to do first (convert/run_summary.py)
+        crossarm_summary.json   the machine summary a later conversion compares itself with
       TP/                       when asked: the .TP of every task, made by FANUC MakeTP (fanuc/maketp.py)
       KAREL/                    --karel: the KAREL library programs the tasks call, .kl and .pc (fanuc/ktrans.py)
 
@@ -23,12 +25,13 @@ positions touched up on the robot (--keep-taught, convert/taught.py).
 """
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from crossarm.backup import Source, TaskSource, open_source
-from crossarm.convert import ConversionConfig, ConversionResult, build_mapping, build_report, convert
+from crossarm.convert import ConversionConfig, ConversionResult, build_mapping, build_report, convert, run_summary
 from crossarm.convert.blockers import Blocker
 from crossarm.convert.compute import Written
 from crossarm.convert.coverage import Coverage, fmt_percent
@@ -235,7 +238,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
                   config: ConversionConfig, signals, routines, source: Source, log: Log, numbers: ControllerScope,
                   other_tasks: list[str], licence: LicenceStatus,
                   tp: tuple[TpRequest, Path] | None = None, keeping: _Keeping | None = None,
-                  karel: tuple[KarelRequest, Path] | None = None, mapping_warning: str = "") -> TaskOutput:  # fmt: skip
+                  karel: tuple[KarelRequest, Path] | None = None, mapping_warning: str = "",
+                  options: dict[str, object] | None = None, previous: dict | None = None) -> TaskOutput:  # fmt: skip
     out = TaskOutput(task.name, folder)
     parsed, out.syntax_errors = parsed_task
     modules = [p.module for p in parsed if p.module is not None]
@@ -275,6 +279,11 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
     if karel is not None and result.karel_programs:  # the library programs they call, before the .LS on the robot
         out.karel = ktrans.export(result.karel_programs, karel[1], karel[0], log)
     names = [Path(p.path).name for p in parsed]
+    # The machine summary, and what changed since the previous conversion (read before this one overwrote it).
+    summary = run_summary.build_summary(result, config, backup=source.name, task=task.name,
+                                        files=run_summary.file_hashes(Path(p.path) for p in parsed),
+                                        options=options or {}, licensed=licence.licensed)  # fmt: skip
+    result.since = run_summary.compare(previous, summary)
     extra = ""  # what this run adds to the report
     if out.tp is not None:
         extra += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
@@ -301,6 +310,11 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
                                                   encoding="utf-8")  # fmt: skip
     # The points written, for a later conversion keeping what is touched up on the robot (--keep-taught).
     (folder / POINTS_FILE).write_text(build_points(points), encoding="utf-8")
+    # One page to print or send, and the figures a later conversion compares itself with.
+    (folder / run_summary.SUMMARY_MD).write_text(
+        run_summary.summary_markdown(result, config, summary, licence_line=licence.describe(), since=result.since),
+        encoding="utf-8")  # fmt: skip
+    run_summary.write_summary(folder, summary)
 
     out.result = result
     out.programs = len(result.programs)
@@ -314,6 +328,8 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         log(f"  {task.name}: {out.tp.summary()}")
     if out.karel is not None:
         log(f"  {task.name}: {out.karel.summary()}")
+    if result.since is not None:
+        log(f"  {task.name}: {result.since.short()}")
     elif result.karel_todo:
         log(f"  {task.name}: {result.karel_todo} TODO would be converted with --karel (KAREL option R632)")
     if result.taught is not None:
@@ -382,6 +398,7 @@ def run(
             raise ValueError("no RAPID module found (.mod, .modx, .sys, .sysx, .prg)")
         location = source.location or Path.cwd()
         folder = output or unique_folder(location / f"crossarm_{source.name}")
+        earlier = earlier_outputs(folder, None if output else location / f"crossarm_{source.name}")
         eio_path = eio or source.eio or (find_eio([Path(p) for p in paths]) if source.kind == "files" else None)
         signals = read_eio(eio_path) if eio_path else None
 
@@ -419,6 +436,18 @@ def run(
                 log(f"  mapping file: {warning}")
             else:
                 log(f"  mapping file written for task {owner}: its program names apply to {owner} only")
+        options = {
+            "karel": config.karel, "map": bool(config.mapping_folder),
+            "provided_routines": len(config.external_routines),
+            "move_routines": sum(1 for convert in config.move_routines.values() if convert),
+            "keep_taught": keeping is not None, "fanuc": controller is not None, "tp": tp is not None,
+            "eio": eio_path is not None,
+        }  # fmt: skip
+        # The previous conversions' summaries, read before this one writes over them.
+        previous = {}
+        for task in source.tasks:
+            inner = task.name if source.kind == "backup" or len(source.tasks) > 1 else ""
+            previous[task.name] = previous_summary(earlier, inner)
         for task, parsed_task in zip(source.tasks, parsed, strict=True):
             task_folder = folder / task.name if source.kind == "backup" or len(source.tasks) > 1 else folder
             others = [name for name in names if name != task.name]
@@ -428,11 +457,32 @@ def run(
             tasks.append(_convert_task(task, parsed_task, task_folder, task_config, signals, routines, source, log,
                                        shared, others, licence, (tp, folder / TP_FOLDER) if tp else None,
                                        keeping, (karel, folder / ktrans.FOLDER) if config.karel and karel else None,
-                                       warning))  # fmt: skip
+                                       warning, options, previous.get(task.name)))  # fmt: skip
         log(f"Output: {folder}")
         # What a user can send when a result looks wrong: stays next to the report.
         (folder / "crossarm_log.txt").write_text(log_text(given, fanuc, lines), encoding="utf-8")
         return RunOutput(source.name, source.kind, folder, tasks, eio_path, controller, licence, config)
+
+
+def earlier_outputs(folder: Path, base: Path | None) -> list[Path]:
+    """Where the previous conversion of this input may be: the output folder itself (a conversion into it again),
+    then, without an output folder given (`base`: crossarm_<name> next to the input), the earlier outputs
+    crossarm_<name>, crossarm_<name>_2... Which one is the previous conversion, and whether it is of the same backup,
+    their crossarm_summary.json says (run_summary.compare), never their name."""
+    out = [folder]
+    if base is not None and base.parent.is_dir():
+        pattern = re.compile(re.escape(base.name) + r"(_\d+)?")
+        out += sorted(p for p in base.parent.iterdir() if p.is_dir() and p != folder and pattern.fullmatch(p.name))
+    return out
+
+
+def previous_summary(earlier: list[Path], inner: str) -> dict | None:
+    """The previous conversion's summary of a task (`inner`: its folder in an output, "" for the output itself): the
+    one in the output folder, else the newest of the earlier outputs."""
+    found = [run_summary.read_summary(folder / inner / run_summary.SUMMARY_JSON) for folder in earlier]
+    if found and found[0] is not None:
+        return found[0]
+    return run_summary.newest(s for s in found[1:] if s is not None)
 
 
 def mapping_task(config: ConversionConfig, tasks: list[tuple[str, list]]) -> str | None:

@@ -15,6 +15,16 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   its counts; a program opens on its TODO and warnings, two lines around, the rest one click away; a TODO followed
   from the list highlights its RAPID line and the TP lines written from it; what `--karel`, FUNCs copied into
   their calls and provided routines did in each program.
+- The integrator view no longer opens on a wall of checklist: its groups are one line each with their counts, the
+  next items to do shown, every item one click away (and printed). A program mostly in warnings folds the lines
+  repeating the same warning behind one line ("5 more lines with the same warning: ...").
+- Two files more next to each report: `crossarm_report_summary.md`, one page (decision, figures, causes, what to do
+  first and who acts, capacity, `--karel`, licence), and `crossarm_summary.json`, the figures in machine form.
+- Converting again compares with the previous conversion of the same input, from its `crossarm_summary.json`:
+  TODO, warnings and % then and now, causes gone and new, options that differ; if the RAPID files changed, it says
+  how many differ; another backup is never compared. In the report, the summary, the log and the window.
+- The report exports its items to review and its checklist as CSV (offline, UTF-8 for spreadsheets), and prints
+  two ways: the summary on 2 pages, or the site checklist.
 
 ## 1.8.0 — 2026-10-09
 

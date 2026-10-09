@@ -169,6 +169,63 @@ def test_a_program_opens_on_its_todo_with_the_rest_behind_separators_and_the_ful
     assert '<table class="sbs">' in calib and 'class="gap"' not in calib and "data-v=" not in calib
 
 
+def test_a_run_of_rows_with_the_same_warning_keeps_its_first_row_and_folds_the_others():
+    marks = [False] * 3 + [True] * 10 + [False] * 6
+    same = [None] * 3 + ["X"] * 10 + [None] * 6
+    # The first warning row and its context shown; the 9 others one separator naming the warning; the context
+    # after the last one shown.
+    assert todo_only(marks, same=same) == [Run(0, 4, True), Run(4, 13, False, "X"), Run(13, 15, True),
+                                           Run(15, 19, False)]  # fmt: skip
+    # Fewer than MIN_SAME rows in a row, or different warnings, or a TODO among them: nothing folded as repeats.
+    assert todo_only(marks, same=[None] * 3 + ["X", "Y"] * 5 + [None] * 6) == todo_only(marks)
+    short = [None] * 3 + ["X"] * 3 + [None] * 13
+    assert todo_only([s is not None for s in short], same=short) == todo_only([s is not None for s in short])
+    assert not any(r.same for r in todo_only(marks, same=[None] * 3 + ["X"] * 3 + [None] + ["X"] * 3 + [None] * 9))
+    for size in range(1, 14):  # every row once, in order, whatever the run
+        for k in range(size):
+            row = [None] * k + ["W"] * (size - k)
+            runs = todo_only([s is not None for s in row], same=row)
+            assert [i for r in runs for i in range(r.start, r.end)] == list(range(size))
+
+
+WARNED = """MODULE W
+  VAR num nCount:=0;
+  PROC Show()
+    nCount:=1;
+    TPWrite "a" \\Num:=nCount;
+    TPWrite "b" \\Num:=nCount;
+    TPWrite "c" \\Num:=nCount;
+    TPWrite "d" \\Num:=nCount;
+    TPWrite "e" \\Num:=nCount;
+    TPWrite "f" \\Num:=nCount;
+    nCount:=2;
+    nCount:=3;
+    nCount:=4;
+    nCount:=5;
+    nCount:=6;
+    nCount:=7;
+    TPReadFK nCount,"go","A","B","C","D","E";
+  ENDPROC
+ENDMODULE
+"""
+
+
+def test_a_program_mostly_in_warnings_folds_the_repeated_ones_behind_one_separator():
+    result, page = _page(WARNED)
+    show = _program(page, "SHOW")
+    warned = sorted({n.rapid_line for n in result.notes if n.kind == "WARNING" and n.program == "SHOW"})
+    assert len(warned) == 6, [(n.rapid_line, n.kind, n.category) for n in result.notes]
+    cause = next(n.category for n in result.notes if n.kind == "WARNING")
+    table = show.split('<table class="sbs only">')[1].split("</table>")[0]
+    assert f"… 5 more lines with the same warning: {cause} …" in table
+    first = re.search(rf'<tr id="L-SHOW-{warned[0]}"[^>]*>', table)[0]
+    assert not re.search(r'class="[^"]*\bf\b', first)  # the first one shown
+    g = re.search(r'<tr class="gap" data-g="(\d+)"><td colspan="4"><button[^>]*>… 5 more', table)[1]
+    for line in warned[1:]:  # the others folded, their notes with them
+        assert re.search(rf'<tr id="L-SHOW-{line}" data-l="{line}" data-g="{g}" class="warn f">', table), line
+    assert table.count(f'<tr data-g="{g}" class="f note warn"') == 5
+
+
 def test_a_todo_followed_from_the_list_highlights_its_rapid_line_and_every_tp_line_written_from_it():
     _, page = _page()
     main = _program(page, "MAIN")

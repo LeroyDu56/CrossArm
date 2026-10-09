@@ -147,6 +147,7 @@ from crossarm.rapid.to_pseudo import format_expr
 from crossarm.rapid.walk import walk_statements
 
 if TYPE_CHECKING:
+    from crossarm.convert.run_summary import Since
     from crossarm.convert.setup import FrameSetup
     from crossarm.convert.taught import Taught
 
@@ -432,6 +433,9 @@ class ConversionResult:
     # Each FUNC of the backup copied into its calls (crossarm.convert.func_inline) -> the (TP program, RAPID line) of
     # each call written so; the HTML report shows them program by program.
     inlined_sites: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
+    # What changed since the previous conversion of this task (crossarm.convert.run_summary.Since; set by the pipeline
+    # when an earlier crossarm_summary.json is found), None otherwise.
+    since: "Since | None" = None
 
     @property
     def todo_count(self) -> int:

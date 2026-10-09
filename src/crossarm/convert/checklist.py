@@ -640,7 +640,12 @@ def checklist_section(result: ConversionResult, config: ConversionConfig, anchor
         ('<div class="bar js-only"><span class="meter ck-meter"><span id="ck-meter"></span></span>'
          f' <b id="ck-total">{total} items</b> <label><input id="ck-hide" type="checkbox"> hide the items done</label>'
          ' <button type="button" id="ck-print">Print the checklist</button>'
-         ' <button type="button" id="ck-reset">Untick all</button> <span id="ck-store" class="muted"></span></div>'),
+         ' <button type="button" id="ck-reset">Untick all</button> <span id="ck-store" class="muted"></span>'
+         ' <button type="button" id="ck-csv" title="Every item, its group and whether it is ticked, for a'
+         ' spreadsheet">Export CSV</button></div>'),
+        # The integrator view: the groups folded with their counts, the next items to do only (CHECKLIST_JS).
+        ('<div class="bar ck-nextbar"><span id="ck-next"></span> <button type="button" id="ck-all">Show all'
+         f' {total} items</button></div>'),
         f'<div id="ck" data-key="{key}">' + "".join(groups) + "</div>",
     ]  # fmt: skip
     return "checklist", "Checklist", "\n".join(body)
@@ -669,7 +674,25 @@ li.done .ckt { color: var(--muted); }
 .ck-meter { display: inline-block; width: 160px; }
 #ck-meter { width: 0; background: var(--ok); }
 #ck.hide-done li.done { display: none; }
+/* The integrator view: each group one line with its counts, the next items to do under the first unfinished one;
+   a group's header shows it whole; "Show all" every item. Printed, every item is there. */
+.ck-nextbar { display: none !important; }
+html.js[data-view="i"] .ck-nextbar { display: flex !important; }
+#ck-next { font-weight: 600; }
+html[data-view="i"] #ck:not(.all) .ckg:not(.shown) li:not(.next) { display: none; }
+html[data-view="i"] #ck:not(.all) .ckg:not(.shown):not(.has-next) > p { display: none; }
+html[data-view="i"] #ck:not(.all) .ckg:not(.shown):not(.has-next) ul.ck { border-top: 0; margin: 0; }
+html[data-view="i"] #ck:not(.all) .ckg h3 { cursor: pointer; font-size: 1em; margin: .35em 0 .15em; }
+html[data-view="i"] #ck:not(.all) .ckg:not(.shown):not(.has-next) h3::before { content: "\\25B8"; color: var(--accent); }
+html[data-view="i"] #ck:not(.all) .ckg.shown h3::before, html[data-view="i"] #ck:not(.all) .ckg.has-next h3::before {
+  content: "\\25BE"; color: var(--accent); }
+html[data-view="i"] #ck:not(.all) .ckg:not(.shown) .ckv { max-height: 4.4em; overflow: hidden; }
 @media print {
+  .ck-nextbar, html.js[data-view="i"] .ck-nextbar { display: none !important; }
+  #ck li[data-id] { display: flex !important; }
+  #ck .ckg > p { display: block !important; }
+  #ck .ckv { max-height: none !important; }
+  #ck .ckg h3::before { content: none !important; }
   html.print-ck main > :not(#checklist):not(header) { display: none !important; }
   #ck.hide-done li.done { display: flex; }
   .ckg h3 { break-after: avoid; }
@@ -705,6 +728,48 @@ CHECKLIST_JS = r"""
     var key = 'crossarm-checklist:' + box.getAttribute('data-key'), ticks = stored(key), kept = ticks !== null;
     if (!kept) { ticks = {}; }
     var items = [].slice.call(box.querySelectorAll('li[data-id]')), groups = [].slice.call(box.querySelectorAll('.ckg'));
+    var NEXT = 5;
+    function title(g) { var h = g.querySelector('h3'); return h && h.firstChild ? h.firstChild.textContent.trim() : ''; }
+    // The next items to do: NEXT unticked items of the first unfinished group; with `keep`, the items just ticked
+    // there stay in sight.
+    function nextUp(keep) {
+      var g = null;
+      for (var i = 0; i < groups.length && !g; i++) { if (groups[i].querySelector('li[data-id]:not(.done)')) { g = groups[i]; } }
+      items.forEach(function (li) {
+        if (!keep || !li.classList.contains('done') || li.closest('.ckg') !== g) { li.classList.remove('next'); }
+      });
+      groups.forEach(function (x) { x.classList.toggle('has-next', x === g); });
+      var el = d.getElementById('ck-next');
+      if (!g) { if (el) { el.textContent = 'Every item is done.'; } return; }
+      var left = g.querySelectorAll('li[data-id]:not(.done)'), n = 0;
+      for (var k = 0; k < left.length && n < NEXT; k++) { left[k].classList.add('next'); n++; }
+      if (el) {
+        el.textContent = 'Next: ' + (n < left.length ? 'the first ' + n + ' of the ' : 'the ') + left.length
+          + ' item' + (left.length === 1 ? '' : 's') + ' left in ' + title(g) + '. Every group below is one line: open it'
+          + ' from its title.';
+      }
+    }
+    groups.forEach(function (g) {
+      var h = g.querySelector('h3');
+      if (h) { h.addEventListener('click', function () { g.classList.toggle('shown'); }); }
+    });
+    d.getElementById('ck-all').addEventListener('click', function () {
+      var all = box.classList.toggle('all');
+      this.textContent = all ? 'Show the next items only' : 'Show all ' + items.length + ' items';
+    });
+    function rows() {  // every item, its group, its values and whether it is ticked
+      var out = [['Group', 'Item', 'Values', 'Ticked']];
+      items.forEach(function (li) {
+        var g = li.closest('.ckg'), t = li.querySelector('.ckt'), v = li.querySelector('.ckv');
+        out.push([title(g), t ? t.textContent.trim() : '', v ? v.textContent.trim() : '',
+                  li.classList.contains('done') ? 'yes' : 'no']);
+      });
+      return out;
+    }
+    if (window.CrossArm) { window.CrossArm.checklistRows = rows; }
+    d.getElementById('ck-csv').addEventListener('click', function () {
+      if (window.CrossArm && window.CrossArm.csv) { window.CrossArm.csv('crossarm_checklist.csv', rows(), this); }
+    });
     function told() {
       var el = d.getElementById('ck-store');
       if (el) { el.textContent = kept ? 'ticks kept in this browser' : 'ticks not kept: this browser blocks local storage'; }
@@ -732,7 +797,7 @@ CHECKLIST_JS = r"""
       input.addEventListener('change', function () {
         if (input.checked) { ticks[id] = 1; } else { delete ticks[id]; }
         li.classList.toggle('done', input.checked);
-        save(); count();
+        save(); count(); nextUp(true);
       });
     });
     d.getElementById('ck-hide').addEventListener('change', function () { box.classList.toggle('hide-done', this.checked); });
@@ -741,13 +806,13 @@ CHECKLIST_JS = r"""
       ticks = {};
       items.forEach(function (li) { li.querySelector('input').checked = false; li.classList.remove('done'); });
       try { window.localStorage.removeItem(key); } catch (e) { kept = false; told(); }
-      count();
+      count(); nextUp();
     });
     d.getElementById('ck-print').addEventListener('click', function () {
       d.documentElement.classList.add('print-ck');
       window.print();
     });
-    told(); count();
+    told(); count(); nextUp();
   }
   // "Print the checklist": the checklist alone, open; the page as it was after. Printed from the browser's menu,
   // the page prints as shown (the summary, and what is open).

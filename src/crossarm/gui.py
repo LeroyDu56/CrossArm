@@ -499,6 +499,8 @@ class App(tk.Tk):
             colour = {READY: OK, WORKABLE: AMBER, NOT_READY: FAIL}.get(summary.decision.level, TEXT)
             self._text(panel, summary.decision.headline, bold=True, colour=colour, pad=(0, 2), wrap=RESULT_WRAP)
             self._text(panel, summary.decision.brief, size=8, colour=MUTED, pad=(0, 8), wrap=RESULT_WRAP)
+        if summary.since:  # the previous conversion of the same input: TODO (and share) then and now, one line
+            self._text(panel, " ".join(summary.since), size=8, colour=TEXT, pad=(0, 8), wrap=RESULT_WRAP)
         if summary.taught is not None:  # --keep-taught: what became of the touch-ups
             taught = summary.taught
             colour = AMBER if taught.level == WARN else OK

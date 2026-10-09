@@ -46,7 +46,7 @@ def test_convert_writes_ls_files_and_report(fixtures_dir, tmp_path, capsys):
     assert sorted(p.name for p in out.iterdir()) == [
         "MAIN.LS", "PICK.LS", "PLACE.LS", "SETUP_FRAMES.LS", "crossarm_log.txt", "crossarm_mapping.json", "crossarm_points.json",
         "crossarm_report.html",
-        "crossarm_report.md",
+        "crossarm_report.md", "crossarm_report_summary.md", "crossarm_summary.json",
     ]  # fmt: skip
     assert (out / "MAIN.LS").read_bytes().startswith(b"/PROG  MAIN\r\n")
     assert "3 programs, 3 TODO" in capsys.readouterr().out
