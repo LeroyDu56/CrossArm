@@ -58,6 +58,8 @@ class UnsupportedConfdata(ValueError):
 
 def fanuc_config(conf: tuple[int, int, int, int], tool_pin: str = TOOL_PIN_DEFAULT, j6_boundary: bool = False) -> str:
     """CONFIG for that confdata. `j6_boundary`: the FANUC J6 is exactly 180 (j6_on_turn_boundary)."""
+    if len(conf) != 4:
+        raise UnsupportedConfdata(f"confdata of {len(conf)} values: a robtarget's confdata has 4 (cf1, cf4, cf6, cfx)")
     cf1, cf4, cf6, cfx = conf
     if not 0 <= cfx <= 7:
         raise UnsupportedConfdata(f"cfx={cfx} is not a 6-axis arm configuration (expected 0-7)")
