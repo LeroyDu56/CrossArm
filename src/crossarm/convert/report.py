@@ -489,7 +489,7 @@ def report_parts(result: ConversionResult, config: ConversionConfig, sources: li
         "> is within 10 mm of the ABB's (measured: within 4 mm, corners included).",
         "",
     ]
-    parts += [("head", lines), ("notice", notice), ("analysis", analysis_markdown(result)),
+    parts += [("head", lines), ("notice", notice), ("analysis", analysis_markdown(result, config)),
               ("summary", _summary(result))]  # fmt: skip
     lines = ["## Programs", ""]
     rows = []

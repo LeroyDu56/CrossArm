@@ -375,7 +375,7 @@ def test_the_items_to_review_come_a_page_at_a_time_with_their_filters_kept():
     assert _shown(rows, 1, cause=cause)[1] == sum(1 for n in result.notes if n.category == cause)
     # The script: a page more keeps the filters; the count says how many match and how many there are.
     assert 'id="f-more" hidden>' in page and "limit = more ? limit + PAGE : PAGE;" in page
-    assert "shown + ' of ' + match.length + ' shown'" in page
+    assert "shown + ' of ' + match.length + what + ' shown'" in page and "' TODO + ' + TOTAL.warn" in page
     warned = build_html_report(_convert(_many(2, todo=0)), ConversionConfig(), ["m.mod"], title="t")
     assert '<select id="f-kind" aria-label="Kind" data-default="">' in warned  # no TODO: the warnings at once
 

@@ -22,12 +22,15 @@ known fix that the report gives (provide a module, map a signal, choose in the w
 hand, redo an error handler or a dialog the FANUC way).
 """
 
+import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from crossarm.convert import triage
 from crossarm.convert.blockers import Blocker
+from crossarm.convert.config import ConversionConfig
 from crossarm.convert.coverage import fmt_percent
 from crossarm.convert.taught import AGAIN, KEPT
 from crossarm.convert.translate import Capacity, ConversionResult, Note
@@ -214,6 +217,43 @@ class Action:
     href: str  # where it is detailed, in the HTML report
     label: str  # that place, in words (the Markdown report has no links)
     cause: str = ""  # the cause the list of items to review is filtered on, when href is #review
+    causes: tuple[str, ...] = ()  # every TODO cause it covers: its TODO are exactly those of these causes
+    todo: int = 0  # the TODO it concerns, exactly (0: it is not about TODO lines)
+    programs: tuple[str, ...] = ()  # the programs those TODO are in
+    who: tuple[str, ...] = ()  # who acts (triage.WHO)
+    option: str = ""  # the robot option, when who names one ("R632")
+    snippet: str = ""  # entries to paste in crossarm_mapping.json (external_routines)
+
+    @property
+    def impact(self) -> str:
+        """triage.COSMETIC when every cause it covers changes only what the operator reads, else PRODUCTION."""
+        return triage.impact(self.causes)
+
+    @property
+    def who_text(self) -> str:
+        return " · ".join(f"{who} {self.option}" if who == triage.OPTION and self.option else who for who in self.who)
+
+    @property
+    def meta(self) -> str:
+        """'7 TODO concerned · who acts: ABB backup (add a module) · FANUC integrator' (· cosmetic)."""
+        parts = [f"{self.todo} TODO concerned"] if self.todo else []
+        if self.who:
+            parts.append(f"who acts: {self.who_text}")
+        if self.causes and self.impact == triage.COSMETIC:
+            parts.append("cosmetic: the cell runs without it")
+        return " · ".join(parts)
+
+
+def _concerning(notes: list[Note]) -> dict:
+    """The fields of an Action about these TODO: their causes (most first), count and programs."""
+    causes = Counter(note.category for note in notes)
+    return {"causes": tuple(c for c, _ in sorted(causes.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "todo": len(notes), "programs": tuple(sorted({note.program for note in notes if note.program}))}  # fmt: skip
+
+
+def _who(causes: Iterable[str], *who: str) -> tuple[str, ...]:
+    """who, and 'a later CrossArm version may help' when one of the causes is one it may convert."""
+    return (*who, triage.LATER) if any(cause in triage.LATER_CAUSES for cause in causes) else who
 
 
 MAX_ACTIONS = 7
@@ -293,16 +333,19 @@ def touch_up_counts(result: ConversionResult) -> tuple[int, int, int]:
     return points, kept, again
 
 
-def priority_actions(result: ConversionResult) -> list[Action]:
+def priority_actions(result: ConversionResult, config: ConversionConfig | None = None) -> list[Action]:
     """MIN_ACTIONS to MAX_ACTIONS things to do, the ones that unblock the most first: what keeps the programs from
     loading, what the backup lacks, the blocking causes, what to redo the FANUC way, the rest by hand; touching up
-    the points last, as on site."""
+    the points last, as on site. Each says the TODO it concerns, exactly, and who acts (crossarm.convert.triage);
+    `config` names the example programs of external_routines as the controller takes them."""
     by_cause: dict[str, list[Note]] = defaultdict(list)
     for note in result.notes:
         if note.kind == "TODO":
             by_cause[note.category].append(note)
     done: set[str] = set()  # causes an action covers
     actions: list[Action] = []
+    integrator, backup = triage.INTEGRATOR, triage.BACKUP
+    snippet, candidates = triage.external_example(result, config)
 
     over = [c for c in result.capacity if not c.fits]
     if over:
@@ -310,18 +353,18 @@ def priority_actions(result: ConversionResult) -> list[Action]:
         actions.append(Action(
             "Bring the numbers within the controller", f"{shown}: the programs do not load otherwise. Pin them in"
             " `crossarm_mapping.json`, reuse frames, or raise `limits` if the controller has more.",
-            "#an-capacity", "Controller capacity"))  # fmt: skip
+            "#an-capacity", "Controller capacity", who=(integrator,)))  # fmt: skip
     internal = by_cause.get(Blocker.INTERNAL, [])
     done.add(Blocker.INTERNAL)
     if internal:
         actions.append(Action(
             "Send the report and `crossarm_log.txt`", f"{_plural(len(internal), 'statement')} hit an internal error"
-            " in CrossArm: a CrossArm bug, left TODO.", "#review", "Items to review", Blocker.INTERNAL))  # fmt: skip
+            " in CrossArm: a CrossArm bug, left TODO.", "#review", "Items to review", Blocker.INTERNAL,
+            **_concerning(internal), who=(triage.LATER,)))  # fmt: skip
     missing = by_cause.get(Blocker.MISSING, [])
     done.add(Blocker.MISSING)
     if missing:
         names = _missing_names(missing)
-        candidates = len(result.provided_candidates)
         actions.append(Action(
             f"Provide the {_plural(len(names), 'routine or data', 'routines and data')} the backup does not have"
             if names else "Provide the routines and data the backup does not have",
@@ -329,7 +372,9 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             + "Add the modules that declare them and convert again"
             + (f", or name a TP or KAREL program for a routine in `external_routines`: {_plural(candidates, 'candidate')}"
                " listed in `crossarm_mapping.json`" if candidates else "") + ".",
-            "#review", "Items to review", Blocker.MISSING))  # fmt: skip
+            "#review", "Items to review", Blocker.MISSING, **_concerning(missing), who=(backup, integrator),
+            snippet=snippet))  # fmt: skip
+        snippet = ""
     if result.provided:
         names = [f"`{use.program}`" for use in result.provided]
         actions.append(Action(
@@ -338,14 +383,15 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             + (" A function writes its result in the register its last argument names (R[AR[n]] for a num,"
                " PR[AR[n]] for a pose or a point), which the caller reads back."
                if any(use.function and use.returns for use in result.provided) else ""),
-            "#ck-provided", "Checklist: Programs to provide"))  # fmt: skip
+            "#ck-provided", "Checklist: Programs to provide", who=(integrator,)))  # fmt: skip
     if result.karel_programs:
         names = [f"`{name}`" for name in result.karel_programs]
         actions.append(Action(
             f"Load the {_plural(len(names), 'KAREL program')} before the programs that call {'them' if len(names) > 1 else 'it'}",
             f"{_names(names, 4)}, of CrossArm's KAREL library (`--karel`): load each .pc of the KAREL folder before"
             " the .LS (compile the .kl with ktrans first where there is no .pc); a real robot needs the KAREL option"
-            " (R632).", "#ck-karel", "Checklist: KAREL programs"))  # fmt: skip
+            " (R632).", "#ck-karel", "Checklist: KAREL programs", who=(integrator, triage.OPTION),
+            option="R632"))  # fmt: skip
 
     design = []
     for causes, title, how in _DESIGN:
@@ -355,17 +401,19 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             first = max(causes, key=lambda c: len(by_cause.get(c, [])))
             design.append((len(notes), Action(
                 title, f"{how}: {_todo(len(notes))}{_programs(notes)}. Blocking: CrossArm cannot know them from the"
-                " backup.", "#review", "Items to review", first)))  # fmt: skip
+                " backup.", "#review", "Items to review", first, **_concerning(notes),
+                who=_who(causes, integrator))))  # fmt: skip
     rest = [(cause, by_cause[cause]) for cause in sorted(BLOCKING) if cause not in done and by_cause.get(cause)]
     done.update(BLOCKING)
     if rest:
         rest.sort(key=lambda kv: -len(kv[1]))
-        count = sum(len(notes) for _, notes in rest)
-        design.append((count, Action(
+        notes = [note for _, group in rest for note in group]
+        design.append((len(notes), Action(
             "Solve the blocking causes on the FANUC side",
             "; ".join(f"{cause}: {_todo(len(notes))}{_programs(notes)}" for cause, notes in rest[:3])
             + (f"; and {len(rest) - 3} more" if len(rest) > 3 else "") + ".",
-            "#review", "Items to review", rest[0][0])))  # fmt: skip
+            "#review", "Items to review", rest[0][0], **_concerning(notes),
+            who=_who((c for c, _ in rest), integrator))))  # fmt: skip
     actions += [action for _, action in sorted(design, key=lambda x: -x[0])]
     if result.karel_todo:  # converted without --karel: what it would convert
         sockets = any(note.kind == "TODO" and "sockets:" in note.message for note in result.notes)
@@ -375,7 +423,7 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             " DefFrame of poses kept in position registers, frames loaded from them; text files written with Open,"
             " Write, Close on UD1:). Load the KAREL programs (.pc) before the .LS; a real robot needs the KAREL"
             " option (R632)." + (" Sockets stay TODO with it." if sockets else ""), "#review", "Items to review",
-            Blocker.RUNTIME_POSITION))  # fmt: skip
+            todo=result.karel_todo, who=(integrator, triage.OPTION), option="R632"))  # fmt: skip
 
     inlined = [note for note in result.notes if note.category == Blocker.INLINED]
     if inlined:
@@ -385,7 +433,7 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             f"Convert again after a change of the {_plural(len(inlined), 'FUNC')} copied into their calls",
             f"{_names(shown, 4)} call sites: CrossArm writes the body of each into every call, so a change of one in"
             " the RAPID changes nothing on the robot until the backup is converted again, with the same mapping file.",
-            "#review", "Items to review", Blocker.INLINED))  # fmt: skip
+            "#review", "Items to review", Blocker.INLINED, who=(integrator,)))  # fmt: skip
     banked = [f for f in (*result.utools, *result.uframes) if f.bank is not None]
     if banked:
         slots = sorted({f"{'UTOOL' if f in result.utools else 'UFRAME'}[{f.slot}]" for f in banked})
@@ -394,7 +442,7 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             f"{_names([f'`{f.rapid_name}` PR[{f.bank}]' for f in banked], 4)}: kept there by SETUP_FRAMES and loaded"
             f" into {_names(slots, 2)} before each use; leave them alone, and give the mapping file back to keep them"
             " (CrossArm 1.0 to 1.7 selected such frames by number when given it back: convert again).",
-            "#ck-frames", "Checklist: Frames and tools"))  # fmt: skip
+            "#ck-frames", "Checklist: Frames and tools", who=(integrator,)))  # fmt: skip
 
     errors = [note for cause in sorted(_ERRORS) for note in by_cause.get(cause, [])]
     done.update(_ERRORS)
@@ -404,7 +452,7 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             "Redo the error handling on the FANUC side",
             f"{_todo(len(errors))} on RAPID ERROR handlers, RAISE, RETRY...{_programs(errors)}. TP has no error"
             " handler: not a CrossArm bug, decide what the FANUC cell does on each error.",
-            "#review", "Items to review", first))  # fmt: skip
+            "#review", "Items to review", first, **_concerning(errors), who=(integrator,)))  # fmt: skip
     no_tp = by_cause.get(Blocker.NO_TP_EQUIVALENT, [])
     done.add(Blocker.NO_TP_EQUIVALENT)
     if no_tp:
@@ -415,7 +463,8 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             + ": not a CrossArm bug. A TP or KAREL program can stand in for a routine (`external_routines`)."
             + (" Sockets stay TODO with `--karel`: KAREL socket messaging needs client tags configured on the robot."
                if any(KAREL_SOCKETS in note.message for note in no_tp) else ""),
-            "#review", "Items to review", Blocker.NO_TP_EQUIVALENT))  # fmt: skip
+            "#review", "Items to review", Blocker.NO_TP_EQUIVALENT, **_concerning(no_tp), who=(integrator,),
+            snippet=snippet))  # fmt: skip
     waiting = [use for use in result.move_routines if not use.converted]
     done.add(Blocker.MOVE_ROUTINE)
     if waiting:
@@ -424,20 +473,32 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             "Choose which routines that move are converted as their move",
             f"{_plural(calls, 'call')} to {_names([f'`{use.name}`' for use in waiting], 3)}: in the window after the"
             " conversion, or `move_routines` in `crossarm_mapping.json`.",
-            "#review", "Items to review", Blocker.MOVE_ROUTINE))  # fmt: skip
+            "#review", "Items to review", Blocker.MOVE_ROUTINE, **_concerning(by_cause.get(Blocker.MOVE_ROUTINE, [])),
+            who=(integrator,)))  # fmt: skip
     signals = by_cause.get(Blocker.SIGNAL, [])
     done.add(Blocker.SIGNAL)
     if signals:
         actions.append(Action(
             "Map the I/O signals left TODO", f"{_todo(len(signals))}: give their numbers and types in"
-            " `crossarm_mapping.json`, or the backup's EIO.cfg.", "#review", "Items to review", Blocker.SIGNAL))  # fmt: skip
-    others = sorted(((cause, len(notes)) for cause, notes in by_cause.items() if cause not in done),
+            " `crossarm_mapping.json`, or the backup's EIO.cfg.", "#review", "Items to review", Blocker.SIGNAL,
+            **_concerning(signals), who=(integrator,)))  # fmt: skip
+    others = [(cause, notes) for cause, notes in by_cause.items() if cause not in done]
+    cosmetic = [note for cause, notes in others if cause in triage.COSMETIC_CAUSES for note in notes]
+    others = sorted(((cause, len(notes)) for cause, notes in others if cause not in triage.COSMETIC_CAUSES),
                     key=lambda kv: (-kv[1], kv[0]))  # fmt: skip
     if others:
+        notes = [note for cause, _ in others for note in by_cause[cause]]
         actions.append(Action(
             f"Finish the other {_todo(sum(n for _, n in others))} by hand",
             f"{_names([c for c, _ in others], 3)}, program by program.",
-            "#ck-todo", "Checklist: TODO lines to finish by hand"))  # fmt: skip
+            "#ck-todo", "Checklist: TODO lines to finish by hand", **_concerning(notes),
+            who=_who((c for c, _ in others), integrator)))  # fmt: skip
+    if cosmetic:
+        actions.append(Action(
+            f"Finish the {_plural(len(cosmetic), 'operator message')} left TODO when convenient",
+            f"{_names(sorted({note.category for note in cosmetic}), 2)}: the cell moves and works the same; only"
+            " what the pendant shows differs.", "#ck-todo", "Checklist: TODO lines to finish by hand",
+            **_concerning(cosmetic), who=(integrator,)))  # fmt: skip
 
     last = []  # every conversion ends on the robot
     taught = result.taught
@@ -451,7 +512,7 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             f"their ABB position or frame changed since the conversion the robot was taught from, in"
             f" {_names(programs, 4)}" + (f"; the earlier touch-ups are up to {far:.1f} mm from the new points" if far
                                          else "") + ".",
-            "#taught", "Taught positions"))  # fmt: skip
+            "#taught", "Taught positions", who=(integrator,)))  # fmt: skip
     points, kept, _ = touch_up_counts(result)
     if points:
         left = points - kept - len(again)
@@ -461,34 +522,51 @@ def priority_actions(result: ConversionResult) -> list[Action]:
                 f"Touch up the {_plural(left, 'theoretical point')} on the robot",
                 "once the frames are set; they are the ABB's, as theoretical points"
                 + (f"; {kept} keep the position touched up on the robot: check them only" if kept else "") + ".",
-                "#ck-points", "Checklist: Points to touch up"))  # fmt: skip
+                "#ck-points", "Checklist: Points to touch up", who=(integrator,)))  # fmt: skip
         elif kept:
             last.append(Action(
                 f"Check the {_plural(kept, 'point')} kept as touched up on the robot",
                 "unchanged in the backup: the programs hold the taught values.",
-                "#ck-points", "Checklist: Points to touch up"))  # fmt: skip
+                "#ck-points", "Checklist: Points to touch up", who=(integrator,)))  # fmt: skip
     actions = actions[: MAX_ACTIONS - len(last)] + last
     fillers = []
     if result.setup is not None and result.setup.program is not None:
         fillers.append(Action(f"Run `{result.setup.program.name}.LS` once", "it sets the tool and user frames on the"
-                              " robot.", "#ck-frames", "Checklist: Frames and tools"))  # fmt: skip
+                              " robot.", "#ck-frames", "Checklist: Frames and tools", who=(integrator,)))  # fmt: skip
     warnings = sum(1 for note in result.notes if note.kind == "WARNING")
     if warnings:
         fillers.append(Action(f"Check the {_plural(warnings, 'warning')}", "converted on an assumption.", "#review",
-                              "Items to review"))  # fmt: skip
+                              "Items to review", who=(integrator,)))  # fmt: skip
     if result.programs:
         fillers.append(Action("Load every program before running any", "a CALL to a program the robot does not have"
-                              " fails when it runs.", "#ck-load", "Checklist: Load the programs"))  # fmt: skip
+                              " fails when it runs.", "#ck-load", "Checklist: Load the programs", who=(integrator,)))  # fmt: skip
     while len(actions) < MIN_ACTIONS and fillers:
         actions.append(fillers.pop(0))
     return actions
 
 
-def analysis_markdown(result: ConversionResult) -> list[str]:
+def business(result: ConversionResult) -> str:
+    """The sentence under the share converted by area (crossarm.convert.triage.business_sentence)."""
+    return triage.business_sentence(result.coverage, todo_causes(result.notes))
+
+
+def outlook(result: ConversionResult) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """The TODO causes TP has nothing for, and those a later CrossArm version may help with (triage.outlook)."""
+    return triage.outlook(todo_causes(result.notes))
+
+
+def counts_text(result: ConversionResult) -> str:
+    """'763 TODO + 117 warnings': the items to review, said as what they are."""
+    warnings = sum(1 for note in result.notes if note.kind == "WARNING")
+    return f"{result.todo_count:,} TODO + {_plural(warnings, 'warning')}"
+
+
+def analysis_markdown(result: ConversionResult, config: ConversionConfig | None = None) -> list[str]:
     """The analysis in the Markdown report: the decision, its rule, what to do first, capacity near the limit."""
     decision = verdict(result)
     coverage = result.coverage
     clean = result.clean_programs()
+    sentence = business(result)
     lines = [
         "## Analysis",
         "",
@@ -496,15 +574,29 @@ def analysis_markdown(result: ConversionResult) -> list[str]:
         f"- {decision.rule}",
         *([f"- {fmt_percent(coverage.percent)} of the {coverage.total:,} RAPID instructions converted."]
           if coverage.total else []),
+        *([f"- {sentence}"] if sentence else []),
         *([f"- {karel_use(result)}"] if karel_use(result) else []),
         (f"- {clean} of {len(result.programs)} programs with no TODO, {len(result.programs) - clean} with TODO"
          f" ({_plural(result.todo_count, 'TODO', 'TODO')})."),
         "",
     ]  # fmt: skip
-    actions = priority_actions(result)
+    actions = priority_actions(result, config)
     if actions:
         lines += ["### What to do first", ""]
-        lines += [f"{n}. **{action.title}**: {action.detail} ({action.label}.)" for n, action in enumerate(actions, 1)]
+        for n, action in enumerate(actions, 1):
+            meta = f" _{action.meta}._" if action.meta else ""
+            lines.append(f"{n}. **{action.title}**: {action.detail} ({action.label}.){meta}")
+            if action.snippet:
+                lines += ["", ("   In `crossarm_mapping.json`, under `external_routines`, these entries (the program"
+                               " names are suggestions: name the TP or KAREL programs you write):"), "", "   ```json",
+                          *(f"   {line}" for line in action.snippet.splitlines()), "   ```", ""]  # fmt: skip
+        lines.append("")
+    no_tp, later = outlook(result)
+    if no_tp or later:
+        lines += ["### What is left, by outlook", ""]
+        for title, causes in ((triage.NO_TP_TITLE, no_tp), (triage.LATER_TITLE, later)):
+            if causes:
+                lines.append(f"- **{title}**: " + ", ".join(f"{cause} ({n})" for cause, n in causes) + ".")
         lines.append("")
     near = near_limit(result.capacity)
     if near:
@@ -513,4 +605,9 @@ def analysis_markdown(result: ConversionResult) -> list[str]:
         lines += [f"| {c.resource} | {c.used} | {'—' if c.limit is None else c.limit} | {capacity_status(c)} |"
                   for c in near]
         lines.append("")
+        for proposal in triage.renumbering(result, config or ConversionConfig()):
+            edit = f" Edit: `{json.dumps(proposal.edit)}`." if proposal.edit else ""
+            lines.append(f"- {proposal.resource}: {proposal.text}{edit}")
+        if lines[-1]:
+            lines.append("")
     return lines

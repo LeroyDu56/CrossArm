@@ -34,14 +34,19 @@ build_html_report. Every text from the backup is escaped.
 """
 
 import html
+import json
 import re
 from collections import Counter, defaultdict
 
 from crossarm import __version__
-from crossarm.convert import analysis
+from crossarm.convert import analysis, triage
 from crossarm.convert.analysis import (
+    Action,
+    business,
     capacity_status,
+    counts_text,
     near_limit,
+    outlook,
     priority_actions,
     top_causes,
     touch_up_counts,
@@ -352,8 +357,75 @@ def _line_link(program: str, line: int | None, anchors: set[tuple[str, int]], sh
     return _e(text)
 
 
+MAX_LINK_PROGRAMS = 8  # an action's link names its programs up to this many (the causes alone keep the same items)
+
+
+def _action(action: Action, targets: set[str]) -> str:
+    """One thing to do: its verb and how; then the TODO it concerns, leading to the items to review filtered on its
+    causes (and programs), who acts, cosmetic when the cell runs without it, and where it is detailed."""
+    href = action.href if action.href.split("&")[0][1:] in targets else "#details"
+    filtered = ""
+    if action.causes and action.todo and "review" in targets:
+        programs = action.programs if len(action.programs) <= MAX_LINK_PROGRAMS else ()
+        filtered = todo_href(cause=action.causes, prog=programs)
+    elif action.cause and href == "#review":
+        href = todo_href(cause=action.cause)
+    meta = []
+    if action.todo:
+        count = f"{action.todo:,} TODO concerned"
+        meta.append(f'<a class="n" href="{_e(filtered)}">{count} →</a>' if filtered else f'<b class="n">{count}</b>')
+    if action.who:
+        meta.append(f'<span class="who">Who acts: {_e(action.who_text)}</span>')
+    if action.causes and action.impact == triage.COSMETIC:
+        meta.append('<span class="tag cos" title="The cell moves and works the same without it">cosmetic</span>')
+    if not (filtered and href == "#review"):
+        meta.append(f'<a class="more" href="{_e(href)}">{_e(action.label)} →</a>')
+    snippet = ""
+    if action.snippet:
+        shown = action.snippet.count("\n") + 1
+        snippet = (
+            '<details class="ext"><summary><code>external_routines</code>: an example to paste'
+            f" ({shown} of the candidates)</summary>"
+            '<p class="muted">In <code>crossarm_mapping.json</code>, under <code>"external_routines"</code>, put these'
+            " entries in place of theirs (<code>\"program\": null</code>). The program names are suggestions: name the TP"
+            " or KAREL programs you write.</p>"
+            f'<pre class="snip"><code>{_e(action.snippet)}</code></pre>'
+            '<p class="js-only"><button type="button" class="copy">Copy</button> <span class="copied muted"'
+            ' aria-live="polite"></span></p></details>'
+        )  # fmt: skip
+    return (f'<li><b>{inline(action.title)}</b><span class="how">: {inline(action.detail)}</span>'
+            f'<span class="ameta">{" · ".join(meta)}</span>{snippet}</li>')  # fmt: skip
+
+
+def _outlook(result: ConversionResult, shown: int = 4) -> str:
+    """The TODO causes TP has nothing for, and those a later CrossArm version may help with: two short lines."""
+    no_tp, later = outlook(result)
+    lines = []
+    for title, causes in ((triage.NO_TP_TITLE, no_tp), (triage.LATER_TITLE, later)):
+        if causes:
+            links = [f'<a href="{_e(todo_href(cause=c))}">{_e(c)}</a> ({n})' for c, n in causes[:shown]]
+            more = f" and {len(causes) - shown} more" if len(causes) > shown else ""
+            lines.append(f"<li><b>{_e(title)}</b>: {', '.join(links)}{more}</li>")
+    return f'<ul class="outlook">{"".join(lines)}</ul>' if lines else ""
+
+
+def _renumbering(result: ConversionResult, config: ConversionConfig | None) -> str:
+    """The ways to bring the resources over their limit within the controller, as keys of the mapping file."""
+    proposals = triage.renumbering(result, config or ConversionConfig())
+    if not proposals:
+        return ""
+    items = "".join(
+        f"<li><b>{_e(p.resource)}</b>: {inline(p.text)}"
+        + (f' Edit: <code class="edit">{_e(json.dumps(p.edit))}</code>' if p.edit else "") + "</li>"
+        for p in proposals
+    )
+    return ('<h3 class="renum">Proposed renumbering: keys to edit in <code>crossarm_mapping.json</code>, then convert'
+            f' again with it</h3><ul class="renum">{items}</ul>')  # fmt: skip
+
+
 def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[tuple[str, int]],
-                      targets: set[str], checklist_items: int, licence_note: list[str] = ()) -> Section:  # fmt: skip
+                      targets: set[str], checklist_items: int, licence_note: list[str] = (),
+                      config: ConversionConfig | None = None) -> Section:  # fmt: skip
     """The decision first, then what to do; every figure leads to its detail further down. `licence_note`: the
     evaluation copy's notice, right under the decision."""
     decision = verdict(result)
@@ -395,24 +467,20 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
         f'<p class="rule">{_e(decision.rule)}</p>{why}'
         + (f'<p class="karel-use">{inline(analysis.karel_use(result))}</p>' if analysis.karel_use(result) else "")
         + "</div>",
-        (f'<div class="vareas"><h3>Converted by area</h3><ul class="areas">{areas}</ul></div>' if areas else ""),
+        (f'<div class="vareas"><h3>Converted by area</h3><ul class="areas">{areas}</ul>'
+         + (f'<p class="biz">{_e(business(result))}</p>' if business(result) else "") + "</div>" if areas else ""),
         "</div>",
         (f'<div class="licence-note">{markdown_body(chr(10).join(licence_note))}</div>' if licence_note else ""),
     ]  # fmt: skip
 
-    actions = []
-    for action in priority_actions(result):
-        href = action.href if action.href.split("&")[0][1:] in targets else "#details"
-        if action.cause and href == "#review":
-            href = todo_href(cause=action.cause)
-        actions.append(f'<li><b>{inline(action.title)}</b><span class="how">: {inline(action.detail)}</span>'
-                       f' <a class="more" href="{_e(href)}">{_e(action.label)} →</a></li>')  # fmt: skip
+    actions = [_action(action, targets) for action in priority_actions(result, config)]
     causes = []
     for cause in top_causes(result):
         tag = ' <span class="tag todo">blocking</span>' if cause.blocking else ""
         example = cause.example
         causes.append(
-            f'<li><span><a href="{_e(todo_href(cause=cause.category))}">{_e(cause.category)}</a>{tag}</span>'
+            f'<li><span><a href="{_e(todo_href(cause=cause.category))}">{_e(cause.category)}</a>'
+            f' <span class="fam">{_e(triage.family(cause.category))}</span>{tag}</span>'
             f'<span class="meter"><span style="width:{max(2, round(cause.share))}%"></span></span>'
             f'<b>{cause.count}</b><span class="muted">{cause.share:.0f} %</span>'
             f'<span class="ex">e.g. {_line_link(example.program, example.rapid_line, anchors, shown)}:'
@@ -427,7 +495,7 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
             '<div class="an-box"><h3>Where the TODO come from</h3><ul class="top">' + "".join(causes) + "</ul>"
             + (f'<p class="muted">{causes_left} other cause{"s" if causes_left > 1 else ""}: see'
                ' <a href="#todo">the items to review</a>.</p>' if causes_left > 0 else "")
-            + "</div>"
+            + _outlook(result) + "</div>"
         )  # fmt: skip
     grid.append("</div>")
     body.append("".join(grid))
@@ -442,17 +510,16 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
         body.append(
             '<div class="an-box" id="an-capacity"><h3>Controller capacity: near or over the limit</h3>'
             '<div class="table-wrap"><table><thead><tr><th>Resource</th><th>Used</th><th>Limit</th><th>Status</th>'
-            f"</tr></thead><tbody>{rows}</tbody></table></div>"
+            f"</tr></thead><tbody>{rows}</tbody></table></div>{_renumbering(result, config)}"
             '<p class="muted">Every resource: <a href="#capacity">controller capacity</a> in the summary.</p></div>'
         )  # fmt: skip
     elif result.capacity:
         body.append('<p class="muted" id="an-capacity">Controller capacity: every resource well within its limit'
                     ' (<a href="#capacity">the figures</a>).</p>')  # fmt: skip
-    review = sum(1 for _ in result.notes)
     links = [
         ("#taught", "Taught positions"),
         ("#ck-fold", f"The commissioning checklist ({checklist_items} items)"),
-        ("#review", f"Items to review ({review})"),
+        ("#review", f"Items to review ({counts_text(result)})"),
         ("#code", "RAPID ↔ TP, program by program"),
         ("#points", "Points, program by program"),
         ("#summary", "Summary figures"),
@@ -627,6 +694,23 @@ ol.actions { margin: 0; padding-left: 1.4em; }
 ol.actions li { margin: 0 0 .45em; }
 a.more { white-space: nowrap; font-size: .9em; }
 ol.actions .how { color: var(--muted); font-size: .94em; }
+.ameta { display: block; font-size: .84em; color: var(--muted); margin-top: 1px; }
+.ameta a.n, .ameta b.n { font-weight: 600; }
+.tag.cos { color: var(--muted); font-weight: 600; }
+.fam { font-size: .74em; color: var(--muted); border: 1px solid var(--line); border-radius: 9px; padding: 0 .45em;
+  white-space: nowrap; vertical-align: .1em; }
+p.biz { margin: .55em 0 0; font-size: .9em; font-weight: 600; }
+ul.outlook { list-style: none; padding: 0; margin: .5em 0 0; font-size: .86em; }
+ul.outlook li { margin: .2em 0; }
+details.ext { font-size: .9em; margin: .15em 0 .2em; }
+details.ext summary { cursor: pointer; color: var(--accent); }
+details.ext p { margin: .3em 0; }
+pre.snip { margin: .3em 0; padding: 6px 10px; overflow-x: auto; font-size: .9em; }
+button.copy { font: inherit; padding: 2px 12px; color: var(--fg); background: var(--head); border: 1px solid var(--line);
+  border-radius: 6px; cursor: pointer; }
+h3.renum { font-size: .95em; margin: .8em 0 .3em; }
+ul.renum { margin: 0 0 .4em; padding-left: 1.2em; font-size: .9em; }
+code.edit { white-space: nowrap; }
 ul.top { list-style: none; padding: 0; margin: 0; }
 ul.top li { display: grid; grid-template-columns: minmax(0, 1fr) 80px 2.6em 3em; gap: 2px 10px; align-items: center;
   padding: 3px 0; border-bottom: 1px solid var(--line); }
@@ -712,7 +796,8 @@ tr.flash td { animation: flash 2s ease-out; }
   :root { --bg: #fff; --fg: #000; --muted: #555; --line: #bbb; --head: #f2f2f2; --code: #eee; --todo: #a04a00;
           --warn: #6b4300; --todo-bg: #fff1e5; --warn-bg: #fff8db; --accent: #000; --ok: #1a7f37; }
   .cockpit { position: static; border-bottom: 1px solid var(--line); }
-  nav.menu, .bar, .js .bar, label.view, .js label.view, p.more, p.ready button, .js p.ready button { display: none !important; }
+  nav.menu, .bar, .js .bar, label.view, .js label.view, p.more, p.ready button, .js p.ready button,
+  button.copy { display: none !important; }
   main { max-width: none; padding: 0; }
   table.sbs th { position: static; }
   tr, .card, .verdict, ol.actions li, ul.top li, details.sec > summary { break-inside: avoid; }
@@ -786,13 +871,14 @@ _JS = r"""
   });
 
   // Items to review: kind, cause, program and text; shown a page at a time.
-  var R = null, PAGE = 50, limit = 0;
+  var R = null, PAGE = 50, limit = 0, TOTAL = {todo: 0, warn: 0};
+  function any(sel, v) { return !sel || sel.split('|').indexOf(v) >= 0; }  // several causes or programs: '|'
   function reviewInit() {
     var t = $('f-rows');
     if (R || !t) { return; }
     PAGE = +t.getAttribute('data-page') || PAGE;
     R = [].slice.call(t.content.children);
-    R.forEach(function (r) { r._text = r.textContent.toLowerCase(); });
+    R.forEach(function (r) { r._text = r.textContent.toLowerCase(); if (r.dataset.k === 'TODO') { TOTAL.todo++; } else { TOTAL.warn++; } });
     ['f-text', 'f-kind', 'f-cause', 'f-prog'].forEach(function (id) { $(id).addEventListener('input', function () { review(); }); });
     $('f-reset').addEventListener('click', function () {
       ['f-text', 'f-cause', 'f-prog'].forEach(function (id) { $(id).value = ''; });
@@ -807,20 +893,29 @@ _JS = r"""
     limit = more ? limit + PAGE : PAGE;
     var q = $('f-text').value.trim().toLowerCase(), k = $('f-kind').value, c = $('f-cause').value, p = $('f-prog').value;
     var match = R.filter(function (r) {
-      return (!k || r.dataset.k === k) && (!c || r.dataset.c === c) && (!p || r.dataset.p === p) && (!q || r._text.indexOf(q) >= 0);
+      return (!k || r.dataset.k === k) && any(c, r.dataset.c) && any(p, r.dataset.p) && (!q || r._text.indexOf(q) >= 0);
     });
     var body = $('f-body'), frag = d.createDocumentFragment(), shown = Math.min(limit, match.length);
     while (body.firstChild) { body.removeChild(body.firstChild); }
     match.slice(0, shown).forEach(function (r) { frag.appendChild(r); });
     body.appendChild(frag);
-    $('f-count').textContent = shown + ' of ' + match.length + ' shown' + (match.length < R.length ? ' (' + R.length + ' in all)' : '');
+    var what = {TODO: ' TODO', WARNING: ' warnings'}[k] || ' items';
+    $('f-count').textContent = shown + ' of ' + match.length + what + ' shown' + (match.length < R.length
+      ? ' (in all: ' + TOTAL.todo + ' TODO + ' + TOTAL.warn + ' warning' + (TOTAL.warn === 1 ? '' : 's') + ')' : '');
     var left = match.length - shown, btn = $('f-more');
     btn.hidden = !left;
     btn.textContent = 'Show ' + Math.min(PAGE, left) + ' more (' + left + ' left)';
   }
-  function choose(id, value) {
+  function choose(id, value) {  // a value with '|' (several causes or programs) gets an option of its own
     var s = $(id), ok = !value;
+    each(s.querySelectorAll('option.several'), function (o) { if (o.value !== value) { s.removeChild(o); } });
     each(s.options, function (o) { if (o.value === value) { ok = true; } });
+    if (!ok && value.indexOf('|') > 0) {
+      var o = d.createElement('option'), parts = value.split('|');
+      o.className = 'several'; o.value = value;
+      o.textContent = id === 'f-prog' ? parts.length + ' programs: ' + parts.join(', ') : parts.join(' + ');
+      s.appendChild(o); ok = true;
+    }
     s.value = ok ? value : '';
   }
   function showReview(q) {
@@ -880,6 +975,30 @@ _JS = r"""
     });
   }
   d.addEventListener('crossarm:built', function () { reviewInit(); programsInit(); pointsInit(); });
+
+  // Copy: the example's text to the clipboard; where the browser refuses, selected, for Ctrl+C.
+  d.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('button.copy');
+    if (!b) { return; }
+    var box = b.closest('details, li, div'), code = box && box.querySelector('pre code'), say = b.nextElementSibling;
+    if (!code) { return; }
+    function tell(t) { if (say) { say.textContent = t; } }
+    function select() {
+      try {
+        var r = d.createRange(), sel = window.getSelection();
+        r.selectNodeContents(code); sel.removeAllRanges(); sel.addRange(r);
+        tell('Selected: press Ctrl+C to copy.');
+      } catch (e) { tell('Select the text and copy it.'); }
+    }
+    var settled = false, late = null;
+    function end(ok) { if (!settled) { settled = true; clearTimeout(late); if (ok) { tell('Copied.'); } else { select(); } } }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        late = setTimeout(function () { end(false); }, 800);  // a browser that neither copies nor refuses
+        navigator.clipboard.writeText(code.textContent).then(function () { end(true); }, function () { end(false); });
+      } else { end(false); }
+    } catch (e) { end(false); }
+  });
 
   // The view: synthesis, integrator or detail, each opening its own folds (data-depth). Kept in this browser.
   function view(v, quiet) {
@@ -969,7 +1088,7 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     sections.append(_fold(_details_section(parts, extra), details_line, DETAIL))
     # Last, but shown first: its links lead to what the other sections hold.
     targets = {sid for sid, _, _ in sections} | set(re.findall(r'\bid="([^"]+)"', "".join(b for _, _, b in sections)))
-    sections.insert(0, _analysis_section(result, parts["notice"], anchors, targets, items, licence_note))
+    sections.insert(0, _analysis_section(result, parts["notice"], anchors, targets, items, licence_note, config))
 
     menu = [("#analysis", "Analysis")]
     if result.capacity:

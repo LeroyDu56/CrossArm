@@ -15,13 +15,19 @@
 - **Workable with touch-up and planned work: 3 TODO with a known fix, no blocking cause.**
 - Rule: ready when every instruction is converted; workable when at least 85 % of the RAPID instructions are converted and at most 3 causes are blocking; not ready otherwise. Here: 85.1 % converted, 0 blocking causes.
 - 85.1 % of the 27 RAPID instructions converted.
+- Motion fully converted; most of what is left is program flow (calls, conditions, jumps) (2 of 3 TODO).
 - 2 of 3 programs with no TODO, 1 with TODO (3 TODO).
 
 ### What to do first
 
-1. **Redo the error handling on the FANUC side**: 1 TODO on RAPID ERROR handlers, RAISE, RETRY... in `PLACE`. TP has no error handler: not a CrossArm bug, decide what the FANUC cell does on each error. (Items to review.)
-2. **Finish the other 2 TODO by hand**: RAPID goto, RAPID label, program by program. (Checklist: TODO lines to finish by hand.)
-3. **Touch up the 7 points on the robot**: once the frames are set; they are the ABB's, as theoretical points. (Checklist: Points to touch up.)
+1. **Redo the error handling on the FANUC side**: 1 TODO on RAPID ERROR handlers, RAISE, RETRY... in `PLACE`. TP has no error handler: not a CrossArm bug, decide what the FANUC cell does on each error. (Items to review.) _1 TODO concerned · who acts: FANUC integrator._
+2. **Finish the other 2 TODO by hand**: RAPID goto, RAPID label, program by program. (Checklist: TODO lines to finish by hand.) _2 TODO concerned · who acts: FANUC integrator · a later CrossArm version may help._
+3. **Touch up the 7 points on the robot**: once the frames are set; they are the ABB's, as theoretical points. (Checklist: Points to touch up.) _who acts: FANUC integrator._
+
+### What is left, by outlook
+
+- **No TP equivalent: redesign on the FANUC side**: RAPID error handler (1).
+- **A later CrossArm version may help**: RAPID goto (1), RAPID label (1).
 
 ## Summary
 

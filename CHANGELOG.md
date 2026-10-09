@@ -8,6 +8,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - HTML report as a cockpit: a line kept at the top (decision, % converted, TODO, blocking causes, points) and a menu;
   all but the analysis folded, long lists laid out only when opened; three views; items to review 50 at a time,
   `#todo&cause=...&prog=...` links; programs with no TODO in one line; points in one line per program.
+- Actions you can act on: each gives the exact number of TODO it concerns, leading to them, and who acts; cosmetic
+  TODO apart; a family on each cause; an `external_routines` example to copy; over the controller's capacity, the
+  mapping keys to edit; one sentence under the share converted by area; what TP has no equivalent for, apart.
 
 ## 1.8.0 — 2026-10-09
 

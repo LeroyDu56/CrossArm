@@ -25,6 +25,7 @@ from crossarm.convert.analysis import (
 )
 from crossarm.convert.blockers import Blocker
 from crossarm.convert.coverage import Coverage, Share
+from crossarm.convert.external import Candidate
 from crossarm.convert.html_report import build_html_report
 from crossarm.convert.taught import AGAIN, Taught, TaughtPoint
 from crossarm.convert.translate import Capacity, ConversionResult, Note
@@ -156,7 +157,7 @@ def test_priority_actions_come_from_the_blockers_most_unblocking_first():
     assert titles[-1] == "Finish the other 1 TODO by hand"
     # Candidates for external_routines are pointed at.
     result = _result()
-    result.provided_candidates = [object()]  # only counted
+    result.provided_candidates = [Candidate("ErrLogX", "not in the backup")]
     assert "1 candidate listed in `crossarm_mapping.json`" in priority_actions(result)[1].detail
 
 

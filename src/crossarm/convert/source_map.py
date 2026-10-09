@@ -104,9 +104,17 @@ def line_anchor(program: str, line: int) -> str:
 TODO_FILTERS = ("kind", "cause", "prog", "q")  # what a link to the items to review may filter on
 
 
-def todo_href(*, cause: str = "", prog: str = "", kind: str = "", q: str = "") -> str:
+FILTER_SEP = "|"  # between the causes or programs a link filters on: no cause or program name has one
+
+
+def todo_href(*, cause: str | Sequence[str] = "", prog: str | Sequence[str] = "", kind: str = "", q: str = "") -> str:
     """A link to the report's items to review, filtered: '#todo&cause=...&prog=...'. The page shows the TODO
-    (kind=WARNING for the warnings, kind=all for both), of that cause and program, matching q."""
+    (kind=WARNING for the warnings, kind=all for both), of that cause and program, matching q. Several causes or
+    programs (a sequence) keep the items of any of them."""
+    if not isinstance(cause, str):
+        cause = FILTER_SEP.join(cause)
+    if not isinstance(prog, str):
+        prog = FILTER_SEP.join(prog)
     given = {"kind": kind, "cause": cause, "prog": prog, "q": q}
     return "#todo" + "".join(f"&{key}={quote(given[key], safe='')}" for key in TODO_FILTERS if given[key])
 

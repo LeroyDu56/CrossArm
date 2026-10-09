@@ -19,7 +19,7 @@
 
 ### What to do first
 
-1. **Load every program before running any**: a CALL to a program the robot does not have fails when it runs. (Checklist: Load the programs.)
+1. **Load every program before running any**: a CALL to a program the robot does not have fails when it runs. (Checklist: Load the programs.) _who acts: FANUC integrator._
 
 ## Summary
 
