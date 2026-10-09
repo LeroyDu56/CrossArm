@@ -181,7 +181,8 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                 return f"{type_name} parameter {name} is passed by reference ({mode}): a frame is passed by its number"
             if dims:
                 return f"parameter {name} is an array: TP arguments are single values"
-            if mode and not frame and not optional and type_name.lower() not in ("num", "robtarget"):
+            record = type_name.lower() in records
+            if mode and not frame and not optional and not record and type_name.lower() not in ("num", "robtarget"):
                 return f"{type_name} parameter {name} is passed by reference ({mode}): only a num or a point is read back"
             if frame and (reason := _frame_uses(routine, name)):
                 return reason
@@ -200,7 +201,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                 fields = _record_fields(routine, name, type_name, records[type_name.lower()])
                 if isinstance(fields, str):
                     return fields
-                required.append(Slot(name, "record", fields))
+                required.append(Slot(name, "record", fields, by_reference=bool(mode)))
             else:
                 return f"{type_name} parameter {name}: TP arguments are numbers or text"
     motion = {s.key: s for s in required if s.kind in ("speeddata", "zonedata")}
@@ -217,7 +218,14 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
     copied: set[str] = set()
     points_changed: set[str] = set()  # robtarget parameters it changes: in their position register
     by_reference = {s.key for s in slots if s.by_reference}
+    components = {f.key: f.kind for s in slots if s.kind == "record" for f in s.fields}
     for stmt in walk_statements(routine.body):
+        if (part := _changed_component(stmt, components)) is not None:  # g.count := ..., Incr g.count
+            if components[part] != "num":
+                return (f"it changes the {components[part]} component {part.lower()} of its record parameter: only num"
+                        " components are copied to registers")  # fmt: skip
+            copied.add(part)
+            continue
         changed = _changed_by_call(stmt)
         if isinstance(stmt, n.ProcCall) and stmt.name.upper() not in _CHANGING:
             # passed on to a routine that may change it (its own INOUT): the caller reads back what comes back
@@ -381,6 +389,22 @@ def _blocks(stmts: tuple[n.Stmt, ...]) -> list[tuple[n.Stmt, ...]]:
                     found += _blocks(case.body)
                 found += _blocks(stmt.default or ())
     return found
+
+
+def _changed_component(stmt: n.Stmt, components: dict[str, str]) -> str | None:
+    """'G.COUNT' when the statement changes a component of a record parameter: assigned, changed by Incr,
+    Decr, Add or Clear; None otherwise (passed on to a routine's INOUT: TODO where it is passed)."""
+    targets: list[n.Expr | None] = []
+    if isinstance(stmt, n.Assign):
+        targets = [stmt.target]
+    elif isinstance(stmt, n.ProcCall):
+        targets = [stmt.args[0].value] if stmt.name.upper() in _CHANGING and stmt.args else []
+    for target in targets:
+        if isinstance(target, n.Component) and isinstance(target.base, n.Name):
+            key = f"{target.base.name}.{target.field}".upper()
+            if key in components:
+                return key
+    return None
 
 
 def _changed_by_call(stmt: n.Stmt) -> str | None:

@@ -90,12 +90,14 @@ from crossarm.convert.karel_files import INSTRUCTIONS as FILE_INSTRUCTIONS
 from crossarm.convert.karel_files import KarelFiles
 from crossarm.convert.karel_poses import KarelPoses, karel_candidates, karel_would
 from crossarm.convert.karel_poses import place_frames as place_karel_frames
+from crossarm.convert.late_calls import LateCalls
 from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
 from crossarm.convert.runtime_points import RuntimePoints, expr_nodes, find_runtime_points
 from crossarm.convert.source_map import SourceTags
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
+from crossarm.convert.system_data import SystemData
 from crossarm.convert.tp_numbers import NUMBER_TYPES as _NUMBERS
 from crossarm.convert.tp_numbers import ascii_text, decimal, fmt_number, operand, register_value
 from crossarm.convert.unsupported import (
@@ -151,6 +153,9 @@ if TYPE_CHECKING:
 REMARK_MAX = 32  # characters after '!' shown on the pendant
 MESSAGE_MAX = 24  # MESSAGE[...] text length: longer texts are silently cut by the controller (ROBOGUIDE probe)
 REGISTER_COMMENT_MAX = 16
+# The options of WaitDI / WaitDO / WaitUntil that only show a message on the FlexPendant while waiting (\Visualize
+# and its companions); \UIActiveSignal, which sets an output while the message is shown, is not one of them.
+VISUALIZE_OPTIONS = frozenset({"VISUALIZE", "HEADER", "MESSAGE", "MSGARRAY", "ICON", "IMAGE", "VISUALIZETIME"})
 WAIT_CLOCK = "WaitTimer"  # the register a wait with a MaxTime reads its TIMER into
 TEST_VALUE = "TestValue"  # the register a TEST on anything but a register is selected on
 SELECT_INDENT = " " * len("SELECT ")  # a SELECT's next lines, as the controller stores them (ROBOGUIDE)
@@ -2028,7 +2033,8 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
-class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline):
+class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline,
+                         LateCalls, SystemData):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2094,7 +2100,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
     def _run(self) -> ProgramInfo:
         for text in remark_lines(f"RAPID {self.module.name}.{self.routine.name}"):
             self.emit(text)
-        for slot in self.args.slots if self.args else ():
+        parts = [f for s in self.args.slots if s.kind == "record" for f in s.fields] if self.args else []
+        for slot in [*self.args.slots, *parts] if self.args else ():  # a record's num components it changes too
             if slot.key in self.args.copied:  # type: ignore[union-attr]
                 register = self.c.written_register(slot.name, key=f"{self.name}.{slot.name}")
                 self.copies[slot.key] = register
@@ -2384,6 +2391,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 self.emit(f"JMP LBL[{self.error_jumps[1]}]")
             case n.Unsupported(kind="CONNECT"):
                 self.connect(s)
+            case n.Unsupported(kind="LATE_BINDING"):
+                self.late_call(s)  # convert.late_calls
             case n.Unsupported() if self.strict:
                 raise Untranslatable(s.reason, Blocker.rapid(s.kind))
             case n.Unsupported():
@@ -3107,6 +3116,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             raise Untranslatable(f"{call.name}: {why}", Blocker.INTERRUPT)
         elif name in self.c.externals:
             self.provided_call(call, self.c.externals[name])
+        elif name == "CALLBYVAR" and name not in self.c.procs:
+            self.late_call(call)  # convert.late_calls
+        elif name == "SETSYSDATA" and name not in self.c.procs:
+            self.set_sys_data(call)  # convert.system_data
         elif self.c.config.karel and name in FILE_INSTRUCTIONS and name not in self.c.procs:
             self.file_statement(call, name)  # convert.karel_files
         elif name in self.c.move_routines:
@@ -3321,8 +3334,16 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
 
     def max_time(self, call: n.ProcCall, options: list[n.Arg]) -> float | None:
         """The \\MaxTime of a wait, in seconds; None without one. With \\TimeFlag, the bool it sets when the time
-        runs out (no error then) goes to wait() in `time_flag`. Any other option is not converted."""
+        runs out (no error then) goes to wait() in `time_flag`. The FlexPendant visualisation options are dropped with
+        a warning (the pendant shows nothing while the robot waits); any other option is not converted."""
         self.time_flag = None
+        shown = [a for a in options if (a.name or "").upper() in VISUALIZE_OPTIONS]
+        if shown:
+            names = " ".join("\\" + (a.name or "") for a in shown)
+            self.c.warn_once(f"visualize:{self.name}:{call.span.line}", self.name, call.span.line,
+                             f"{call.name} {names}: the FlexPendant message shown"
+                             " while waiting is dropped (the wait is converted)", Blocker.OPTIONS_IGNORED)  # fmt: skip
+            options = [a for a in options if a not in shown]
         if not options:
             return None
         given = {(a.name or "").upper(): a for a in options}
@@ -3665,6 +3686,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         if self.c.externals and (call := self.provided_result_call(a)) is not None:  # x := F(args), F provided
             self.provided_assign(a, call)
             return
+        if (part := self.component(a.target)) is not None and part in self.copies:  # g.count := ..., g a record
+            self.emit(f"{self.copies[part]}={self.arithmetic(a.value)}")  # parameter: its component's copy
+            return
         path = path_of(a.target)
         if path and (key := self.runtime_key(path[0])):
             self.runtime_assign(a, key, path)
@@ -3858,7 +3882,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             return
         routine = self.routine.name
         alphabets = [self.c.strings.alphabet(side, routine, self.text_params) for side in (expr.left, expr.right)]
-        if same_regardless_of_case(*alphabets):
+        if same_regardless_of_case(*alphabets) and not self.names_compared:  # a routine name: any case
             raise Untranslatable(f"TP compares texts regardless of case ('A' = 'a'), RAPID does not: "
                                  f"'{format_expr(expr.left)}' and '{format_expr(expr.right)}' can differ by case "
                                  "alone", Blocker.CONDITION)  # fmt: skip
@@ -4467,7 +4491,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         if (axis := self.runtime_axis(expr)) is not None:
             return axis
         if (field := self.component(expr)) and self.args.kind(field) == "num":  # type: ignore[union-attr]
-            return self.args.register(field)  # type: ignore[union-attr, return-value]
+            return self.copies.get(field) or self.args.register(field)  # type: ignore[union-attr, return-value]
         found = self.c.records.field(expr)
         if found is not None and found.type == "num" and not found.indexed and found.within is None                 and self.c.records.changed(found):  # fmt: skip
             return self.c.field_number(found, False, self.record_owner(found))

@@ -39,9 +39,17 @@ NO_TP_FAMILIES = {
     ),
     "a screen or an application of the ABB pendant: TP has none": ("TPSHOW", "UISHOW"),
     "the ABB event log and its error numbers: TP has none": ("ERRLOG", "BOOKERRNO", "ERRRAISE", "ERRWRITE"),
-    "ABB system instruction (program modules, system data, mechanical units): TP has none": (
-        "GETSYSDATA", "SETSYSDATA", "SAVE", "LOAD", "UNLOAD", "STARTLOAD", "WAITLOAD", "ERASEMODULE",
+    "ABB system instruction (program modules, mechanical units): TP has none": (
+        "SAVE", "LOAD", "UNLOAD", "STARTLOAD", "WAITLOAD", "ERASEMODULE",
         "ACTUNIT", "DEACTUNIT",
+    ),
+    # Measured: a TP program reads no system variable on the controller CrossArm was measured on (R[n]=$MNUTOOLNUM[1],
+    # $MSKKEY... load, then stop it: VARS-034); SetSysData is converted (convert.system_data).
+    "the active tool, work object or load read from the controller: a TP program reads no system variable (VARS-034"
+    " Variable cannot be accessed, measured); select the frames by number where the RAPID selects them": ("GETSYSDATA",),
+    "the operating mode (AUTO, T1, T2): a TP program reads no system variable (VARS-034, measured) and FANUC's"
+    " standard UOP outputs do not give it; an output the robot is set up to give it on can be tested instead": (
+        "OPMODE",
     ),
     "world zone: the FANUC sets zones up in its DCS or interference check menus, not in TP": (
         "WZBOXDEF", "WZCYLDEF", "WZSPHDEF", "WZHOMEJOINTDEF", "WZLIMJOINTDEF", "WZLIMSUP", "WZDOSET",

@@ -71,6 +71,8 @@ probe, everything else in local/logs/probe_all.log):
     funcresult   functions the backup does not declare provided as TP programs (external_routines "returns"): points
                  passed as PR numbers, results written in R[AR[n]] / PR[AR[n]] / PR[AR[n],i] and read back after the
                  CALL; a move to the point, a frame's trans, a uframe, a tframe's trans from them, as RAPID puts the flange
+    sysvars      load and run only: a TP program reads no system variable (the active UTOOL / UFRAME / payload,
+                 the mode select key: VARS-034), so GetSysData and OpMode() stay TODO; UTOOL_NUM=R[n] loads
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool frames 1 to 10, user frames 1 to 9, and
@@ -120,6 +122,7 @@ import make_select_probe
 import make_setup_probe
 import make_speed_arg_probe
 import make_string_probe
+import make_sysvar_probe
 import make_taught_probe
 import make_time_flag_probe
 import make_wait_probe
@@ -464,6 +467,11 @@ def probe_funcinline() -> str:
     return f"FAIL {problem}" if problem else make_func_inline_probe.summary(make_func_inline_probe.stored())
 
 
+def probe_sysvars() -> str:
+    problem = make_sysvar_probe.run()
+    return f"FAIL {problem}" if problem else "reads stop on VARS-034, selections from registers load, as measured"
+
+
 def probe_funcresult() -> str:
     try:
         problem = make_func_result_probe.run()  # stores the result, as the probe's own run does
@@ -563,6 +571,7 @@ def main() -> int:
               "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel, "karelpose": probe_karelpose,
               "karelfile": probe_karelfile, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult,
+              "sysvars": probe_sysvars,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     summary = "--summary" in sys.argv

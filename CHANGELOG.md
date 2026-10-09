@@ -21,12 +21,23 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   (`"returns": "pose"` for one the backup does not declare) is `CALL PROG(args,k)`, the program writing its result in
   R[AR[n]] / PR[AR[n]] for the caller to read; points are passed by their position register's number. The mapping
   file offers the functions missing from the backup this way. Measured on ROBOGUIDE (probe `funcresult`).
+- `WaitDI` / `WaitDO` / `WaitUntil` with `\Visualize` (and `\Header`, `\Message`, `\MsgArray`, `\Icon`, `\Image`,
+  `\VisualizeTime`) are converted as the same wait, the FlexPendant message dropped with a warning.
+- A record passed by reference (`INOUT`, `VAR`) to a routine that changes its num components is converted as a num
+  passed by reference is: each component an argument, copied to a register, read back after the CALL.
+- A routine called by its name worked out at run time (`%"Bay_" + NumToStr(n,0)%`, `CallByVar "Bay_", n`,
+  `%sStep%`) calls each routine of the backup it can name: a SELECT on the number, or a test of the text per name; a
+  name outside those ends the program (ABORT, RAPID raises ERR_REFUNKPRC), with a warning.
+- `SetSysData` of a tool or work object selects it (`UTOOL_NUM=n`, `UFRAME_NUM=n`), of a loaddata as `GripLoad`.
+  `GetSysData` and `OpMode()` stay TODO, now saying why: a TP program reads no system variable on the measured
+  controller (VARS-034, probe `sysvars`).
 
 ### Fixes
 - A mapping file given back with frames past the controller's limit (kept in position registers) selected them by
   their number (`UTOOL_NUM=11`, refused by the controller) instead of loading them (`UTOOL[10]=PR[90]`,
   `UTOOL_NUM=10`). Versions 1.0.0 to 1.7.0 are affected: convert again with the same mapping file, which keeps its
   meaning (a number past the limit is a frame kept in a register).
+- A robtarget whose confdata does not have 4 values is a TODO saying so, no longer an internal error.
 
 ## 1.7.0 — 2026-10-08
 

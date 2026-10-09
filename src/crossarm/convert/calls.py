@@ -240,6 +240,9 @@ class RoutineCalls:
                 for field in slot.fields:
                     component = n.Component(a.value.span, a.value, field.name.split(".", 1)[1])
                     values.append(self.argument(component, field))
+                    if slot.by_reference and field.key in layout.copied:  # INOUT, VAR: its changed num components
+                        copy = self.c.written_register(field.name, key=f"{name}.{field.name}")  # come back
+                        back.append(f"{self.component_back(component, slot)}={copy}")
             else:
                 values.append(self.argument(a.value, slot))
                 if slot.key in returned:  # INOUT, VAR, PERS the routine changes: read back after the CALL
@@ -321,6 +324,17 @@ class RoutineCalls:
         raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' is passed by reference"
                              " and changed: it must be num data of the caller", Blocker.CALL_ARGS)  # fmt: skip
 
+    def component_back(self, expr: n.Component, slot) -> str:
+        """The register a num component of a record passed by reference is read back into: the field's register
+        of the caller's record data, or the copy of its own record parameter's component."""
+        if (field := self.component(expr)) is not None and field in self.copies:
+            return self.copies[field]
+        found = self.c.records.field(expr)
+        if found is not None and found.type == "num" and not found.indexed and found.within is None:
+            return self.c.field_number(found, False, self.record_owner(found))
+        raise Untranslatable(f"argument {slot.name}: '{format_expr(expr.base)}' is passed by reference and changed: it"
+                             " must be record data of the caller, or a record parameter it changes", Blocker.CALL_ARGS)  # fmt: skip
+
     def argument(self, expr: n.Expr | None, slot) -> str:
         """One TP CALL argument: a constant, a register, or this routine's own AR[n]."""
         if expr is None:
@@ -330,7 +344,7 @@ class RoutineCalls:
         if isinstance(expr, n.Name) and self.args and self.args.register(expr.name):
             return self.args.register(expr.name)  # type: ignore[return-value]
         if (field := self.component(expr)) is not None:  # a component of this routine's own record parameter
-            return self.args.register(field)  # type: ignore[union-attr, return-value]
+            return self.copies.get(field) or self.args.register(field)  # type: ignore[union-attr, return-value]
         if slot.kind == "string":
             return self.text_argument(expr, slot)
         if slot.kind == "bool":
