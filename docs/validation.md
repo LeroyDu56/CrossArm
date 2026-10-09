@@ -11,11 +11,11 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 
 | What | Result |
 |---|---|
-| RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)), without `--karel` | about 60 %, from about 15 % to all of it per project |
-| RAPID instructions converted, our test corpus, written for testing, without `--karel` | 87 % to 93 % |
-| Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
+| RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)), without `--karel` and without provided routines | about 60 %, from about 15 % to all of it per project |
+| RAPID instructions converted, our test corpus, written for testing, without `--karel` and without provided routines | 87 % to 93 % |
+| Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1): the 10 this version touches run again for it, the others last run for 1.6.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 34 of 34 give what was measured |
+| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1): the 17 this version touches run again for it on ROBOGUIDE, the others last run for 1.6.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 38 of 38 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -46,6 +46,10 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | With `--karel`: `PoseMult` of poses known at run time by CrossArm's KAREL program, run on ROBOGUIDE; a wrong argument | the pose RAPID computes, within 0.001 mm; the controller's alarm on the `CALL` |
 | With `--karel`: `PoseInv`, `RelTool`, `DefFrame`, and a work object and a tool calibrated from them, run on ROBOGUIDE | what RAPID computes, within 0.001 mm and 0.01°; the flange where RAPID puts it |
 | With `--karel`: RAPID's text files written by a KAREL program, run on ROBOGUIDE | the bytes RAPID writes, line ends and numbers included |
+| Tools and work objects written part by part at run time, and copied, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm |
+| FUNCs building tools and work objects from frames calibrated at run time, copied into each call, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm |
+| Functions the integrator provides (`external_routines` with `"returns"`), their results read back, run on ROBOGUIDE | the values and the flange where RAPID puts them |
+| A TP program reading a system variable (what `GetSysData` and `OpMode()` read), on ROBOGUIDE | loads, stops on the line (VARS-034): left TODO, saying so |
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -86,6 +90,10 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 37. [KAREL programs called from TP, run](#37-karel-programs-called-from-tp-run)
 38. [Poses and frames computed at run time, run](#38-poses-and-frames-computed-at-run-time-run)
 39. [Text files, run](#39-text-files-run)
+40. [Frames written part by part and copied, run](#40-frames-written-part-by-part-and-copied-run)
+41. [FUNCs copied into their calls, run](#41-funcs-copied-into-their-calls-run)
+42. [Functions the integrator provides, run](#42-functions-the-integrator-provides-run)
+43. [System variables read by TP, refused](#43-system-variables-read-by-tp-refused)
 
 ## 1. The test corpus
 
@@ -93,7 +101,10 @@ Besides the demo programs committed here, CrossArm is tested on a local corpus i
 distribute, written for testing: three RobotWare backups and three FANUC backups, each in the style
 of a different integrator (a palletizing and machine-tending cell with a PLC task, a deburring cell
 that builds its tools and fixtures in RAPID, an assembly cell run as a state machine over three
-tasks), with as much of RAPID and of TP as the controllers offer. It is checked on the controllers
+tasks), with as much of RAPID and of TP as the controllers offer; since 1.8, also a set of RAPID
+modules of calibration routines that compute tools and work objects while the robot runs (calibrated
+part by part, copied, built by FUNCs). Without `--karel` and without provided routines, CrossArm converts
+87 %, 93 % and 87 % of the instructions of the three RobotWare backups, and 87 % of the calibration modules. It is checked on the controllers
 themselves: RobotStudio loads every RAPID task, every reference resolved (the World Zones
 instructions aside, an option the virtual controller lacks); the three FANUC backups are what three
 ROBOGUIDE controllers (R-2000iC/190S, ARC Mate 120iD, R-1000iA/80F) hold once their programs are
@@ -314,13 +325,20 @@ the results are read from the virtual controller's `HOME:` folder:
 | KAREL programs called from TP (`--karel`) | the caller stops on the `CALL` without the `.pc`; `PoseMult` within 0.001 mm; 5 wrong arguments, each its alarm ([section 37](#37-karel-programs-called-from-tp-run)) |
 | poses and frames computed at run time (`--karel`) | `PoseInv`, `RelTool`, `DefFrame` within 0.001 mm and 0.01°; the moves in frames calibrated at run time where RAPID puts them ([section 38](#38-poses-and-frames-computed-at-run-time-run)) |
 | text files (`--karel`) | the files read back byte for byte; 4 errors, each its alarm ([section 39](#39-text-files-run)) |
+| frames written part by part and copied | 12 flanges within 0.001 mm of RAPID ([section 40](#40-frames-written-part-by-part-and-copied-run)) |
+| FUNCs copied into their calls | 13 flanges within 0.001 mm of RAPID ([section 41](#41-funcs-copied-into-their-calls-run)) |
+| functions the integrator provides | 1 register and 5 flanges as RAPID computes them ([section 42](#42-functions-the-integrator-provides-run)) |
+| system variables read by TP | each read stops the program (VARS-034); the selections from a register load ([section 43](#43-system-variables-read-by-tp-refused)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
-For 1.7.0, on 2026-10-08, the probes this version touches were run again on ROBOGUIDE (R-1000iA/80F, V10.10,
-with the KAREL option): the three KAREL probes, binary `.TP` made by MakeTP, programs the integrator provides,
-touch-ups kept when converting again, jointtargets read on the robot, calls with arguments, `SETUP_FRAMES` and
-flange poses. Each gave what was measured. The other probes were last run for 1.6.0, on 2026-10-07, all giving
-what was measured; the ABB probe modules were not run again on RobotStudio for 1.7.0.
+For 1.8.0, on 2026-10-09, the probes this version touches were run again on ROBOGUIDE (R-1000iA/80F, V10.10,
+with the KAREL option), 17 of them: the four new ones (frames written part by part and copied, FUNCs copied into
+their calls, functions the integrator provides, system variables read by TP), frames from registers, programs the
+integrator provides, the three KAREL probes, touch-ups kept when converting again, `SETUP_FRAMES`, flange poses,
+calls with arguments, `TEST` / `CASE` as `SELECT`, records and nums passed by reference, binary `.TP` made by
+MakeTP and jointtargets read on the robot. Each gave what was measured. The other probes were last run for 1.6.0,
+on 2026-10-07, all giving what was measured; the ABB probe modules were last run on RobotStudio for 1.6.0, and
+not run again for 1.7.0 or 1.8.0.
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -1041,3 +1059,78 @@ wrote in earlier probes; RobotStudio was not run for this probe.
 Sockets are not converted, with `--karel` either: KAREL socket messaging needs client tags configured on the
 robot, and a KAREL program could not set them on the controller measured, so a RAPID program choosing its host
 and port has no equivalent. They stay TODO, with that reason in the report.
+
+## 40. Frames written part by part and copied, run
+
+Calibration routines often set a tool or a work object part by part from what they read on the robot, then
+copy it. TP can read a frame back from the controller (`PR[k]=UTOOL[n]`), write the parts of a position register
+and load it (`UTOOL[n]=PR[k]`): that is how CrossArm writes them
+([user guide](guide.md#frames-and-points-the-programs-compute)).
+
+[tools/make_frame_field_probe.py](../tools/make_frame_field_probe.py) converts a module (with `--karel`) that
+sets a tool's `tframe.trans` from a point kept in a position register, then its x alone from a value TP computes;
+sets a work object's `uframe.trans` and `uframe.rot` from a point read on the robot (`CRobT`); copies that
+`uframe` to nine work objects, more than the controller's UFRAME numbers (the last ones kept in bank registers),
+two of them with an `oframe` other than the identity (`CA_POSEMULT`), one set whole from the trans of a point
+and the rot of a frame; and moves with and in each. `SETUP_FRAMES.LS` runs first, the frames as saved tens of
+millimetres and degrees from those the program makes, so only the frames it loads put the flange there. After
+each move the flange is read in the world frame and compared with where RAPID puts it, worked out independently
+from the points read, with quaternions. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| the tool written part by part (`PR[k]=UTOOL[2]`, `PR[k,1..3]=...`, `UTOOL[2]=PR[k]`), then a move | the flange where RAPID puts it |
+| the work object's `uframe` set from a point read on the robot (W, P, R of the LPOS), then a move in it | the flange where RAPID puts it |
+| the `uframe` copied to nine work objects, past the UFRAME limit through bank registers, two `oframe` multiplied in by KAREL | 12 flanges in all within 0.001 mm and 0.001° of RAPID |
+
+## 41. FUNCs copied into their calls, run
+
+A FUNC of the backup that builds a tool, a work object or a pose from a frame calibrated at run time cannot be
+worked out at conversion time, and TP returns no value to an expression: CrossArm writes its body at each call
+([user guide](guide.md#frames-and-points-the-programs-compute)).
+
+[tools/make_func_inline_probe.py](../tools/make_func_inline_probe.py) converts a module (with `--karel`) whose
+calibration routine reads base tools and a table on the robot, then builds eight tools and two work objects from
+them with four FUNCs: a tool composed with an offset (`PoseMult`) and given a load, a tool with another load, a
+tool shifted along z, a tool turned about z, a fixture shifted. A frame whose orientation is known at conversion
+time is shifted and turned by TP (`PR[F,i]=PR[F,i]+d`); one turned at run time by `CA_POSEMULT`; some past the
+UTOOL limit (bank registers). A move with each tool and in each work object, the flange compared with where RAPID
+puts it, worked out independently. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| the FUNCs copied into their calls, by TP and by KAREL, then a move with each tool and in each work object | 13 flanges within 0.001 mm and 0.001° of RAPID |
+
+## 42. Functions the integrator provides, run
+
+A function the backup does not declare can be a program written on the FANUC side
+([user guide](guide.md#programs-you-provide)): `x := F(args)` is `CALL PROG(args,k)`, the program writing its
+result where its last argument says.
+
+[tools/make_func_result_probe.py](../tools/make_func_result_probe.py) converts, without `--karel`, a module that
+reads two points on the robot and calls four functions it does not declare: one returning a num (a gap), a
+robtarget (a middle point), a pose (a work object fitted to two points and the gap) and a pos (a tool offset), then
+moves to the point, in work objects set from the results and with the tool. The four programs are written by hand,
+as an integrator would, reading their points as `PR[AR[n]]` and writing their result in `R[AR[k]]` or `PR[AR[k]]`.
+On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| registers indexed by an argument in the program provided (`R[AR[3]]=...`, `PR[AR[3]]=PR[AR[1]]`, `PR[AR[4],3]=...`) | loaded and run |
+| the num read back after the `CALL` | 59.9999 for a gap of 60 mm between two points read on the robot |
+| the robtarget, the pose and the pos read back, then the moves | 5 flanges where RAPID puts them, within 0.001 mm |
+
+## 43. System variables read by TP, refused
+
+RAPID's `GetSysData` reads the active tool, work object or load, `OpMode()` the operating mode. On a FANUC they
+are system variables. [tools/make_sysvar_probe.py](../tools/make_sysvar_probe.py) loads programs reading each
+into a register (`R[1]=$MNUTOOLNUM[1]`, `$MNUFRAMENUM[1]`, `$PLST_PARNUM[1]`, `$MSKKEY`, `$MSKKEY_PANL`) and runs
+them. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| each read | loads; run, stops on that line: INTP-103 Program error, VARS-034 Variable cannot be accessed |
+| `UTOOL_NUM=R[3]`, `UFRAME_NUM=R[3]`, `PAYLOAD[R[3]]` | load |
+
+So `GetSysData` and `OpMode()` stay TODO, the report saying why. `SetSysData`, which only selects a tool, a work
+object or a load, is converted (`UTOOL_NUM=n`, `UFRAME_NUM=n`, a load as `GripLoad`).

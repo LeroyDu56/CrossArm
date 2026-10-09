@@ -86,13 +86,13 @@ compiled by FANUC ktrans when ROBOGUIDE is installed, else as `.kl` with the com
 robot needs the KAREL option (R632), and the `.pc` loaded before the `.LS`. Sockets stay TODO
 ([user guide](docs/guide.md#karel-programs---karel)).
 
-**KAREL for what TP cannot compute.** With `--karel` (or step 6), what TP has no arithmetic or instruction
-for is written as calls to CrossArm's own KAREL programs: poses computed while the robot runs (`PoseMult`,
-`PoseInv`, `RelTool`, `DefFrame`), the frames calibrated from them (`UFRAME[n]=PR[k]`), and RAPID's text files
-(`Open`, `Write`, `Close`, written on the controller's `UD1:`). The programs land in a `KAREL` folder,
-compiled by FANUC ktrans when ROBOGUIDE is installed, else as `.kl` with the command to compile them. A real
-robot needs the KAREL option (R632), and the `.pc` loaded before the `.LS`. Sockets stay TODO
-([user guide](docs/guide.md#karel-programs---karel)).
+**Calibration routines.** Tools and work objects that the programs calibrate while the robot runs are
+followed field by field: a frame written part by part (`w.uframe.trans := p.trans`) is read back from the
+controller, its parts written by TP and loaded again (`PR[91]=UFRAME[3]`, `PR[91,1]=PR[97,1]`,
+`UFRAME[3]=PR[91]`); a frame copied is loaded into the other one; a FUNC of the backup that builds a tool or a
+work object from such a frame is copied into each call; and a function you provide as a program gives its
+result back in a register (`external_routines` with `"returns"`). Each form was measured on ROBOGUIDE
+([user guide](docs/guide.md#frames-and-points-the-programs-compute)).
 
 ## An example
 
@@ -149,16 +149,18 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
   measured, cut and passed on), calculations of any length; points worked out at run
   time (palletizing: `Offs()` of loop counters, `RelTool()`, `CRobT()`) in position registers, jointtargets
   read on the robot (`CJointT()`) in joint position registers; operator messages; comments.
-- **With `--karel`**: `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of poses known only at run time, the
-  tool and user frames calibrated from them, and text files, by CrossArm's KAREL programs.
+- **Calibration**: tools and work objects written part by part or copied at run time, FUNCs that build them
+  copied into each call, functions you provide as programs (their result read back from a register),
+  `SetSysData`; routines called by a name worked out at run time (`%"Bay_" + NumToStr(n,0)%`, `CallByVar`).
 - **With `--karel`**: `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of poses known only at run time, the
   tool and user frames calibrated from them, and text files, by CrossArm's KAREL programs.
 
 Frames and points the programs compute are worked out at conversion time when every value they read
 is fixed; points worked out from data that changes at run time are kept in position registers. Marked
 `!TODO` in the program and listed in the report, never guessed: other routine parameters, frames
-computed from data that changes at run time (calibrations included; with `--karel`, those computed by
-`PoseMult`, `PoseInv`, `RelTool` or `DefFrame` are converted),
+computed from data that changes at run time in ways TP cannot write (those written part by part, copied or
+built by a FUNC of the backup are converted, and with `--karel` those computed by `PoseMult`, `PoseInv`,
+`RelTool` or `DefFrame`), reading the controller's state (`GetSysData`, `OpMode()`),
 error handlers beyond wait timeouts, timer interrupts and a `TRAP` that moves the robot, analog inputs
 and a few ABB-specific instructions. The full table is in the [user guide](docs/guide.md#what-is-converted).
 
@@ -168,8 +170,9 @@ and a few ABB-specific instructions. The full table is in the [user guide](docs/
 mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
 depending on the program; programs built around files, sockets, operator dialogs or error handlers
 convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
-higher because we wrote the programs. Both figures are without `--karel`, which converts a few TODO more in
-programs that write text files or compute poses at run time. Converted means written in TP and loaded by the controller
+higher because we wrote the programs. Both figures are without `--karel` and without programs you provide
+(`external_routines`), which convert a few TODO more in programs that write text files or compute poses at
+run time. Converted means written in TP and loaded by the controller
 without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
 
 **The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
@@ -202,10 +205,11 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 |---|---|
 | RAPID instructions converted, public open-source programs (indicative, [why not all](#why-not-100-)) | about 60 %, from about 15 % to all of it per project |
 | RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
-| Every program converted from the test corpus, loaded on a FANUC controller | 130 of 130 |
+| Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on both simulators (ROBOGUIDE R-1000iA/80F, RobotStudio IRB 6700): those this version touches run again for it, the others last run for 1.6.0 | 34 of 34 give what was measured |
+| The controller probes on both simulators (ROBOGUIDE R-1000iA/80F, RobotStudio IRB 6700): the 17 this version touches run again for it on ROBOGUIDE, the others last run for 1.6.0 | 38 of 38 give what was measured |
 | With `--karel`: poses, frames and text files by CrossArm's KAREL programs, run on ROBOGUIDE | what RAPID computes and writes, within 0.001 mm and 0.01° |
+| Tools and work objects calibrated at run time: written part by part, copied, built by FUNCs copied into their calls, or by functions you provide, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -314,18 +318,22 @@ open-source programs, about 60 %. What is left gives the order of the next steps
 3. Error handlers (`ERROR`, `RETRY`, `RAISE`), for errors the program raises itself (part not found,
    measure out of range) and those of the instructions it calls.
 4. Frames and positions measured on the robot (calibration): TP cannot compute a frame. Those computed
-   from fixed values, and searches on one edge of an input, are converted; with `--karel` (1.7), those
-   computed by `PoseMult`, `PoseInv`, `RelTool` or `DefFrame` too.
+   from fixed values, searches on one edge of an input, frames written part by part or copied, and FUNCs
+   building them are converted; with `--karel` (1.7), those computed by `PoseMult`, `PoseInv`, `RelTool` or
+   `DefFrame` too.
 
-Done in 1.7: KAREL, as an option, for the poses computed at run time and text files. Sockets are not
-planned: a routine using them can be replaced by a program the integrator writes (`external_routines`).
+Done in 1.7: KAREL, as an option, for the poses computed at run time and text files. Done in 1.8: tools and
+work objects computed by calibration routines (written part by part, copied, built by FUNCs, or by functions
+the integrator provides). Sockets are not planned: a routine using them can be replaced by a program the
+integrator writes (`external_routines`).
 Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
 
 ## Documentation
 
 - [User guide](docs/guide.md): inputs and outputs, the full conversion table, the report and its
-  analysis, numbering and the mapping file, programs you provide, converting again with the touch-ups,
-  KAREL programs (`--karel`), the tool on the flange, speeds and zones.
+  analysis, numbering and the mapping file, programs and functions you provide, converting again with the
+  touch-ups, KAREL programs (`--karel`), frames calibrated at run time, the tool on the flange, speeds and
+  zones.
 - [How it was validated](docs/validation.md): every probe and measurement.
 - [FANUC `.LS` format status](docs/fanuc_ls_format.md) and [design notes](docs/design.md).
 - [Contributing](CONTRIBUTING.md): bug reports, code layout, running the tests and the probes.
@@ -348,8 +356,8 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.7.0 on 2030-10-08,
-v1.6.0 and v1.5.0 on 2030-10-07, v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
+Each released version becomes Apache 2.0 four years after it is published: v1.8.0 on 2030-10-09,
+v1.7.0 on 2030-10-08, v1.6.0 and v1.5.0 on 2030-10-07, v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 

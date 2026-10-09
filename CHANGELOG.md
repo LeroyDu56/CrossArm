@@ -3,7 +3,19 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.8.0 — 2026-10-09
+
+For calibration routines, which compute tools and work objects while the robot runs. Tools and work objects
+are followed field by field; a frame written part by part or copied is read back from the controller, written
+by TP and loaded where the RAPID sets it; a FUNC of the backup that builds a tool or a work object from such a
+frame is copied into each call; a function the backup does not have can be a program the integrator provides,
+its result read back from a register. Each form was measured on ROBOGUIDE (four new probes). Converted without
+`--karel` and without provided routines, the share of RAPID instructions converted stays at 87 %, 93 % and
+87 % on the three RobotWare backups of the test corpus, and is 87 % on its new set of calibration modules
+(most of whose TODO 1.8 converts); on public open-source programs it is still about 60 %. A mapping file
+written for 1.0 to 1.7 keeps its meaning: the keys added (`"task"`, `"returns"`, point argument types) are
+optional. Two fixes change what a mapping file given back writes, to what it always meant (frames past the
+controller's limit, a backup of several tasks): see Fixes.
 
 - Tools and work objects are followed field by field: a frame computed from `tframe` (or `uframe`, `oframe`) no
   longer waits for `robhold` or `tload` to be known, a field every program sets to its declared value

@@ -1,33 +1,39 @@
-## CrossArm 1.7.0
+## CrossArm 1.8.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review. 1.7 adds KAREL, as an option, for what TP cannot compute. Without it, CrossArm
-converts about 60 % of the instructions of public open-source programs, 87 % to 93 % of our own test corpus,
-written for testing ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
+everything left to review. 1.8 is for calibration routines, which compute tools and work objects while the
+robot runs. Without `--karel` and without provided routines, CrossArm converts about 60 % of the
+instructions of public open-source programs, 87 % to 93 % of our own test corpus, written for testing
+([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
 
-**`--karel` and CrossArm's KAREL programs.** With the new option `--karel` (or step 6 of the window, off by
-default), what TP has no arithmetic or instruction for is written as calls to a fixed library of KAREL
-programs CrossArm ships: poses computed while the robot runs (`PoseMult`, `PoseInv`, `RelTool`, `DefFrame`
-become `CALL CA_POSEMULT(...)` and the like, the poses kept in position registers), the tool and user frames
-calibrated from them (loaded where the RAPID sets them, `UFRAME[n]=PR[k]`), and RAPID's text files (`Open`,
-`Write`, `Close` become `CALL CA_FILE(...)`; the files of `HOME:` are written on the controller's `UD1:`, byte
-for byte as RAPID writes them). Each program was measured on ROBOGUIDE.
+**Tools and work objects, field by field.** A frame computed from a tool's `tframe` no longer waits for its
+`tload` to be known, and a field left TODO only makes TODO what reads it. A frame written part by part at run
+time (`w.uframe.trans := p.trans`, `t.tframe.trans.z := ...`) is read back from the controller, its parts
+written by TP and loaded where the RAPID sets it (`PR[91]=UFRAME[3]`, `PR[91,1]=PR[97,1]`, `UFRAME[3]=PR[91]`);
+a frame copied (`wB.uframe := wA.uframe`) is loaded into the other one, past the controller's limit through its
+bank register. A FUNC of the backup that builds a tool, a work object or a pose from such a frame (its body only
+assignments and pose functions) is copied into each call, in TP, or with `--karel` when the orientation is only
+known at run time; the report says at how many calls each was copied, to convert again after it changes.
 
-**What the robot needs.** The programs land in a `KAREL` folder of the output, compiled to `.pc` by FANUC
-ktrans when it is installed (with ROBOGUIDE), for the software version of the `--tp-robot` robot; without
-ktrans, as `.kl` with the command to compile them. A real controller needs the KAREL option (R632). Load the
-`.pc` before the `.LS`: a program calling one the robot does not have stops on that `CALL`. The report gets a
-"KAREL programs" section, an action of the analysis and a checklist group; without `--karel`, it says how many
-TODO the option would convert.
+**Functions you provide.** `external_routines` takes functions too: `x := F(args)`, F returning a num, pos,
+pose or robtarget, becomes `CALL PROG(args,k)`, the program writing its result in `R[AR[n]]` or `PR[AR[n]]`
+for the caller to read; points are passed by their position register's number, and `"returns"` types a
+function the backup does not declare. Also new: `SetSysData`, routines called by a name worked out at run time
+(a `SELECT` over the routines the name can be), waits with `\Visualize`, records passed by reference.
+`GetSysData` and `OpMode()` stay TODO, saying why: a TP program reads no system variable on the controller
+measured. Every form was measured on ROBOGUIDE (four new probes).
 
-**What stays TODO.** Sockets, with `--karel` too: KAREL socket messaging needs client tags configured on the
-robot, which CrossArm does not set up. A socket routine can still be a program the integrator provides
-(`external_routines`). Also left: `PoseVect`, reading files, and the error handlers of file routines.
+**Fixes to convert again for.** A mapping file given back with tool or user frames past the controller's
+limit selected them by their number (`UTOOL_NUM=11`, refused by the controller) instead of loading them from
+their position register. **Versions 1.0.0 to 1.7.0 are affected: convert again with the same mapping file**,
+which keeps its meaning. A mapping file given back to a backup of several tasks renamed the other tasks' main
+programs; each task's file now says which task it was written for (`"task"`). The report says what `--karel`
+did on the run (each KAREL program, from which programs, how often).
 
-**Still what 1.x keeps:** without `--karel`, the programs are the ones 1.6 writes (the report adds what
-`--karel` would convert). A mapping file written for 1.0
-to 1.6 gives the same numbers, and the command line keeps its options (`--karel` is new). Numbers CrossArm
-picks by itself can move from one version to the next: give a conversion its mapping file back to keep them.
+**Still what 1.x keeps:** a mapping file written for 1.0 to 1.7 gives the same numbers (the keys added are
+optional; a frame number past the limit means a bank register, as CrossArm always wrote it), and the command
+line keeps its options. Numbers CrossArm picks by itself can move from one version to the next: give a
+conversion its mapping file back to keep them.
 The whole list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 See the [README](https://github.com/LeroyDu56/CrossArm#readme), the
@@ -44,7 +50,7 @@ programs loaded on a real robot, conversions delivered to a customer, or billed
 migration work. See [LICENSING.md](https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md)
 for where the line falls, and write to **enzoleroy56@gmail.com** for a licence.
 
-This version becomes Apache 2.0 on 2030-10-08.
+This version becomes Apache 2.0 on 2030-10-09.
 
 `python_license.txt` next to the executable covers the Python runtime bundled inside it; see
 [THIRD_PARTY_LICENSES.md](https://github.com/LeroyDu56/CrossArm/blob/main/THIRD_PARTY_LICENSES.md).
