@@ -454,6 +454,9 @@ def build_report(result: ConversionResult, config: ConversionConfig, sources: li
     return "\n".join(lines).rstrip() + "\n"
 
 
+EVALUATION_NOTICE = "> **Evaluation copy.**"  # how the report's licence notice starts
+
+
 def report_parts(result: ConversionResult, config: ConversionConfig, sources: list[str],
                  licence: "LicenceStatus | None" = None) -> list[tuple[str, list[str]]]:  # fmt: skip
     """The report's sections, in order, as Markdown lines: (key, lines).
@@ -473,7 +476,7 @@ def report_parts(result: ConversionResult, config: ConversionConfig, sources: li
         *([f"- Licence: {licence.describe()}"] if licence is not None else []),
         "",
         *([(
-            "> **Evaluation copy.** CrossArm is free to evaluate. Using these programs in production — on a robot"
+            f"{EVALUATION_NOTICE} CrossArm is free to evaluate. Using these programs in production — on a robot"
             " doing real work, or delivered to a customer — needs a commercial licence"
             f" ({CONTACT}). Every program carries the same mark in its first lines."
         ), ""] if licence is not None and not licence.licensed else []),

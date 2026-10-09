@@ -63,6 +63,18 @@ def source(file: str) -> str:
     return resources.files(__name__).joinpath(file).read_text(encoding="ascii")
 
 
+def calls(programs: Iterable[tuple[str, Iterable[str]]]) -> dict[str, dict[str, int]]:
+    """Library program -> TP program calling it -> how many times, for (TP program, its lines); in the order of the
+    library, the callers in the order given."""
+    found: dict[str, dict[str, int]] = {}
+    for program, lines in programs:
+        for text in lines:
+            if (match := _CALL.match(text)) and match[1] in PROGRAMS:
+                per = found.setdefault(match[1], {})
+                per[program] = per.get(program, 0) + 1
+    return {name: found[name] for name in PROGRAMS if name in found}
+
+
 def called(lines: Iterable[str]) -> list[str]:
     """The library programs these TP lines call, in the order of the library."""
     found = {match[1] for text in lines if (match := _CALL.match(text)) and match[1] in PROGRAMS}

@@ -261,6 +261,24 @@ def _no_tp_kinds(notes: list[Note]) -> list[str]:
     return [kind for kind, _ in kinds.most_common()]
 
 
+def karel_use(result: ConversionResult) -> str:
+    """What --karel did on this run, so that nobody takes it for having converted everything: each KAREL program
+    called, from which programs, how often. "" without --karel."""
+    if result.karel_calls is None:
+        return ""
+    if not result.karel_calls:
+        return "`--karel`: no KAREL program used on this run; every program is TP only."
+    parts = []
+    for name, callers in result.karel_calls.items():
+        total = sum(callers.values())
+        shown = [f"`{program}` ({count})" for program, count in callers.items()]
+        parts.append(f"`{name}` {_plural(total, 'call')} in {_names(shown, 4)}")
+    calling = len({program for callers in result.karel_calls.values() for program in callers})
+    return (f"`--karel` on this run: {'; '.join(parts)}. {calling} of {_plural(len(result.programs), 'program')} call"
+            f"{'s' if calling == 1 else ''} KAREL; everything else is TP, and what stays TODO is not converted by"
+            " KAREL either.")  # fmt: skip
+
+
 def _todo(count: int) -> str:
     return f"{count} TODO"
 
@@ -306,7 +324,10 @@ def priority_actions(result: ConversionResult) -> list[Action]:
         names = [f"`{use.program}`" for use in result.provided]
         actions.append(Action(
             f"Write and load the {_plural(len(names), 'program')} to provide",
-            f"{_names(names, 4)}: CrossArm calls them and does not write them (`external_routines`).",
+            f"{_names(names, 4)}: CrossArm calls them and does not write them (`external_routines`)."
+            + (" A function writes its result in the register its last argument names (R[AR[n]] for a num,"
+               " PR[AR[n]] for a pose or a point), which the caller reads back."
+               if any(use.function and use.returns for use in result.provided) else ""),
             "#ck-provided", "Checklist: Programs to provide"))  # fmt: skip
     if result.karel_programs:
         names = [f"`{name}`" for name in result.karel_programs]
@@ -345,6 +366,25 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             " Write, Close on UD1:). Load the KAREL programs (.pc) before the .LS; a real robot needs the KAREL"
             " option (R632)." + (" Sockets stay TODO with it." if sockets else ""), "#review", "Items to review",
             Blocker.RUNTIME_POSITION))  # fmt: skip
+
+    inlined = [note for note in result.notes if note.category == Blocker.INLINED]
+    if inlined:
+        found = [re.match(r"FUNC (\w+)\(\) of the backup is inlined at (\d+)", note.message) for note in inlined]
+        shown = [f"`{match[1]}()` ({match[2]})" for match in found if match]
+        actions.append(Action(
+            f"Convert again after a change of the {_plural(len(inlined), 'FUNC')} copied into their calls",
+            f"{_names(shown, 4)} call sites: CrossArm writes the body of each into every call, so a change of one in"
+            " the RAPID changes nothing on the robot until the backup is converted again, with the same mapping file.",
+            "#review", "Items to review", Blocker.INLINED))  # fmt: skip
+    banked = [f for f in (*result.utools, *result.uframes) if f.bank is not None]
+    if banked:
+        slots = sorted({f"{'UTOOL' if f in result.utools else 'UFRAME'}[{f.slot}]" for f in banked})
+        actions.append(Action(
+            f"Keep the position registers of the {_plural(len(banked), 'frame')} past the controller's limit",
+            f"{_names([f'`{f.rapid_name}` PR[{f.bank}]' for f in banked], 4)}: kept there by SETUP_FRAMES and loaded"
+            f" into {_names(slots, 2)} before each use; leave them alone, and give the mapping file back to keep them"
+            " (CrossArm 1.0 to 1.7 selected such frames by number when given it back: convert again).",
+            "#ck-frames", "Checklist: Frames and tools"))  # fmt: skip
 
     errors = [note for cause in sorted(_ERRORS) for note in by_cause.get(cause, [])]
     done.update(_ERRORS)
@@ -447,6 +487,7 @@ def analysis_markdown(result: ConversionResult) -> list[str]:
         f"- {decision.rule}",
         *([f"- {fmt_percent(coverage.percent)} of the {coverage.total:,} RAPID instructions converted."]
           if coverage.total else []),
+        *([f"- {karel_use(result)}"] if karel_use(result) else []),
         (f"- {clean} of {len(result.programs)} programs with no TODO, {len(result.programs) - clean} with TODO"
          f" ({_plural(result.todo_count, 'TODO', 'TODO')})."),
         "",

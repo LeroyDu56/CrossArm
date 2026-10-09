@@ -179,19 +179,26 @@ def compile_command(export: KarelExport) -> str:
                      for n in export.written)  # fmt: skip
 
 
-def report_section(export: KarelExport, where: str) -> str:
-    """The report's part about the KAREL programs; `where`: their folder, as the report names it."""
+def report_section(export: KarelExport, where: str, calls: dict[str, dict[str, int]] | None = None) -> str:
+    """The report's part about the KAREL programs; `where`: their folder, as the report names it; `calls`: each one's
+    calls, by calling program (ConversionResult.karel_calls)."""
     text = "\n## KAREL programs (--karel)\n\n"
     text += (f"The programs call {len(export.written)} KAREL program{'s' if len(export.written) > 1 else ''} of"
              f" CrossArm's library, written in `{where}`. The robot needs the {R632}. Load each .pc before the .LS"
              " programs that call it: a CALL to a program the robot does not have stops when it runs"
              " (INTP-222).\n\n")  # fmt: skip
-    text += "| Program | Does | Arguments | File |\n|---|---|---|---|\n"
+    if calls is not None:
+        callers = {program for per in calls.values() for program in per}
+        text += (f"Called on this run from {len(callers)} program{'s' if len(callers) != 1 else ''}"
+                 f" ({sum(sum(per.values()) for per in calls.values())} calls); every other line is TP.\n\n")
+    text += "| Program | Does | Arguments | Called from | File |\n|---|---|---|---|---|\n"
     for name in export.written:
         program = PROGRAMS[name]
         stem = Path(program.source).stem
         file = f"{stem}.pc" if name in export.compiled else f"{program.source} (not compiled)"
-        text += f"| `{name}` | {program.does} | {program.arguments} | `{file}` |\n"
+        per = (calls or {}).get(name, {})
+        called = ", ".join(f"`{caller}` ({count})" for caller, count in per.items()) or "—"
+        text += f"| `{name}` | {program.does} | {program.arguments} | {called} | `{file}` |\n"
     if export.problem:
         text += (f"\nNot compiled: {export.problem}. Compile them with FANUC ktrans for the robot's software version"
                  f" (`{LIBRARY}` in the same folder): `{compile_command(export)}`.\n")  # fmt: skip

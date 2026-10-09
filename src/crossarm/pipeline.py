@@ -280,7 +280,7 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         extra += report_section(out.tp, os.path.relpath(tp[1], folder) if tp else "")
     karel_where = os.path.relpath(karel[1], folder) if karel else ""
     if out.karel is not None:
-        extra += ktrans.report_section(out.karel, karel_where)
+        extra += ktrans.report_section(out.karel, karel_where, result.karel_calls)
     # The .md has the taught positions as Markdown; the page builds its own section from result.taught.
     markdown = extra + (taught_section(result.taught, keeping.where) if result.taught is not None and keeping else "")
     if out.syntax_errors:

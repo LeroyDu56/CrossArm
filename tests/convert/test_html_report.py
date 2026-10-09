@@ -121,7 +121,10 @@ def test_the_page_loads_nothing_escapes_the_backup_and_links_every_todo_to_its_l
     assert set(parsed.links) <= parsed.ids  # no link leads nowhere
     assert "L-MAIN-16" in parsed.links  # the TODO, from the list to its line
     assert '<tr id="L-MAIN-16" class="todo">' in page
-    assert "Evaluation copy." in page.split('<nav class="menu"')[0]  # in the header, as in the Markdown report
+    # Under the verdict, before what to do first: always seen, the header only says the licence.
+    analysis = page.split('<section id="analysis">')[1].split("</section>")[0]
+    assert page.count("Evaluation copy.") == 1 and "Evaluation copy." in analysis.split('class="an-grid"')[0]
+    assert analysis.index("Evaluation copy.") > analysis.index('class="decision"')
     assert "prefers-color-scheme: dark" in page and "@media print" in page
     assert 'class="bar js-only"' in page  # filters only shown when the script runs
 

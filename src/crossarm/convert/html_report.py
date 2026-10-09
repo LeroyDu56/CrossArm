@@ -35,7 +35,7 @@ from crossarm.convert.config import ConversionConfig
 from crossarm.convert.coverage import fmt_percent
 from crossarm.convert.html import CSS as MARKDOWN_CSS
 from crossarm.convert.html import inline, markdown_body
-from crossarm.convert.report import report_parts
+from crossarm.convert.report import EVALUATION_NOTICE, report_parts
 from crossarm.convert.source_map import Row, line_anchor, side_by_side, tp_text
 from crossarm.convert.taught_report import TAUGHT_CSS, TAUGHT_JS, taught_section
 from crossarm.convert.translate import ConversionResult, Note, ProgramInfo
@@ -232,8 +232,9 @@ def _line_link(program: str, line: int | None, anchors: set[tuple[str, int]], sh
 
 
 def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[tuple[str, int]],
-                      targets: set[str], checklist_items: int) -> Section:  # fmt: skip
-    """The decision first, then what to do; every figure leads to its detail further down."""
+                      targets: set[str], checklist_items: int, licence_note: list[str] = ()) -> Section:  # fmt: skip
+    """The decision first, then what to do; every figure leads to its detail further down. `licence_note`: the
+    evaluation copy's notice, right under the decision."""
     decision = verdict(result)
     coverage = result.coverage
     programs = len(result.programs)
@@ -261,9 +262,12 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
         '<div class="vstats">' + "".join(f"<div><b>{_e(v)}</b><span>{_e(label)}</span></div>" for v, label in stats)
         + "</div>",
         f'<p class="decision"><span class="vtag">{_e(decision.level)}</span> {_e(decision.sentence)}</p>',
-        f'<p class="rule">{_e(decision.rule)}</p>{why}</div>',
+        f'<p class="rule">{_e(decision.rule)}</p>{why}'
+        + (f'<p class="karel-use">{inline(analysis.karel_use(result))}</p>' if analysis.karel_use(result) else "")
+        + "</div>",
         (f'<div class="vareas"><h3>Converted by area</h3><ul class="areas">{areas}</ul></div>' if areas else ""),
         "</div>",
+        (f'<div class="licence-note">{markdown_body(chr(10).join(licence_note))}</div>' if licence_note else ""),
     ]  # fmt: skip
 
     actions = []
@@ -401,6 +405,8 @@ header.top ul { list-style: none; padding: 0; margin: .2em 0 .4em; display: flex
   color: var(--muted); font-size: .88em; }
 header.top blockquote { margin: .4em 0; padding: .35em .9em; font-size: .92em; }
 details.srcs { font-size: .85em; color: var(--muted); margin: 0 0 .4em; }
+.licence-note blockquote { margin: -.4em 0 1em; padding: .35em .9em; font-size: .92em; }
+.verdict .karel-use { font-size: .9em; margin: .3em 0 0; }
 details.srcs summary { cursor: pointer; }
 #analysis > h2 { margin: .5em 0 0; font-size: 1.2em; border-bottom: 0; }
 .verdict { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: 8px 28px;
@@ -582,6 +588,10 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     `taught_where`: the robot's programs read for --keep-taught (result.taught), as the report names them;
     `karel`: the KAREL programs written (--karel), in `karel_where`."""
     parts = dict(report_parts(result, config, sources, licence))
+    # The evaluation copy's notice: under the decision, where everyone reading the report looks (the Markdown
+    # report keeps it in its head).
+    licence_note = [line for line in parts["head"] if line.startswith(EVALUATION_NOTICE)]
+    parts["head"] = [line for line in parts["head"] if line not in licence_note]
     anchors: set[tuple[str, int]] = set()
     code = _code_section(result, lead or [], anchors)  # first: the review links to the lines it shows
     checklist = checklist_section(result, config, anchors, identity=f"{title}|{'|'.join(sources)}", tp=tp,
@@ -599,7 +609,7 @@ def build_html_report(result: ConversionResult, config: ConversionConfig, source
     # Last, but shown first: its links lead to what the other sections hold.
     targets = {sid for sid, _, _ in sections} | set(re.findall(r'\bid="([^"]+)"', "".join(b for _, _, b in sections)))
     items = checklist[2].count("<li data-id=")
-    sections.insert(0, _analysis_section(result, parts["notice"], anchors, targets, items))
+    sections.insert(0, _analysis_section(result, parts["notice"], anchors, targets, items, licence_note))
     menu = "".join(f'<a href="#{_e(sid)}">{_e(label)}</a>' for sid, label, _ in sections)
     page = "\n".join(f'<section id="{_e(sid)}">\n{body}\n</section>' for sid, _, body in sections)
     return (

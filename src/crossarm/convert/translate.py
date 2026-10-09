@@ -140,7 +140,7 @@ from crossarm.geometry import (
     wpr_to_matrix,
 )
 from crossarm.karel import PROGRAMS as KAREL_PROGRAMS
-from crossarm.karel import called as karel_called
+from crossarm.karel import calls as karel_calls
 from crossarm.rapid import nodes as n
 from crossarm.rapid.eio import Signal
 from crossarm.rapid.to_pseudo import format_expr
@@ -427,6 +427,8 @@ class ConversionResult:
     # TODO it would convert (karel_would()).
     karel_programs: list[str] = field(default_factory=list)
     karel_todo: int = 0
+    # --karel: each library program -> the TP programs calling it -> how many calls ({}: none used); None: no --karel.
+    karel_calls: dict[str, dict[str, int]] | None = None
 
     @property
     def todo_count(self) -> int:
@@ -979,8 +981,10 @@ class Converter:
         left_out = [r for r in skipped if r.name.upper() not in self.move_routines]
         res.coverage = measure([r for _, r in selected], left_out, self.not_converted, declared, set(self.move_routines))
         if self.config.karel:
-            res.karel_programs = karel_called(line.text for info in res.programs for line in info.program.lines
-                                              if isinstance(line, Instruction))  # fmt: skip
+            res.karel_calls = karel_calls((info.program.name, [line.text for line in info.program.lines
+                                                               if isinstance(line, Instruction)])
+                                          for info in res.programs)  # fmt: skip
+            res.karel_programs = list(res.karel_calls)
         return res
 
     def _report_provided(self, selected: list[n.Routine]) -> None:

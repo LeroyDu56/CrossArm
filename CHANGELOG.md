@@ -31,6 +31,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - `SetSysData` of a tool or work object selects it (`UTOOL_NUM=n`, `UFRAME_NUM=n`), of a loaddata as `GripLoad`.
   `GetSysData` and `OpMode()` stay TODO, now saying why: a TP program reads no system variable on the measured
   controller (VARS-034, probe `sysvars`).
+- The report says what `--karel` did on the run: each KAREL program called, from which programs and how often (or
+  that none was used), in the analysis and the KAREL section. The HTML report shows the evaluation-copy notice under
+  the verdict. The analysis points at the FUNCs copied into their calls (convert again after a change), the result
+  register of provided functions, and the frames kept in position registers past the controller's limit.
 
 ### Fixes
 - A mapping file given back with frames past the controller's limit (kept in position registers) selected them by
