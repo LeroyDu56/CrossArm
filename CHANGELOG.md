@@ -35,6 +35,8 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   that none was used), in the analysis and the KAREL section. The HTML report shows the evaluation-copy notice under
   the verdict. The analysis points at the FUNCs copied into their calls (convert again after a change), the result
   register of provided functions, and the frames kept in position registers past the controller's limit.
+- The window: step 5 is titled "Positions touched up", no longer cut on a window 820 px wide; step 3 names the task
+  a mapping file was written for.
 
 ### Fixes
 - A mapping file given back with frames past the controller's limit (kept in position registers) selected them by
