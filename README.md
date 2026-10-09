@@ -24,7 +24,7 @@ commissioning.
 | | |
 |---|---|
 | **Input** | ABB RobotWare 6 / 7 backup (folder or `.zip`), or RAPID modules (`.mod` `.modx` `.sys` `.sysx` `.prg`) |
-| **Output** | FANUC TP programs as `.LS` text (and binary `.TP` through FANUC MakeTP, optional; KAREL programs for what TP cannot compute, optional), an interactive HTML report that opens on a decision (ready, workable, not ready) and holds a commissioning checklist, an editable numbering file, the points written (to keep the robot's touch-ups when converting again) |
+| **Output** | FANUC TP programs as `.LS` text (and binary `.TP` through FANUC MakeTP, optional; KAREL programs for what TP cannot compute, optional), an interactive HTML report that opens on a decision (ready, workable, not ready) and holds a commissioning checklist, a one-page summary and the figures as JSON, an editable numbering file, the points written (to keep the robot's touch-ups when converting again) |
 | **Optional** | the backup of the FANUC robot the programs will run on, so its numbers and program names are left free; its programs as they are now, so the points touched up on it are kept |
 | **Runs on** | Windows (`CrossArm.exe`, nothing to install) or any system with Python 3.11+ — entirely offline |
 | **Licence** | Business Source License 1.1: free for evaluation and non-production use ([details](LICENSING.md)) |
@@ -58,13 +58,18 @@ backups on the icon converts them straight away. From the command line:
 `crossarm convert abb_backup/ --fanuc fanuc_backup/`, with `--tp-robot <ROBOGUIDE robot folder>` for the
 `.TP` ([user guide](docs/guide.md#command-line)).
 
-The report, `crossarm_report.html`, is one page that works offline. It opens on an analysis: whether the
-conversion is ready, workable or not ready, by a fixed rule printed under the decision, the 3 to 7 things to
-do first, the main TODO causes and the share converted by area. Then the detail: each RAPID routine next to
-its TP, line by line, every TODO marked with its cause; the items to review, filtered or searched, each
-leading to its line; and a commissioning checklist in the order the cell is brought up (frames and tools
-with their values, payloads, I/O, registers, points to touch up, motion to check), its ticks kept in the
-browser, printable.
+The report, `crossarm_report.html`, is one page that works offline, built as a cockpit: a line kept at the
+top gives the decision, the share converted, the TODO, the blocking causes and the points to touch up, and
+the rest stays folded until asked for. It opens on an analysis: whether the conversion is ready, workable or
+not ready, by a fixed rule printed under the decision, the 3 to 7 things to do first — each with the exact
+number of TODO it concerns, a link to them and who acts — the main TODO causes and the share converted by
+area. Then the detail, on demand: the programs in folders, each RAPID routine next to its TP, opened on its
+TODO; the items to review, filtered or searched, each leading to its line; and a commissioning checklist in
+the order the cell is brought up (frames and tools with their values, payloads, I/O, registers, points to
+touch up, motion to check), its ticks kept in the browser. The items and the checklist export as CSV; the
+report prints as a 2-page summary or as the site checklist. Next to it, `crossarm_report_summary.md` holds
+it on one page and `crossarm_summary.json` its figures; converting the same backup again says what changed
+since the previous conversion (TODO, warnings and % then and now, causes gone and new).
 
 **Converting again keeps the touch-ups.** Every conversion writes `crossarm_points.json`, the points it
 wrote and where each came from. When the ABB program changes after commissioning,
@@ -324,7 +329,9 @@ open-source programs, about 60 %. What is left gives the order of the next steps
 
 Done in 1.7: KAREL, as an option, for the poses computed at run time and text files. Done in 1.8: tools and
 work objects computed by calibration routines (written part by part, copied, built by FUNCs, or by functions
-the integrator provides). Sockets are not planned: a routine using them can be replaced by a program the
+the integrator provides). Done in 1.9: the report as a cockpit (decision and figures first, detail on demand,
+actions saying who acts), a one-page summary, the comparison with the previous conversion, CSV. Sockets are
+not planned: a routine using them can be replaced by a program the
 integrator writes (`external_routines`).
 Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
 
@@ -356,7 +363,7 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.8.0 on 2030-10-09,
+Each released version becomes Apache 2.0 four years after it is published: v1.9.0 and v1.8.0 on 2030-10-09,
 v1.7.0 on 2030-10-08, v1.6.0 and v1.5.0 on 2030-10-07, v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

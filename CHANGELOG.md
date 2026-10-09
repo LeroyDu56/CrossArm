@@ -3,7 +3,16 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.9.0 — 2026-10-09
+
+For the report, which becomes a cockpit: in a minute, the reader knows where the conversion stands and what to
+do first, and the detail opens only when asked for. A line kept at the top gives the decision and the figures;
+each action says how many TODO it concerns, leads to them and says who acts; the programs are in folders, each
+opened on its TODO; a one-page summary and a machine-readable summary are written next to the report, and
+converting again compares with the previous conversion of the same input. The items to review and the
+checklist export as CSV, and the report prints as a 2-page summary or as the site checklist. Nothing changes
+in the `.LS` programs, the mapping file or the command line: two output files are added
+(`crossarm_report_summary.md`, `crossarm_summary.json`), none removed.
 
 - HTML report as a cockpit: a line kept at the top (decision, % converted, TODO, blocking causes, points) and a menu;
   all but the analysis folded, long lists laid out only when opened; three views; items to review 50 at a time,

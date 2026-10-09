@@ -1,39 +1,34 @@
-## CrossArm 1.8.0
+## CrossArm 1.9.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review. 1.8 is for calibration routines, which compute tools and work objects while the
-robot runs. Without `--karel` and without provided routines, CrossArm converts about 60 % of the
-instructions of public open-source programs, 87 % to 93 % of our own test corpus, written for testing
+everything left to review. 1.9 makes the report a cockpit: in a minute, you know where the conversion stands
+and what to do first; the detail opens only when you ask for it. Without `--karel` and without provided
+routines, CrossArm converts about 60 % of the instructions of public open-source programs, 87 % to 93 % of
+our own test corpus, written for testing
 ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
 
-**Tools and work objects, field by field.** A frame computed from a tool's `tframe` no longer waits for its
-`tload` to be known, and a field left TODO only makes TODO what reads it. A frame written part by part at run
-time (`w.uframe.trans := p.trans`, `t.tframe.trans.z := ...`) is read back from the controller, its parts
-written by TP and loaded where the RAPID sets it (`PR[91]=UFRAME[3]`, `PR[91,1]=PR[97,1]`, `UFRAME[3]=PR[91]`);
-a frame copied (`wB.uframe := wA.uframe`) is loaded into the other one, past the controller's limit through its
-bank register. A FUNC of the backup that builds a tool, a work object or a pose from such a frame (its body only
-assignments and pose functions) is copied into each call, in TP, or with `--karel` when the orientation is only
-known at run time; the report says at how many calls each was copied, to convert again after it changes.
+**The decision first, the detail on demand.** A line stays at the top of the report: the decision (ready,
+workable, not ready), the share converted, the TODO, the blocking causes, the points to touch up. Everything
+but the analysis is folded, and long lists are laid out only when opened, so a large backup opens at once.
+Three views choose how much opens (Synthesis, Integrator, Detail); the programs are in folders by name, each
+with its counts, and a program opens on its TODO, two lines around each, a TODO followed from the list
+highlighting its RAPID line and the TP lines written from it.
 
-**Functions you provide.** `external_routines` takes functions too: `x := F(args)`, F returning a num, pos,
-pose or robtarget, becomes `CALL PROG(args,k)`, the program writing its result in `R[AR[n]]` or `PR[AR[n]]`
-for the caller to read; points are passed by their position register's number, and `"returns"` types a
-function the backup does not declare. Also new: `SetSysData`, routines called by a name worked out at run time
-(a `SELECT` over the routines the name can be), waits with `\Visualize`, records passed by reference.
-`GetSysData` and `OpMode()` stay TODO, saying why: a TP program reads no system variable on the controller
-measured. Every form was measured on ROBOGUIDE (four new probes).
+**Actions you can act on.** Each action of the analysis gives the exact number of TODO it concerns, leads to
+them and says who acts: the FANUC integrator, the ABB backup, a robot option, or "a later CrossArm version may
+help". Cosmetic TODO are apart; routines to provide come with an `external_routines` example to paste; over the
+controller's capacity, the report proposes the mapping keys to edit. A sentence under the share converted by
+area says what it means for the cell.
 
-**Fixes to convert again for.** A mapping file given back with tool or user frames past the controller's
-limit selected them by their number (`UTOOL_NUM=11`, refused by the controller) instead of loading them from
-their position register. **Versions 1.0.0 to 1.7.0 are affected: convert again with the same mapping file**,
-which keeps its meaning. A mapping file given back to a backup of several tasks renamed the other tasks' main
-programs; each task's file now says which task it was written for (`"task"`). The report says what `--karel`
-did on the run (each KAREL program, from which programs, how often).
+**A summary, a comparison, a spreadsheet.** Next to each report, `crossarm_report_summary.md` holds it on one
+page and `crossarm_summary.json` its figures. Converting the same backup again compares with the previous
+conversion: TODO, warnings and % then and now, causes gone and new; if RAPID files changed, it says how many,
+and another backup is never compared. The items to review and the checklist export as CSV, and the report
+prints as a 2-page summary or as the site checklist.
 
-**Still what 1.x keeps:** a mapping file written for 1.0 to 1.7 gives the same numbers (the keys added are
-optional; a frame number past the limit means a bank register, as CrossArm always wrote it), and the command
-line keeps its options. Numbers CrossArm picks by itself can move from one version to the next: give a
-conversion its mapping file back to keep them.
+**Still what 1.x keeps:** the `.LS` programs and the mapping file are unchanged (no key added or removed), and
+the command line keeps its options; two output files are added, none removed. Numbers CrossArm picks by
+itself can move from one version to the next: give a conversion its mapping file back to keep them.
 The whole list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 See the [README](https://github.com/LeroyDu56/CrossArm#readme), the
@@ -64,7 +59,8 @@ This version becomes Apache 2.0 on 2030-10-09.
 - **double-click** it and choose them in the window.
 
 The `.LS` programs, `SETUP_FRAMES.LS`, the conversion report (`crossarm_report.html`), the editable
-`crossarm_mapping.json`, `crossarm_points.json` and `crossarm_log.txt` are written to a new
+`crossarm_mapping.json`, `crossarm_points.json`, `crossarm_log.txt`, the one-page
+`crossarm_report_summary.md` and `crossarm_summary.json` are written to a new
 `crossarm_<name>` folder next to the input, with a `TP` folder of `.TP` programs when step 4 is used and a
 `KAREL` folder when step 6 is. Everything runs locally: no file
 leaves the computer.

@@ -39,6 +39,8 @@ overwritten:
 - `SETUP_FRAMES.LS`: run once on the robot, it sets every tool and user frame of the report, so none
   has to be typed in on the pendant;
 - the report, `crossarm_report.html` (and `.md`): see [reading the report](#reading-the-report);
+- `crossarm_report_summary.md`, the report on one page, and `crossarm_summary.json`, its figures in machine
+  form, read by the next conversion to compare ([summaries and comparison](#summaries-and-comparison-with-the-previous-conversion));
 - `crossarm_mapping.json`, the numbering used, to edit and give back;
 - `crossarm_log.txt`;
 - `crossarm_points.json`, every point written and the RAPID it came from, so that a later conversion keeps
@@ -79,7 +81,8 @@ On a small screen the steps scroll, and **Convert** stays at the bottom. Then **
 gives the decision of the [analysis](#the-analysis-first) (ready, workable or not ready) under its tiles,
 how many programs are ready as is and what to look at first — anything that would stop the programs
 loading or running comes before where the manual work is — with the touch-ups kept and to redo when step 5
-was used, the KAREL programs to load first when step 6 was, and the report one click away. **How it works** in the header explains the outputs and the limits
+was used, the KAREL programs to load first when step 6 was, a line comparing with the previous conversion of
+the same backup when there is one, and the report one click away. **How it works** in the header explains the outputs and the limits
 in plain words. Dropping the backups on the `CrossArm.exe` icon converts them straight away.
 
 The executable is not code-signed. On first launch, SmartScreen may ask for confirmation
@@ -356,7 +359,20 @@ not make the others unknown, and writes at run time what TP can:
 ## Reading the report
 
 `crossarm_report.html` is one page, with nothing to install or download: it works offline, in light
-or dark, and prints. Its menu leads to:
+or dark, and prints. It is built as a cockpit: what to read first is open, the rest stays folded until
+asked for, and a long list is laid out only when its section is opened, so a large backup opens as fast
+as a small one.
+
+A line stays at the top of the page: the decision, the share of the RAPID converted, the TODO, the
+blocking causes, the points to touch up, the CrossArm version and the date of the conversion, the view and
+the print buttons; the menu is under it. The **view** chooses how much opens:
+- **Synthesis**: the analysis alone, the rest one line per section;
+- **Integrator**: also the checklist, its groups one line each with their counts and the next items to
+  do (**Show all** for every item), the items to review and the program folders;
+- **Detail**: everything open.
+
+The view is kept in the browser. A link such as `#todo&cause=...&prog=...` opens the items to review
+filtered, and every count of TODO in the page leads to that list. Its menu leads to:
 - **Analysis**, first: the decision and what to do first ([the analysis first](#the-analysis-first));
 - **Taught positions**, when converting again with `--keep-taught`: each point kept, to touch up again,
   new or gone, with how far its touch-up is from the theoretical point and why, filtered by status, the
@@ -372,13 +388,24 @@ or dark, and prints. Its menu leads to:
   items. Each item links to the lines that use it. Ticks are kept in the browser, for that report
   (an item whose values change in a new conversion comes back unticked); "hide the items done",
   "Untick all", and "Print the checklist" prints it alone, boxes ticked or empty;
-- **Items to review**: every TODO and warning, filtered by kind, cause and program, or searched, each
-  leading to its line;
-- **RAPID and TP**: each program, its RAPID routine and its TP side by side, line by line, the TP line
-  numbers those of the `.LS`, the TODO lines marked;
+- **Items to review**: every TODO and warning, filtered by kind, cause and program, or searched, 50 at a
+  time, each leading to its line; **Export CSV** writes what the filters keep (program, RAPID line, kind,
+  cause, family, who acts, detail) for a spreadsheet;
+- **RAPID and TP**: the programs in folders, by the start of their names (or by RAPID module), each
+  folder and program with its counts of TODO and warnings, the programs with TODO first, those ready as
+  is in one line. A program opens on its TODO and warnings, two lines around each, the lines converted
+  between them one click away (**Full program** shows it all); lines repeating the same warning are
+  folded behind one line. Its RAPID routine and its TP are side by side, line by line, the TP line
+  numbers those of the `.LS`; a TODO followed from the items to review highlights its RAPID line and the
+  TP lines written from it. Each program also says what it calls of CrossArm's KAREL programs, the
+  FUNCs copied into it and the routines you provide;
+- **Points**: one line per program, its points in a table when opened, searched by name;
 - **Details**: the rest of the report, as in `crossarm_report.md`, which stays for reading as text.
 
-Without JavaScript, the filters and ticks are gone but everything is there.
+Without JavaScript, the analysis is shown and the rest is in `crossarm_report.md`.
+
+Two print buttons: **summary (2 pages)** prints the analysis alone, **site checklist** every item of
+the checklist, to tick on paper. The checklist also exports as CSV (group, item, values, ticked).
 
 ### The analysis first
 
@@ -394,14 +421,20 @@ A large backup produces hundreds of TODO entries that come down to a handful of 
   program, a CrossArm internal error. It needs a solution designed on the FANUC side. Every other cause is
   work to plan, with a known fix the report gives (provide a module, map a signal, write a line by hand,
   redo an error handler or a dialog the FANUC way). "How this is decided" lists the blocking causes found;
-- **what to do first**: 3 to 7 actions drawn from what is left, each with its detail and a link: the
+- **what to do first**: 3 to 7 actions drawn from what is left, each with its detail, the exact number of
+  TODO it concerns ("N TODO concerned", leading to them) and who acts: the FANUC integrator, the ABB
+  backup (a module to add), a robot option, or "a later CrossArm version may help" (no date is given).
+  The cosmetic TODO (operator messages cut or computed) are an action apart. The actions cover the
   resources over the controller's capacity, routines or data missing from the backup (with the
   `external_routines` candidates), the KAREL programs to load first (with `--karel`; without it, converting
   again with `--karel` when it would convert TODO), programs to provide, the blocking causes with their programs, error
   handlers to redo the FANUC way (not a CrossArm bug), what TP has no instruction for, then the points to
   touch up again and to touch up;
-- **the main TODO causes**, five at most, each with its count, its share of the TODO and an example;
-- **the share converted by area** (motion, I/O, program flow, data, calls, messages, error handling);
+- **the main TODO causes**, five at most, each with its count, its share of the TODO, its family
+  (calibration, frames, motion, I/O...) and an example; under them, what TP has no equivalent for apart
+  from what a later CrossArm version may help with;
+- **the share converted by area** (motion, I/O, program flow, data, calls, messages, error handling),
+  with one sentence under it saying what that means for the cell;
 - **the controller resources** only when one is over its limit or close to it (80 % used).
 
 Links lead to the checklist, the items to review and the programs. The summary that follows ranks every
@@ -423,7 +456,8 @@ controller has ten tool frames. Frames past the limit are kept in position regis
 not use, and loaded into one reserved number before each use; the report says which register holds
 which frame. A controller can hold more frames, raised at a Controlled Start
 (`$SCR.$MAXNUMUTOOL`, `$SCR.$MAXNUMUFRAM`): with that number under `limits` in the mapping file,
-every frame is selected directly.
+every frame is selected directly. When the conversion is over the capacity, the analysis proposes the
+renumbering: the mapping keys to edit and the free numbers to give them.
 
 With `--karel`, the analysis has a line saying which KAREL programs were called, from which programs and how
 many times (or that none was used), and a "KAREL programs" section lists the programs called, what each does,
@@ -438,6 +472,23 @@ register each is kept in, the registers, flags and I/O used, every point, and ho
 was written ([speeds and zones](#speeds-and-zones)). The position registers CrossArm takes (the one
 `SETUP_FRAMES.LS` works with, the frame banks, the computed frames) are counted against what the
 controller holds, with those the robot's own programs use.
+
+### Summaries and comparison with the previous conversion
+
+Each conversion writes, next to the report, `crossarm_report_summary.md`, the report on one page (the
+decision, the figures, the causes, what to do first and who acts, the capacity, `--karel`, the licence),
+and `crossarm_summary.json`, the same figures in machine form: CrossArm version, date, backup, task, a
+fingerprint of each RAPID file, the options used, the TODO and warnings by cause, the share converted by
+area and the decision.
+
+Converting again compares with the previous conversion of the same input: CrossArm reads the
+`crossarm_summary.json` of the output folder, or else of the latest `crossarm_<name>` folder next to the
+input, before writing anything. The analysis (HTML and `.md`), the summary, the log and the window then
+give the TODO, the warnings and the share converted then and now, the causes gone and new, and the
+options that differ. The RAPID files decide, never the folder's name: when some of them changed, the
+comparison says how many differ and labels its figures accordingly; a conversion with no RAPID file in
+common, or of another task, is not compared. An older output folder, without `crossarm_summary.json`, is
+not compared either.
 
 ## Numbering: mapping file and target robot
 
