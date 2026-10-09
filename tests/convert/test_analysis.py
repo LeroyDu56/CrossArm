@@ -205,7 +205,7 @@ def test_the_page_opens_on_the_analysis_and_every_link_of_it_leads_somewhere():
     parsed.feed(page)
     assert parsed.loads == [] and set(parsed.links) <= parsed.ids
     sections = re.findall(r'<section id="([^"]+)">', page)
-    assert sections[0] == "analysis" and sections[1] == "summary"
+    assert sections == ["analysis", "checklist", "review", "code", "points", "summary", "details"]
     analysis_html = page.split('<section id="analysis">')[1].split("</section>")[0]
     decision = verdict(result)
     assert decision.sentence in analysis_html and decision.rule in analysis_html

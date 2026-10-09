@@ -283,6 +283,16 @@ def _todo(count: int) -> str:
     return f"{count} TODO"
 
 
+def touch_up_counts(result: ConversionResult) -> tuple[int, int, int]:
+    """(points written, kept as touched up on the robot, to touch up again): the points to touch up on the robot are
+    the first less the second, the third among them."""
+    taught = result.taught
+    points = sum(len(info.points) for info in result.programs)
+    kept = len(taught.of(KEPT)) if taught is not None else 0
+    again = len(taught.of(AGAIN)) if taught is not None else 0
+    return points, kept, again
+
+
 def priority_actions(result: ConversionResult) -> list[Action]:
     """MIN_ACTIONS to MAX_ACTIONS things to do, the ones that unblock the most first: what keeps the programs from
     loading, what the backup lacks, the blocking causes, what to redo the FANUC way, the rest by hand; touching up
@@ -442,9 +452,8 @@ def priority_actions(result: ConversionResult) -> list[Action]:
             f" {_names(programs, 4)}" + (f"; the earlier touch-ups are up to {far:.1f} mm from the new points" if far
                                          else "") + ".",
             "#taught", "Taught positions"))  # fmt: skip
-    points = sum(len(info.points) for info in result.programs)
+    points, kept, _ = touch_up_counts(result)
     if points:
-        kept = len(taught.of(KEPT)) if taught is not None else 0
         left = points - kept - len(again)
         if left:
             last.append(Action(

@@ -175,36 +175,43 @@ table.taught tr.st-again td { background: var(--todo-bg); }
 
 TAUGHT_JS = r"""
 (function () {
-  var d = document, box = d.getElementById('taught');
-  if (!box) { return; }
+  // Built when the section is first opened (crossarm:built), as the page's other long lists.
+  var d = document, started = false;
   function $(id) { return d.getElementById(id); }
-  var rows = [].slice.call(box.querySelectorAll('table.taught tbody tr'));
-  var progs = [].slice.call(box.querySelectorAll('details.tprog')), cards = [].slice.call(box.querySelectorAll('.tcard'));
-  rows.forEach(function (r) { r._text = (r.closest('details').dataset.p + ' ' + r.textContent).toLowerCase(); });
-  function filter() {
-    var q = $('t-text').value.trim().toLowerCase(), s = $('t-status').value, shown = 0;
-    rows.forEach(function (r) {
-      var ok = (!s || (s === 'look' ? r.dataset.s !== 'theoretical' : r.dataset.s === s)) && (!q || r._text.indexOf(q) >= 0);
-      r.hidden = !ok;
-      if (ok) { shown++; }
+  function start() {
+    var box = d.getElementById('taught');
+    if (started || !box || !$('t-text')) { return; }
+    started = true;
+    var rows = [].slice.call(box.querySelectorAll('table.taught tbody tr'));
+    var progs = [].slice.call(box.querySelectorAll('details.tprog')), cards = [].slice.call(box.querySelectorAll('.tcard'));
+    rows.forEach(function (r) { r._text = (r.closest('details').dataset.p + ' ' + r.textContent).toLowerCase(); });
+    function filter() {
+      var q = $('t-text').value.trim().toLowerCase(), s = $('t-status').value, shown = 0;
+      rows.forEach(function (r) {
+        var ok = (!s || (s === 'look' ? r.dataset.s !== 'theoretical' : r.dataset.s === s)) && (!q || r._text.indexOf(q) >= 0);
+        r.hidden = !ok;
+        if (ok) { shown++; }
+      });
+      progs.forEach(function (p) { p.hidden = !p.querySelector('tbody tr:not([hidden])'); });
+      cards.forEach(function (c) { c.classList.toggle('on', c.dataset.status === s); });
+      $('t-none').hidden = !(shown === 0 && s === 'look' && !q && rows.length);
+      $('t-count').textContent = shown + ' of ' + rows.length + ' points shown';
+    }
+    $('t-text').addEventListener('input', filter);
+    $('t-status').addEventListener('input', filter);
+    cards.forEach(function (c) {
+      c.addEventListener('click', function () {
+        var s = c.dataset.status;
+        $('t-status').value = $('t-status').value === s ? 'look' : s;
+        filter();
+        progs.forEach(function (p) { if (!p.hidden && s !== 'theoretical') { p.open = true; } });
+      });
     });
-    progs.forEach(function (p) { p.hidden = !p.querySelector('tbody tr:not([hidden])'); });
-    cards.forEach(function (c) { c.classList.toggle('on', c.dataset.status === s); });
-    $('t-none').hidden = !(shown === 0 && s === 'look' && !q && rows.length);
-    $('t-count').textContent = shown + ' of ' + rows.length + ' points shown';
+    $('t-open').addEventListener('click', function () { progs.forEach(function (p) { if (!p.hidden) { p.open = true; } }); });
+    $('t-close').addEventListener('click', function () { progs.forEach(function (p) { p.open = false; }); });
+    filter();
   }
-  $('t-text').addEventListener('input', filter);
-  $('t-status').addEventListener('input', filter);
-  cards.forEach(function (c) {
-    c.addEventListener('click', function () {
-      var s = c.dataset.status;
-      $('t-status').value = $('t-status').value === s ? 'look' : s;
-      filter();
-      progs.forEach(function (p) { if (!p.hidden && s !== 'theoretical') { p.open = true; } });
-    });
-  });
-  $('t-open').addEventListener('click', function () { progs.forEach(function (p) { if (!p.hidden) { p.open = true; } }); });
-  $('t-close').addEventListener('click', function () { progs.forEach(function (p) { p.open = false; }); });
-  filter();
+  d.addEventListener('crossarm:built', start);
+  start();
 })();
 """

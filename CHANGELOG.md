@@ -3,6 +3,12 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- HTML report as a cockpit: a line kept at the top (decision, % converted, TODO, blocking causes, points) and a menu;
+  all but the analysis folded, long lists laid out only when opened; three views; items to review 50 at a time,
+  `#todo&cause=...&prog=...` links; programs with no TODO in one line; points in one line per program.
+
 ## 1.8.0 — 2026-10-09
 
 For calibration routines, which compute tools and work objects while the robot runs. Tools and work objects

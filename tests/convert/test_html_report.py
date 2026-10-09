@@ -4,14 +4,17 @@
 """The HTML report: RAPID and TP side by side, the TODO list, one page that loads nothing."""
 
 import re
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-from crossarm import pipeline
+from crossarm import __version__, pipeline
 from crossarm.convert import ConversionConfig, build_report, convert
+from crossarm.convert.analysis import verdict
 from crossarm.convert.checklist import CHECKLIST_JS
-from crossarm.convert.html_report import build_html_report, routine_end, tp_text
-from crossarm.convert.source_map import Row, side_by_side
+from crossarm.convert.coverage import fmt_percent
+from crossarm.convert.html_report import REVIEW_PAGE, build_html_report, routine_end, tp_text
+from crossarm.convert.source_map import Row, parse_todo_href, side_by_side, todo_href
 from crossarm.fanuc.maketp import TpExport
 from crossarm.fanuc.tp import Instruction, Motion
 from crossarm.licence import LicenceStatus
@@ -51,6 +54,7 @@ class _Page(HTMLParser):
         super().__init__()
         self.ids: set[str] = set()
         self.links: list[str] = []
+        self.filters: list[dict[str, str]] = []  # the filters of the links to the items to review
         self.loads: list[str] = []
         self.scripts = 0
         self.stack: list[str] = []
@@ -61,7 +65,9 @@ class _Page(HTMLParser):
             assert a["id"] not in self.ids, f"id {a['id']} twice"
             self.ids.add(a["id"])
         if tag == "a" and (a.get("href") or "").startswith("#"):
-            self.links.append(a["href"][1:])
+            self.links.append(a["href"][1:].split("&")[0])  # '#todo&cause=..': the filters are the page's script's
+            if parse_todo_href(a["href"]):
+                self.filters.append(parse_todo_href(a["href"]))
         if a.get("src") or tag == "link" or tag in ("iframe", "img", "object", "embed"):
             self.loads.append(tag)
         if tag == "script":
@@ -234,3 +240,170 @@ def test_the_checklist_escapes_what_it_shows_and_loads_from_the_tp_folder():
     assert load[0].startswith("Copy the TP folder to a USB stick and load its 1 .TP programs")
     assert any(item.startswith("MAIN.LS: refused by MakeTP") for item in load)
     assert "<b>bad" not in page and "&lt;b&gt;bad&lt;/b&gt; line" in page and "R&lt;1&gt;" in page
+
+
+# ---------------------------------------------------------------------------
+# The cockpit: what the first screen shows, what waits until opened
+# ---------------------------------------------------------------------------
+
+
+class _Live(HTMLParser):
+    """What the browser lays out on opening the page: the elements outside every <template>."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.depth = 0  # templates open
+        self.elements = 0
+        self.ids: set[str] = set()
+        self.inert: set[str] = set()  # ids only built when their fold is opened
+        self.folds: list[dict[str, str | None]] = []
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "template":
+            self.depth += 1
+            return
+        if self.depth == 0:
+            self.elements += 1
+            if tag == "details":
+                self.folds.append(a)
+        if "id" in a:
+            (self.inert if self.depth else self.ids).add(a["id"])
+
+    def handle_endtag(self, tag):
+        if tag == "template":
+            self.depth -= 1
+
+
+def _live(page: str) -> _Live:
+    parsed = _Live()
+    parsed.feed(page)
+    return parsed
+
+
+def _many(count: int, todo: int | None = None) -> str:
+    """A module of `count` routines, each with two points and a warning, the first `todo` (all) with a TODO."""
+    todo = count if todo is None else todo
+    routines = "".join(
+        f"PROC r{i}()\n  MoveJ pHome,v1000,z10,tool0;\n  MoveL Offs(pHome,{i},0,0),v200,fine,tool0;\n"
+        + ('  TPReadFK nCount,"go","A","B","C","D","E";\n' if i < todo else "")
+        + f"  nCount:=nCount+{i};\nENDPROC\n"
+        for i in range(count)
+    )
+    return ("MODULE Big\nCONST robtarget pHome:=[[900,100,700],[0,0,1,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];\n"
+            f"VAR num nCount:=0;\n{routines}ENDMODULE\n")  # fmt: skip
+
+
+STAMP = datetime(2026, 3, 4, 5, 6, 7)
+
+
+def test_the_top_line_says_where_things_stand_and_leads_to_each_section():
+    result = _convert(CELL)
+    page = build_html_report(result, ConversionConfig(timestamp=STAMP), ["cell.mod"], LicenceStatus(None), title="t")
+    top = page.split('<div class="cockpit" id="cockpit">')[1].split("</nav></div>")[0]
+    text = " ".join(re.sub(r"<[^>]+>", " ", top).split())
+    decision = verdict(result)
+    assert text.startswith(f"{decision.level} · {fmt_percent(result.coverage.percent)} converted · 1 TODO ·"), text
+    assert f"{len(decision.blocking)} blocking cause" in text and "2 points to touch up" in text
+    assert f"CrossArm {__version__} · 2026-03-04 05:06" in text
+    assert re.findall(r'<option value="(\w)">', top) == ["s", "i", "d"]  # one page, three views
+    labels = re.findall(r">([^<]+)</a>", top.split('<nav class="menu"')[1])
+    assert labels[:2] == ["Analysis", "Capacity"] and labels[-1] == "Details"
+    assert {"Checklist", "TODO (1)", "Programs", "Points", "Summary"} <= set(labels)
+    live = _live(page)
+    for href in re.findall(r'href="#([^"&]+)', top):  # every place it names is there, built or to build
+        assert href in live.ids | live.inert, href
+    # The evaluation notice: under the verdict, in the page as it opens (neither folded nor left to the script).
+    analysis = page.split('<section id="analysis">')[1].split("</section>")[0]
+    assert analysis.index('class="decision"') < analysis.index("Evaluation copy.") < analysis.index("What to do first")
+    assert "<template" not in analysis
+
+
+def test_only_the_analysis_is_open_and_each_view_opens_its_own_folds():
+    page = build_html_report(_convert(CELL), ConversionConfig(), ["cell.mod"], title="t")
+    sections = re.findall(r'<section id="([^"]+)">\s*(?:<span id="todo"></span>)?(<details class="sec"[^>]*>)?', page)
+    assert sections[0] == ("analysis", "")  # never folded
+    depth = {sid: re.search(r'data-depth="(\w+)"', fold)[1] for sid, fold in sections[1:]}
+    assert depth == {"checklist": "id", "review": "id", "code": "id", "points": "d", "summary": "d", "details": "d"}
+    for _, fold in sections[1:]:
+        assert not re.search(r"\sopen\b", fold)  # folded until a view or the reader opens it
+    assert '<details class="sec" id="ck-fold" data-depth="id">' in page
+    assert '<details class="why" data-depth="d">' in page  # how the decision is made: the detail view
+    # The script applies the view: synthesis unless this browser kept another, its storage inside a try.
+    script = page.split("<script>")[1]
+    assert "crossarm-view" in script and "var v = 's';" in script
+    assert "localStorage" not in re.sub(r"try \{.*?\} catch \(e\)", "", script, flags=re.DOTALL)
+
+
+def test_long_lists_wait_inert_until_their_fold_is_opened():
+    small = _live(build_html_report(_convert(_many(2)), ConversionConfig(), ["big.mod"], title="t"))
+    big_page = build_html_report(_convert(_many(60)), ConversionConfig(), ["big.mod"], title="t")
+    big = _live(big_page)
+    # The lines, programs, points, checklist items and items to review are all there, but inert.
+    assert {"L-R0-5", "L-R59-359", "p-R59", "ck-points", "f-body"} <= big.inert
+    assert not {"L-R0-5", "p-R59", "ck-points"} & big.ids
+    assert '<template id="f-rows" data-page="50">' in big_page and big_page.count('<tr data-k="TODO"') == 60
+    assert big_page.count("<template data-lazy>") >= 60 + 60 + 5  # a view per program, its points, each section
+    # What the browser lays out first does not grow with the backup.
+    assert big.elements < 400 and big.elements - small.elements < 40
+    assert {"analysis", "cockpit", "todo", "ck-fold", "ck-sum"} <= big.ids
+    assert '<noscript><p class="nojs">' in big_page and big_page.count("<noscript>") >= 6  # said without the script
+
+
+def _review_rows(page: str) -> list[dict[str, str]]:
+    rows = page.split('<template id="f-rows" data-page="50">')[1].split("</template>")[0]
+    return [dict(zip(("k", "c", "p"), m, strict=True))
+            for m in re.findall(r'<tr data-k="([^"]*)" data-c="([^"]*)" data-p="([^"]*)">', rows)]  # fmt: skip
+
+
+def _shown(rows: list[dict[str, str]], pages: int, kind: str = "", cause: str = "", prog: str = "") -> tuple[int, int]:
+    """What the page's script lays out: (rows in the table, rows matching) after `pages` pages of REVIEW_PAGE."""
+    match = [r for r in rows if (not kind or r["k"] == kind) and (not cause or r["c"] == cause)
+             and (not prog or r["p"] == prog)]  # fmt: skip
+    return min(len(match), pages * REVIEW_PAGE), len(match)
+
+
+def test_the_items_to_review_come_a_page_at_a_time_with_their_filters_kept():
+    result = _convert(_many(60))
+    page = build_html_report(result, ConversionConfig(), ["big.mod"], title="t")
+    rows = _review_rows(page)
+    assert len(rows) == len(result.notes) and '<tbody id="f-body"></tbody>' in page  # nothing laid out before
+    assert '<select id="f-kind" aria-label="Kind" data-default="TODO">' in page  # the TODO first
+    assert _shown(rows, 1, "TODO") == (50, 60) and _shown(rows, 2, "TODO") == (60, 60)  # "show more": the rest
+    assert _shown(rows, 1, "TODO", prog="R7") == (1, 1)
+    cause = result.notes[0].category
+    assert _shown(rows, 1, cause=cause)[1] == sum(1 for n in result.notes if n.category == cause)
+    # The script: a page more keeps the filters; the count says how many match and how many there are.
+    assert 'id="f-more" hidden>' in page and "limit = more ? limit + PAGE : PAGE;" in page
+    assert "shown + ' of ' + match.length + ' shown'" in page
+    warned = build_html_report(_convert(_many(2, todo=0)), ConversionConfig(), ["m.mod"], title="t")
+    assert '<select id="f-kind" aria-label="Kind" data-default="">' in warned  # no TODO: the warnings at once
+
+
+def test_links_to_the_items_to_review_carry_their_filters_in_the_address():
+    assert todo_href() == "#todo"
+    assert todo_href(cause="value not known", prog="MAIN") == "#todo&cause=value%20not%20known&prog=MAIN"
+    odd = todo_href(cause="a&b=c <d>", prog="P#1", kind="WARNING", q="x y")
+    assert parse_todo_href(odd) == {"kind": "WARNING", "cause": "a&b=c <d>", "prog": "P#1", "q": "x y"}
+    assert parse_todo_href("#L-MAIN-3") is None and parse_todo_href("#todo") == {}
+    result = _convert(CELL)
+    page = build_html_report(result, ConversionConfig(), ["cell.mod"], title="t")
+    parsed = _Page()
+    parsed.feed(page)
+    causes = {note.category for note in result.notes}
+    assert parsed.filters and all(set(f) <= {"cause", "prog"} for f in parsed.filters)
+    assert all(f["cause"] in causes for f in parsed.filters if "cause" in f)
+    assert {"prog": "MAIN"} in parsed.filters  # the checklist's TODO of a program
+    assert "if (h.id === 'todo') { showReview(h.q); return; }" in page  # read by the page's script
+    assert "L-MAIN-12" in parsed.links and "ck-points" in parsed.links  # the plain anchors still lead there
+
+
+def test_programs_ready_as_is_are_one_line_and_points_one_line_per_program():
+    page = build_html_report(_convert(_many(3, todo=1)), ConversionConfig(), ["big.mod"], title="t")
+    assert "<b>2 programs ready as is</b>" in page and 'id="p-ready"' in page
+    assert '<details class="prog" id="p-R1" data-p="R1" data-r="Big.r1" data-todo="0" data-ready>' in page
+    assert '<details class="prog" id="p-R0" data-p="R0" data-r="Big.r0" data-todo="1">' in page
+    section = page.split('<section id="points">')[1].split("</section>")[0]
+    assert section.count('<details class="pts"') == 3 and 'data-s="r1 phome offs(phome, 1, 0, 0)"' in section
+    assert "<b>2 points</b>" in section and "Value (theoretical)" in section
+    assert "<h2>Points</h2>" not in page.split('<section id="details">')[1]  # not twice

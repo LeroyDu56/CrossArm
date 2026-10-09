@@ -37,7 +37,7 @@ from crossarm.convert.config import ConversionConfig
 from crossarm.convert.external import argument_texts, note_texts
 from crossarm.convert.html import inline
 from crossarm.convert.report import payload_rows
-from crossarm.convert.source_map import line_anchor, tp_text
+from crossarm.convert.source_map import line_anchor, todo_href, tp_text
 from crossarm.convert.taught import AGAIN, KEPT, NEW, NOT_READ, THEORETICAL, Taught, foreign_by_program
 from crossarm.convert.translate import Allocation, ConversionResult, FrameInfo, Note, ZoneUse
 from crossarm.fanuc.ktrans import KarelExport, compile_command
@@ -385,8 +385,8 @@ def _todo(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
     for program, notes in sorted(counts.items()):
         notes.sort(key=lambda n: n.rapid_line or 0)
         causes = sorted({n.category for n in notes})
-        filter_link = (f'<a href="#review" data-prog="{_e(program)}">the list</a>' if program
-                       else '<a href="#review">the list</a>')  # fmt: skip
+        filter_link = (f'<a href="{_e(todo_href(prog=program))}" data-prog="{_e(program)}">the list</a>' if program
+                       else '<a href="#todo">the list</a>')  # fmt: skip
         first = places.links([(n.program, n.rapid_line) for n in notes], "at")
         items.append(_Item(
             f"todo|{program}|{len(notes)}|{','.join(causes)}",
@@ -636,15 +636,12 @@ def checklist_section(result: ConversionResult, config: ConversionConfig, anchor
         ("<p>What to do on the FANUC cell, in the order it is done, with the values to enter or check and links to"
          " the lines that use them. Tick each item when done: the ticks are kept in this browser, for this report."
          " Print it to tick it on paper.</p>"),
-        # Folded: on a large backup it is hundreds of items, the second thing to read after the analysis.
-        (f'<details class="fold" id="ck-fold"><summary>Show the checklist: <span id="ck-sum">{total} items</span>'
-         f" in {number} group{'s' if number != 1 else ''}</summary>"),
+        # The page folds it (crossarm.convert.html_report): on a large backup it is hundreds of items.
         ('<div class="bar js-only"><span class="meter ck-meter"><span id="ck-meter"></span></span>'
          f' <b id="ck-total">{total} items</b> <label><input id="ck-hide" type="checkbox"> hide the items done</label>'
          ' <button type="button" id="ck-print">Print the checklist</button>'
          ' <button type="button" id="ck-reset">Untick all</button> <span id="ck-store" class="muted"></span></div>'),
         f'<div id="ck" data-key="{key}">' + "".join(groups) + "</div>",
-        "</details>",
     ]  # fmt: skip
     return "checklist", "Checklist", "\n".join(body)
 
@@ -687,64 +684,82 @@ CHECKLIST_JS = r"""
 (function () {
   // Commissioning checklist: the ticks are kept in this browser, under the report's identity. Storage may be
   // blocked (a file:// page in some browsers, a strict profile): the list still works, ticks are just not kept.
-  var d = document, box = d.getElementById('ck');
-  if (!box) { return; }
-  var key = 'crossarm-checklist:' + box.getAttribute('data-key'), ticks = {}, kept = true;
-  try {
-    ticks = JSON.parse(window.localStorage.getItem(key) || '{}');
-    if (!ticks || typeof ticks !== 'object') { ticks = {}; }
-  } catch (e) { ticks = {}; kept = false; }
-  var items = [].slice.call(box.querySelectorAll('li[data-id]')), groups = [].slice.call(box.querySelectorAll('.ckg'));
-  function told() {
-    var el = d.getElementById('ck-store');
-    if (el) { el.textContent = kept ? 'ticks kept in this browser' : 'ticks not kept: this browser blocks local storage'; }
+  // The list is built when its fold is first opened (crossarm:built); until then the fold says how many are done.
+  var d = document, started = false;
+  function stored(key) {
+    try {
+      var ticks = JSON.parse(window.localStorage.getItem(key) || '{}');
+      return ticks && typeof ticks === 'object' ? ticks : {};
+    } catch (e) { return null; }
   }
-  function save() {
-    if (!kept) { return; }
-    try { window.localStorage.setItem(key, JSON.stringify(ticks)); } catch (e) { kept = false; told(); }
+  var sum = d.getElementById('ck-sum');
+  if (sum && sum.getAttribute('data-key')) {
+    var all = +sum.getAttribute('data-total'), ticks0 = stored('crossarm-checklist:' + sum.getAttribute('data-key'));
+    var done0 = ticks0 ? Math.min(all, Object.keys(ticks0).length) : 0;
+    if (done0) { sum.textContent = done0 + ' of ' + all + ' items done'; }
   }
-  function count() {
-    var all = 0, done = 0;
-    groups.forEach(function (g) {
-      var lis = g.querySelectorAll('li[data-id]'), n = lis.length, k = g.querySelectorAll('li.done').length;
-      g.querySelector('.ckc').textContent = k + ' / ' + n;
-      g.classList.toggle('complete', n > 0 && k === n);
-      all += n; done += k;
-    });
-    d.getElementById('ck-total').textContent = done + ' of ' + all + ' done';
-    var sum = d.getElementById('ck-sum');
-    if (sum) { sum.textContent = done ? done + ' of ' + all + ' items done' : all + ' items'; }
-    d.getElementById('ck-meter').style.width = (all ? Math.round(done * 100 / all) : 0) + '%';
-  }
-  items.forEach(function (li) {
-    var input = li.querySelector('input'), id = li.getAttribute('data-id');
-    input.checked = ticks[id] === 1;
-    li.classList.toggle('done', input.checked);
-    input.addEventListener('change', function () {
-      if (input.checked) { ticks[id] = 1; } else { delete ticks[id]; }
+  function start() {
+    var box = d.getElementById('ck');
+    if (started || !box) { return; }
+    started = true;
+    var key = 'crossarm-checklist:' + box.getAttribute('data-key'), ticks = stored(key), kept = ticks !== null;
+    if (!kept) { ticks = {}; }
+    var items = [].slice.call(box.querySelectorAll('li[data-id]')), groups = [].slice.call(box.querySelectorAll('.ckg'));
+    function told() {
+      var el = d.getElementById('ck-store');
+      if (el) { el.textContent = kept ? 'ticks kept in this browser' : 'ticks not kept: this browser blocks local storage'; }
+    }
+    function save() {
+      if (!kept) { return; }
+      try { window.localStorage.setItem(key, JSON.stringify(ticks)); } catch (e) { kept = false; told(); }
+    }
+    function count() {
+      var all = 0, done = 0;
+      groups.forEach(function (g) {
+        var lis = g.querySelectorAll('li[data-id]'), n = lis.length, k = g.querySelectorAll('li.done').length;
+        g.querySelector('.ckc').textContent = k + ' / ' + n;
+        g.classList.toggle('complete', n > 0 && k === n);
+        all += n; done += k;
+      });
+      d.getElementById('ck-total').textContent = done + ' of ' + all + ' done';
+      if (sum) { sum.textContent = done ? done + ' of ' + all + ' items done' : all + ' items'; }
+      d.getElementById('ck-meter').style.width = (all ? Math.round(done * 100 / all) : 0) + '%';
+    }
+    items.forEach(function (li) {
+      var input = li.querySelector('input'), id = li.getAttribute('data-id');
+      input.checked = ticks[id] === 1;
       li.classList.toggle('done', input.checked);
-      save(); count();
+      input.addEventListener('change', function () {
+        if (input.checked) { ticks[id] = 1; } else { delete ticks[id]; }
+        li.classList.toggle('done', input.checked);
+        save(); count();
+      });
     });
-  });
-  d.getElementById('ck-hide').addEventListener('change', function () { box.classList.toggle('hide-done', this.checked); });
-  d.getElementById('ck-reset').addEventListener('click', function () {
-    if (!window.confirm('Untick every item of the checklist?')) { return; }
-    ticks = {};
-    items.forEach(function (li) { li.querySelector('input').checked = false; li.classList.remove('done'); });
-    try { window.localStorage.removeItem(key); } catch (e) { kept = false; told(); }
-    count();
-  });
-  var root = d.documentElement, fold = d.getElementById('ck-fold'), wasOpen = true;
-  // Printed open, folded or not; folded again after, as it was.
-  window.addEventListener('beforeprint', function () { if (fold) { wasOpen = fold.open; fold.open = true; } });
-  d.getElementById('ck-print').addEventListener('click', function () {
-    root.classList.add('print-ck');
-    window.print();
+    d.getElementById('ck-hide').addEventListener('change', function () { box.classList.toggle('hide-done', this.checked); });
+    d.getElementById('ck-reset').addEventListener('click', function () {
+      if (!window.confirm('Untick every item of the checklist?')) { return; }
+      ticks = {};
+      items.forEach(function (li) { li.querySelector('input').checked = false; li.classList.remove('done'); });
+      try { window.localStorage.removeItem(key); } catch (e) { kept = false; told(); }
+      count();
+    });
+    d.getElementById('ck-print').addEventListener('click', function () {
+      d.documentElement.classList.add('print-ck');
+      window.print();
+    });
+    told(); count();
+  }
+  // "Print the checklist": the checklist alone, open; the page as it was after. Printed from the browser's menu,
+  // the page prints as shown (the summary, and what is open).
+  var fold = d.getElementById('ck-fold'), wasOpen = true;
+  window.addEventListener('beforeprint', function () {
+    if (fold && d.documentElement.classList.contains('print-ck')) { wasOpen = fold.open; fold.open = true; }
   });
   window.addEventListener('afterprint', function () {
-    root.classList.remove('print-ck');
-    if (fold) { fold.open = wasOpen; }
+    if (fold && d.documentElement.classList.contains('print-ck')) { fold.open = wasOpen; }
+    d.documentElement.classList.remove('print-ck');
   });
-  told(); count();
+  d.addEventListener('crossarm:built', start);
+  start();
 })();
 """

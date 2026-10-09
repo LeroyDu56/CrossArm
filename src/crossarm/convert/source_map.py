@@ -13,6 +13,7 @@ complete the tags are read into ProgramInfo.sources, one per TP line, None for a
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from urllib.parse import quote, unquote
 
 from crossarm.fanuc.tp import Motion
 
@@ -98,3 +99,26 @@ def tp_text(line: object) -> list[str]:
 def line_anchor(program: str, line: int) -> str:
     """The id of a RAPID line in the report page: its row in the program's side-by-side view."""
     return f"L-{program}-{line}"
+
+
+TODO_FILTERS = ("kind", "cause", "prog", "q")  # what a link to the items to review may filter on
+
+
+def todo_href(*, cause: str = "", prog: str = "", kind: str = "", q: str = "") -> str:
+    """A link to the report's items to review, filtered: '#todo&cause=...&prog=...'. The page shows the TODO
+    (kind=WARNING for the warnings, kind=all for both), of that cause and program, matching q."""
+    given = {"kind": kind, "cause": cause, "prog": prog, "q": q}
+    return "#todo" + "".join(f"&{key}={quote(given[key], safe='')}" for key in TODO_FILTERS if given[key])
+
+
+def parse_todo_href(href: str) -> dict[str, str] | None:
+    """The filters of a todo_href link (as the page's script reads location.hash); None for another link."""
+    parts = href.lstrip("#").split("&")
+    if parts[0] != "todo":
+        return None
+    out = {}
+    for part in parts[1:]:
+        key, _, value = part.partition("=")
+        if key in TODO_FILTERS:
+            out[key] = unquote(value)
+    return out
