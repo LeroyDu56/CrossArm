@@ -207,7 +207,10 @@ def test_the_window_loads_no_network_module():
     import subprocess
     import sys
 
-    allowed = sorted(ALLOWED | {"urllib"})  # urllib: the empty package urllib.parse is in
+    allowed = ALLOWED | {"urllib"}  # urllib: the empty package urllib.parse is in
+    if sys.platform != "win32":
+        allowed |= {"selectors"}  # subprocess (webbrowser) imports it on POSIX to wait on pipes: no connection
+    allowed = sorted(allowed)
     probe = ("import sys; import crossarm.gui; "
              f"print(sorted(m for m in sys.modules if m.split('.')[0] in {sorted(FORBIDDEN)!r} "
              f"and m not in {allowed!r}))")  # fmt: skip
