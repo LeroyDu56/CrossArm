@@ -80,7 +80,7 @@ def test_the_latest_core_build_is_compared_as_a_number_not_as_text(winolpc):
         (exe.parent.parent / "Versions" / f"V1010-{build}" / "bin").mkdir(parents=True)
     version, path = maketp.core_version(robot, exe)
     assert version == "V10.10-10"
-    assert path.endswith("V1010-10\\bin\\")
+    assert path.endswith("\\") and Path(path[:-1]).parts[-2:] == ("V1010-10", "bin")  # any OS's separator
 
 
 def test_a_roboguide_robot_gets_a_robot_ini_with_its_software_core(winolpc, programs, tmp_path):
