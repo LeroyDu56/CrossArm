@@ -15,7 +15,7 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | RAPID instructions converted, our test corpus, written for testing, without `--karel` and without provided routines | 87 % to 93 % |
 | Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1): the 17 this version touches run again for it on ROBOGUIDE, the others last run for 1.6.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 38 of 38 give what was measured |
+| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1), all run again for 1.10.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 40 of 40 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -104,7 +104,7 @@ that builds its tools and fixtures in RAPID, an assembly cell run as a state mac
 tasks), with as much of RAPID and of TP as the controllers offer; since 1.8, also a set of RAPID
 modules of calibration routines that compute tools and work objects while the robot runs (calibrated
 part by part, copied, built by FUNCs). Without `--karel` and without provided routines, CrossArm converts
-87 %, 93 % and 87 % of the instructions of the three RobotWare backups, and 87 % of the calibration modules. It is checked on the controllers
+87 %, 93 % and 90 % of the instructions of the three RobotWare backups, and 89 % of the calibration modules. It is checked on the controllers
 themselves: RobotStudio loads every RAPID task, every reference resolved (the World Zones
 instructions aside, an option the virtual controller lacks); the three FANUC backups are what three
 ROBOGUIDE controllers (R-2000iC/190S, ARC Mate 120iD, R-1000iA/80F) hold once their programs are
@@ -329,16 +329,15 @@ the results are read from the virtual controller's `HOME:` folder:
 | FUNCs copied into their calls | 13 flanges within 0.001 mm of RAPID ([section 41](#41-funcs-copied-into-their-calls-run)) |
 | functions the integrator provides | 1 register and 5 flanges as RAPID computes them ([section 42](#42-functions-the-integrator-provides-run)) |
 | system variables read by TP | each read stops the program (VARS-034); the selections from a register load ([section 43](#43-system-variables-read-by-tp-refused)) |
+| FUNCs of the backup as TP programs | 12 values as RAPID works them out, the positions within 0.0001 mm ([section 44](#44-funcs-of-the-backup-as-tp-programs-run)) |
+| errors the program raises itself | 8 values as RAPID works them out ([section 45](#45-errors-the-program-raises-itself-run)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
-For 1.8.0, on 2026-10-09, the probes this version touches were run again on ROBOGUIDE (R-1000iA/80F, V10.10,
-with the KAREL option), 17 of them: the four new ones (frames written part by part and copied, FUNCs copied into
-their calls, functions the integrator provides, system variables read by TP), frames from registers, programs the
-integrator provides, the three KAREL probes, touch-ups kept when converting again, `SETUP_FRAMES`, flange poses,
-calls with arguments, `TEST` / `CASE` as `SELECT`, records and nums passed by reference, binary `.TP` made by
-MakeTP and jointtargets read on the robot. Each gave what was measured. The other probes were last run for 1.6.0,
-on 2026-10-07, all giving what was measured; the ABB probe modules were last run on RobotStudio for 1.6.0, and
-not run again for 1.7.0 or 1.8.0.
+For 1.10.0, on 2026-10-12, every probe was run again, in groups of under ten minutes: the 39 on ROBOGUIDE
+(R-1000iA/80F, V10.10, with the KAREL option), two of them new (FUNCs of the backup as TP programs, errors the
+program raises itself), and the ABB probe modules on RobotStudio. Each gave what was measured. A first run of
+the search probe sampled the speeds differently and was run again alone, as measured; the KAREL probe now sets
+the position register it clears to a Cartesian position first, which another probe could leave as joints.
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -1134,3 +1133,34 @@ them. On ROBOGUIDE (R-1000iA/80F, V10.10):
 
 So `GetSysData` and `OpMode()` stay TODO, the report saying why. `SetSysData`, which only selects a tool, a work
 object or a load, is converted (`UTOOL_NUM=n`, `UFRAME_NUM=n`, a load as `GripLoad`).
+
+## 44. FUNCs of the backup as TP programs, run
+
+A FUNC of the backup whose value is only known at run time is written as a TP program of its own: the caller runs
+`CALL F(args,k)` just before the line that reads it, the program writing its result in `R[AR[n]]` or `PR[AR[n]]`
+([user guide](guide.md#what-is-converted)).
+
+[tools/make_func_body_probe.py](../tools/make_func_body_probe.py) converts, without `--karel`, a module whose FUNCs
+return a num (`RETURN` inside an `IF`: `END`), a bool (1 / 0) and a robtarget, called in an assignment, an `IF`, an
+`ELSEIF` (the `CALL` inside the `ELSE`), the test of a `WHILE` (after its label), a move, and a FUNC calling a
+FUNC (a result register per caller). On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| the FUNC programs written by CrossArm, loaded and run | 12 values as RAPID works them out (worked out independently), the positions within 0.0001 mm |
+
+## 45. Errors the program raises itself, run
+
+`RAISE` of the program's own errors is converted with a register: the routine raising sets it and ends, its caller
+tests it after the `CALL` and runs its `ERROR` handler there ([user guide](guide.md#what-is-converted)).
+On RobotStudio (RobotWare 8.1), an error raised in a routine without a handler stops the program, the caller's
+handler not run: CrossArm writes `ABORT` there.
+
+[tools/make_raise_probe.py](../tools/make_raise_probe.py) converts a module whose routines raise their own errors
+and whose callers' handlers `RETRY` (counted: at most 4, then `ABORT`), `TRYNEXT`, `RETURN`, `RAISE` up two levels
+and read `ERRNO`. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| `R[e]=code` then `END`, `IF R[e]=0,JMP LBL[a]` after the `CALL`, `SELECT` on `ERRNO`, jumps back out of a block | loaded and run, 8 values as RAPID works them out |
+| a `RETRY` past its limit | `ABORT` after 5 calls |

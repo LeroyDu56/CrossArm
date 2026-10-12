@@ -107,6 +107,14 @@ crossarm parse   tests/fixtures/rapid/pick_and_place.mod              # RAPID AS
 crossarm stats   backup/RAPID                                          # parser coverage report
 ```
 
+`CrossArm.exe` takes the same commands without opening its window: `CrossArm.exe convert <backup> [options]`,
+`CrossArm.exe parse ...`, `CrossArm.exe stats ...`, `CrossArm.exe --help`, `CrossArm.exe --version`, with the
+same output and exit codes (0; 1 when a RAPID file has syntax errors; 2 for a usage error). Without arguments,
+or given files dropped on its icon, it opens the window. A `.bat` script waits for it and reads its exit code
+(`%ERRORLEVEL%`); at a cmd prompt use `start /wait CrossArm.exe convert ...`, and in PowerShell
+`Start-Process CrossArm.exe -ArgumentList 'convert','backup.zip' -Wait -PassThru` (its `ExitCode`), as
+PowerShell does not wait for a program that has a window.
+
 ### Binary .TP programs
 
 A FANUC controller loads `.LS` programs only with the ASCII Upload option; without it, it loads the
@@ -259,6 +267,8 @@ program by program ([validation](validation.md#37-karel-programs-called-from-tp-
 | routine call, `Stop`, `RETURN`, `EXIT` | `CALL`, `PAUSE`, `END`, `ABORT` | A routine of a system module the programs call is written too: the robot needs it |
 | a routine called by its name worked out at run time: `%"Bay_" + NumToStr(n,0)%`, `CallByVar "Bay_", n`, `%sStep%` | `SELECT R[3:n]=1,CALL BAY_1` / `=2,CALL BAY_2` / `ELSE,JMP`; for a text, `IF SR[2]<>SR[25],JMP LBL[n]` then the `CALL` | TP calls a program by the name written in the line only: the call is one branch per routine of the backup the name can be (the texts the string is set to, or the routines named by the prefix and a number), its arguments passed as written. A name outside those ends the program (`ABORT`, where RAPID raises ERR_REFUNKPRC), with a warning |
 | a FUNC of the backup that builds a tool, a work object or a pose: `tNew := MakeTool(tBase, tOffset)`, its body only assignments, pose functions and a final `RETURN` | its body, written at each call: `PR[91]=UTOOL[2]`, `PR[91,2]=PR[91,2]+25`, `UTOOL[4]=PR[91]` | When its result cannot be worked out at conversion time (a base frame calibrated at run time): TP when the base frame's orientation is known (a shift, a turn about known axes), else `CA_POSEMULT` with `--karel`. The report notes at how many calls each FUNC was copied, and the analysis says to convert again after the FUNC changes. Another body stays TODO, naming the FUNC and the statement. Measured on ROBOGUIDE ([validation](validation.md#41-funcs-copied-into-their-calls-run)) |
+| a FUNC of the backup returning a `num`, `dnum`, `bool` or `robtarget` known only at run time: `nGap:=nGap+Gap(r)*3`, `IF Free(r) THEN`, `pCell:=Cell(r,2)` | `CALL GAP(R[1:r],5)` just before the line, which reads `R[5]`; the program `GAP` ends with `R[AR[2]]=...` (a bool: 1 / 0; a robtarget: `PR[AR[n]]=PR[k]`) | Its parameters are passed as a routine's, plus the number of the register for its result, one per calling program. Each test of a `WHILE` calls it again; an `ELSEIF` calls it inside the `ELSE`. Written only when its whole body converts: otherwise its calls stay TODO and name the line of the FUNC that stops it, and the analysis lists them. A FUNC calling itself back, with array or `INOUT` record parameters, or read in a `WaitUntil`: TODO. Measured on ROBOGUIDE |
+| the program's own errors: `RAISE ERR_JAM;` (an `errnum` of the backup), `RAISE 12;`, a caller's `ERROR` handler testing `ERRNO` | the routine sets `R[e:Raised]` and ends; after `CALL FEED`: `IF R[e:Raised]=0,JMP LBL[n]`, then the handler: `RETRY` (counted, at most 4 times, then `ABORT`), `TRYNEXT`, `RETURN` (`END`), `RAISE` (to its own caller) | `R[e]` (`CROSSARM.RAISED` in the mapping file) holds the error a routine ends with, `ERRNO` is `CROSSARM.ERRNO`, each RETRY count `CROSSARM.RETRY.<routine>`: keep them for CrossArm. An error raised with no handler to take it stops the program (`ABORT`), as in RAPID. **The end of an `ERROR` handler, the one of a wait's timeout included, stops the program (`ABORT`), as RAPID does; CrossArm 1.9 and earlier wrote `END`.** Errors of the system (`ERR_...`) stay TODO; `BookErrNo` becomes a remark. Measured on ROBOGUIDE |
 | routine with `num`, `bool`, `string`, switch parameters | `CALL NAME(3,(-2.5),1,0)`, `CALL FAULT('Gripper not open')`, read as `AR[n]` | Every argument on every call (a switch as 1 / 0). A parameter the routine changes is copied to a register; a `num` passed by reference (`INOUT`, `VAR`, `PERS`) the routine changes is read back by the caller after the CALL (`R[3:nBack]=R[4:n]`). A record of a type the backup declares is passed as the components the routine reads, each an argument of its own (`CALL DEBURRPART('HOUSING-120',2,35,.8,1)`), a PERS no program changes at its saved values; passed by reference (`INOUT`, `VAR`) to a routine that changes its num components, each is copied to a register and read back after the CALL, as a num passed by reference is. A tool or a work object is passed as its frame number and selected by the routine (`UTOOL_NUM=AR[1]`; an optional work object not given is 0, wobj0); the points it moves to with them are in position registers `SETUP_FRAMES` sets, as the controller refuses a P recorded in another tool than the one selected (INTP-253). A string is text written in the call, 38 characters at most; the routine cannot show it (`MESSAGE` takes fixed text), so a `TPWrite` of it stays TODO. A point (robtarget) goes in a position register of its own: the caller sets it (`PR[99]=P[1]`), the routine moves to it (`L PR[99]`) in the frames it selects; passed by reference (`VAR`, `INOUT`), the routine may change it there (`pAt:=Offs(pAt,0,50,0)`, `pAt.trans.z:=...`) and the caller reads it back after the CALL into the position register its own point is then kept in; `Offs()` of it is a copy offset component by component, `RelTool()` of it a move with `Tool_Offset,PR[m]` (the displacement and the turns, as W, P, R, in a copy of the point), and it can be passed on as it is or with `Offs()`. Other parameters (a frame used other than to move with, a record used whole...) stay TODO, with the reason |
 | routine given its speed and zone: `PROC Approach(robtarget p,speeddata v,zonedata z)` making its `MoveJ`, `MoveL`, `MoveAbsJ` with them | `CALL APPROACH(400,9,100)`; in the routine `R[1:v.tcp]=AR[1]`, `L P[1] R[1]mm/sec CNT R[3]` | TP takes no argument as the speed or the CNT of a move (measured): the call passes the speed (mm/s, and % for joint moves) and the CNT of each corner, worked out as the move would be written with them, and the routine copies them to registers where it starts. `fine` given for the zone: the moves through it are FINE when every call gives it; when only some do, each is written both ways (`IF R[3]>100,JMP LBL[1]`, the move with `CNT R[3]`, else with `FINE`) and the call passes 101 for fine, as a CALL takes no negative number. Measured on both controllers: the moves take the time they take written with constants ([validation](validation.md#32-speeds-and-zones-given-to-a-routine-run)). `MoveC` and other uses of the speed or zone stay TODO |
 | array of points indexed at run time: `MoveL pSlot{nTool}`, `pGrid{r,c}` in FOR loops | `PR[R[n]]` | `SETUP_FRAMES` keeps the array in consecutive position registers, row after row; the program works the index out in `R[n:PointIndex]` and reads `PR[R[n]]`, moved to, offset with `Offs()` or passed to a routine. An element at a fixed index is an ordinary point |
@@ -279,8 +289,8 @@ program by program ([validation](validation.md#37-karel-programs-called-from-tp-
   reference, a record used whole, a speed or zone used in a `MoveC` or other than to move with), a
   string argument only known at run time, a VAR array no program sets indexed at run time, an array of a
   routine the routine changes, arrays of bools, strings and points the programs change, a
-  point parameter passed on with `RelTool()` (TP has no pose product), `FUNC` doing more than return a test
-  (other than those [copied into their calls](#frames-and-points-the-programs-compute) and those
+  point parameter passed on with `RelTool()` (TP has no pose product), `FUNC` whose body does not
+  convert in full (other than those [copied into their calls](#frames-and-points-the-programs-compute) and those
   [you provide](#programs-you-provide));
 - frames computed from data that changes at run time, with that data and where it changes; `RelTool()` of a
   point whose orientation is only known at run time;
@@ -296,7 +306,7 @@ program by program ([validation](validation.md#37-karel-programs-called-from-tp-
   reads 'ABC' as 0 and '12AB' as 12 where RAPID fails), `StrFind`, `StrMemb`, `StrOrder`, `StrMap`,
   `StrMatch` from another character than the first, a number with decimals written as a text, more than
   25 strings (listed), strings of records and arrays of strings, showing a text (`TPWrite`);
-- analog inputs, error handlers beyond wait timeouts (FANUC has no exceptions), `UNDO`, `GOTO`, a
+- analog inputs, error handlers beyond wait timeouts and the program's own errors (FANUC has no exceptions), `UNDO`, `GOTO`, a
   late-bound call whose name does not read as a text set to constants or a prefix and a number; string, point and other fields of records, arrays of records, a speed or zone field set to
   several values, a record of a routine that calls itself back or with fields other than `num` and `bool`;
 - RAPID instructions TP has nothing for, under a cause of their own in the report, "RAPID instruction
@@ -550,6 +560,9 @@ A mapping file can also be written from scratch, with only the keys you care abo
   `CROSSARM.NUMBERINDEX`): two routines counting with `i` keep a register each. A file written by 1.0
   to 1.2 names them by their RAPID name only (`i`); such a name still pins the first register of that
   name, so the file gives the numbers it gave.
+- A `num` or `bool` of a routine with the name of module data, or of data of a routine it calls or that
+  calls it, has its own register or flag, named after the routine (`MAIN.nCount`). Up to 1.9 it shared the
+  other's number; a file written then names it by its RAPID name, which pins the module data.
 - A field of a record is named by its path in `registers` or `flags` (`"rCell.state": 12`), a
   field of a routine's own record by the routine's program, the data and the field (`"COUNT.t.n": 3`).
   A field the file does not name is numbered after every number it pins, so that a file written before

@@ -3,7 +3,14 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.10.0 — 2026-10-12
+
+For the RAPID that reaches the cell through functions and errors: a FUNC of the backup known only at run time
+becomes a TP program of its own, and the errors the program raises itself are converted with a register its
+callers test. It also fixes a numbering bug present since 1.0 (data of a routine sharing the register of
+module data of the same name) and changes the end of an ERROR handler to ABORT, as in RAPID. `CrossArm.exe`
+now runs the command line too. The mapping file only gains keys (`ROUTINE.name`), and the command line keeps
+its options.
 
 - A FUNC of the backup returning a num, a bool or a robtarget whose value is only known at run time is written as a
   TP program: the caller makes `CALL F(args,k)` just before the line that reads it (assignment, IF / ELSEIF, each

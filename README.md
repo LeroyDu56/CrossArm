@@ -56,7 +56,8 @@ The programs, the report and the numbering file land in a new `crossarm_<name>` 
 input, with `SETUP_FRAMES.LS`, which sets every tool and user frame on the robot. Dropping the
 backups on the icon converts them straight away. From the command line:
 `crossarm convert abb_backup/ --fanuc fanuc_backup/`, with `--tp-robot <ROBOGUIDE robot folder>` for the
-`.TP` ([user guide](docs/guide.md#command-line)).
+`.TP` ([user guide](docs/guide.md#command-line)); `CrossArm.exe convert ...` takes the same commands without
+opening its window (in a `.bat`, or `start /wait` at a cmd prompt).
 
 The report, `crossarm_report.html`, is one page that works offline, built as a cockpit: a line kept at the
 top gives the decision, the share converted, the TODO, the blocking causes and the points to touch up, and
@@ -145,7 +146,9 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
   the arm configuration, speeds and zones, tool and user frames, payloads (`GripLoad` included).
 - **I/O**: digital, group and analog signals, typed by the backup's `EIO.cfg`, pulses, clocks; waits,
   including a wait with a time limit and its error handler.
-- **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR`, `WHILE`, conditions calling the backup's own functions, calls with
+- **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR`, `WHILE`, conditions calling the backup's own functions, the
+  backup's FUNCs known only at run time as TP programs of their own, errors the program raises itself (`RAISE`)
+  and the `ERROR` handlers of its callers (`RETRY`, `TRYNEXT`), calls with
   num, bool, string, point (robtarget), record, tool, work object, speed, zone and switch arguments, nums
   passed by reference, the integrator's own move routines;
   interrupts (`ISignalDI`, `ISignalDO`, `IPers`) as FANUC condition monitors calling the `TRAP`.
@@ -166,7 +169,7 @@ is fixed; points worked out from data that changes at run time are kept in posit
 computed from data that changes at run time in ways TP cannot write (those written part by part, copied or
 built by a FUNC of the backup are converted, and with `--karel` those computed by `PoseMult`, `PoseInv`,
 `RelTool` or `DefFrame`), reading the controller's state (`GetSysData`, `OpMode()`),
-error handlers beyond wait timeouts, timer interrupts and a `TRAP` that moves the robot, analog inputs
+error handlers beyond wait timeouts and the program's own errors, timer interrupts and a `TRAP` that moves the robot, analog inputs
 and a few ABB-specific instructions. The full table is in the [user guide](docs/guide.md#what-is-converted).
 
 ## What to expect
@@ -212,7 +215,7 @@ IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller
 | RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on both simulators (ROBOGUIDE R-1000iA/80F, RobotStudio IRB 6700): the 17 this version touches run again for it on ROBOGUIDE, the others last run for 1.6.0 | 38 of 38 give what was measured |
+| The controller probes on both simulators (ROBOGUIDE R-1000iA/80F, RobotStudio IRB 6700), all run again for 1.10.0 | 40 of 40 give what was measured |
 | With `--karel`: poses, frames and text files by CrossArm's KAREL programs, run on ROBOGUIDE | what RAPID computes and writes, within 0.001 mm and 0.01° |
 | Tools and work objects calibrated at run time: written part by part, copied, built by FUNCs copied into their calls, or by functions you provide, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
@@ -314,14 +317,14 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 
 Progress is measured as the share of RAPID instructions written as TP: on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)), 87 %, 93 % and 87 %; on public
+controllers ([validation](docs/validation.md#1-the-test-corpus)), 87 %, 93 % and 90 %; on public
 open-source programs, about 60 %. What is left gives the order of the next steps:
 
 1. Values only known at run time, and the conditions on them: what is left of them is spread over
    many forms, each found in few programs.
 2. Routines taking optional parameters, and calls whose arguments TP cannot take.
-3. Error handlers (`ERROR`, `RETRY`, `RAISE`), for errors the program raises itself (part not found,
-   measure out of range) and those of the instructions it calls.
+3. Error handlers (`ERROR`, `RETRY`, `RAISE`) for the errors of the instructions the program calls (those
+   it raises itself are converted since 1.10).
 4. Frames and positions measured on the robot (calibration): TP cannot compute a frame. Those computed
    from fixed values, searches on one edge of an input, frames written part by part or copied, and FUNCs
    building them are converted; with `--karel` (1.7), those computed by `PoseMult`, `PoseInv`, `RelTool` or
@@ -330,7 +333,9 @@ open-source programs, about 60 %. What is left gives the order of the next steps
 Done in 1.7: KAREL, as an option, for the poses computed at run time and text files. Done in 1.8: tools and
 work objects computed by calibration routines (written part by part, copied, built by FUNCs, or by functions
 the integrator provides). Done in 1.9: the report as a cockpit (decision and figures first, detail on demand,
-actions saying who acts), a one-page summary, the comparison with the previous conversion, CSV. Sockets are
+actions saying who acts), a one-page summary, the comparison with the previous conversion, CSV. Done in
+1.10: the backup's FUNCs as TP programs, the errors the program raises itself, `CrossArm.exe` on the command
+line. Sockets are
 not planned: a routine using them can be replaced by a program the
 integrator writes (`external_routines`).
 Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
@@ -363,7 +368,7 @@ Nothing is locked without a licence. The programs CrossArm writes then start wit
 `CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
 mark with the licence number and company name.
 
-Each released version becomes Apache 2.0 four years after it is published: v1.9.0 and v1.8.0 on 2030-10-09,
+Each released version becomes Apache 2.0 four years after it is published: v1.10.0 on 2030-10-12, v1.9.0 and v1.8.0 on 2030-10-09,
 v1.7.0 on 2030-10-08, v1.6.0 and v1.5.0 on 2030-10-07, v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
 Versions published before 1.0.0 keep the licence they were published under.
 Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
