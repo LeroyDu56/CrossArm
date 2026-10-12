@@ -11,6 +11,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - Docs: the user guide opens on a quick start, what to expect and [upgrading to 1.10](docs/guide.md#upgrading-to-110)
   (the two changes a program converted again can show), with the reference after it; the validation page opens on
   a one-page [summary](docs/validation.md#summary) (what is measured, on what, the figures published).
+- Docs: the licence is stated in the same line everywhere (README, guide, LICENSING.md, LICENSE-COMMERCIAL.md,
+  release notes): free for evaluation and other non-production use, production use needs a commercial licence;
+  the licence terms are unchanged. Shorter release notes. The programs written are the same as 1.10.0.
 
 ## 1.10.0 — 2026-10-12
 
@@ -19,7 +22,9 @@ becomes a TP program of its own, and the errors the program raises itself are co
 callers test. It also fixes a numbering bug present since 1.0 (data of a routine sharing the register of
 module data of the same name) and changes the end of an ERROR handler to ABORT, as in RAPID. `CrossArm.exe`
 now runs the command line too. The mapping file only gains keys (`ROUTINE.name`), and the command line keeps
-its options.
+its options. **Upgrading:** two changes can make a program converted again differ from 1.9 (the register of
+such routine data, `ABORT` at the end of an ERROR handler): what to do in
+[upgrading to 1.10](docs/guide.md#upgrading-to-110).
 
 - A FUNC of the backup returning a num, a bool or a robtarget whose value is only known at run time is written as a
   TP program: the caller makes `CALL F(args,k)` just before the line that reads it (assignment, IF / ELSEIF, each

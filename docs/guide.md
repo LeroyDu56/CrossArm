@@ -59,8 +59,9 @@ reference below it is there to look things up, not to read in one go. What Cross
    ([the mapping file](#the-mapping-file)), and the robot's programs with `--keep-taught` to keep the
    touch-ups ([converting again](#converting-again-keeping-the-touch-ups)).
 
-Without a licence, every program starts with the remark `CrossArm EVALUATION copy`: free for evaluation,
-production use needs a licence ([LICENSING.md](../LICENSING.md)).
+Without a licence, every program starts with the remark `CrossArm EVALUATION copy`. Free for evaluation and
+other non-production use; production use needs a commercial licence: enzoleroy56@gmail.com
+([LICENSING.md](../LICENSING.md)).
 
 ## What to expect
 
@@ -973,9 +974,10 @@ a routine with the name of module data get their own register (a fix since 1.0),
 stops the program as in RAPID. What to do: [upgrading to 1.10](#upgrading-to-110).
 
 ### Is CrossArm free?
-Free for evaluation, development, testing, teaching and personal projects. Production use —
+Free for evaluation and other non-production use: development, testing, teaching and personal
+projects. Production use —
 programs that run on a real robot, conversions delivered to a customer, billed migration work —
-needs a commercial licence. See [LICENSING.md](../LICENSING.md).
+needs a commercial licence: enzoleroy56@gmail.com. See [LICENSING.md](../LICENSING.md).
 
 ### Can it convert FANUC to ABB, or KUKA and Yaskawa programs?
 Not yet. CrossArm is built around a brand-neutral program model, and it can already read FANUC `.LS`

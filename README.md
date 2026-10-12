@@ -18,8 +18,8 @@ to install, runs offline (or Python 3.11+ on any system, no dependencies).
 - **Not 100 %, not plug-and-play.** About 60 % of the instructions convert on public programs, 87 % to 93 %
   on our own test corpus; the rest is marked `!TODO` with its cause, never guessed. The output is a
   starting point for **commissioning**: check it in ROBOGUIDE, touch up the points on the robot.
-- **Licence:** free for evaluation and non-production use. Production use (programs run on a real robot,
-  delivered to a customer, billed migration work) needs a commercial licence:
+- **Licence:** free for evaluation and other non-production use; production use (programs run on a real
+  robot, delivered to a customer, billed migration work) needs a commercial licence:
   **enzoleroy56@gmail.com** ([LICENSING.md](LICENSING.md)).
 
 [User guide](docs/guide.md) · [How it was validated](docs/validation.md) · [FAQ](#faq) ·
@@ -131,8 +131,8 @@ complete (routines or data from another project). The report gives each `!TODO` 
 ([details](docs/guide.md#why-not-100-)).
 
 ### Is CrossArm free?
-Free for evaluation, development, testing, teaching and personal projects. Production use needs a
-commercial licence ([LICENSING.md](LICENSING.md)).
+Free for evaluation and other non-production use (development, testing, teaching, personal
+projects); production use needs a commercial licence: enzoleroy56@gmail.com ([LICENSING.md](LICENSING.md)).
 
 ### Does my backup leave my computer?
 No. CrossArm runs entirely offline and writes its output next to your input.

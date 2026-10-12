@@ -1,5 +1,7 @@
 # Commercial licence
 
+**In one line:** Free for evaluation and other non-production use; production use needs a commercial licence: enzoleroy56@gmail.com.
+
 The [Business Source License 1.1](LICENSE) that covers CrossArm grants
 non-production use only. **Production use requires a commercial licence** from
 the Licensor. See [LICENSING.md](LICENSING.md) for what counts as production
