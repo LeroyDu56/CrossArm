@@ -3,6 +3,12 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- Docs: the README is a short entry page (what CrossArm does, for whom, download, what to expect, licence);
+  the full conversion summary, the longer FAQ, what to expect in detail and the roadmap moved to the
+  [user guide](docs/guide.md).
+
 ## 1.10.0 — 2026-10-12
 
 For the RAPID that reaches the cell through functions and errors: a FUNC of the backup known only at run time

@@ -12,6 +12,9 @@ How each of those choices was checked is in [validation.md](validation.md).
 - [Numbering: mapping file and target robot](#numbering-mapping-file-and-target-robot)
 - [The tool on the flange](#the-tool-on-the-flange)
 - [Speeds and zones](#speeds-and-zones)
+- [What to expect](#what-to-expect)
+- [FAQ](#faq)
+- [Roadmap](#roadmap)
 - [How it works inside](#how-it-works-inside)
 
 ## Input: what CrossArm reads
@@ -227,6 +230,38 @@ load) and a checklist group. Without
 program by program ([validation](validation.md#37-karel-programs-called-from-tp-run)).
 
 ## What is converted
+
+In short:
+
+- **Motion**: `MoveJ`, `MoveL`, `MoveC`, `MoveAbsJ` with their targets (`Offs`, `RelTool` included),
+  the arm configuration, speeds and zones, tool and user frames, payloads (`GripLoad` included).
+- **I/O**: digital, group and analog signals, typed by the backup's `EIO.cfg`, pulses, clocks; waits,
+  including a wait with a time limit and its error handler.
+- **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR`, `WHILE`, conditions calling the backup's own functions, the
+  backup's FUNCs known only at run time as TP programs of their own, errors the program raises itself (`RAISE`)
+  and the `ERROR` handlers of its callers (`RETRY`, `TRYNEXT`), calls with
+  num, bool, string, point (robtarget), record, tool, work object, speed, zone and switch arguments, nums
+  passed by reference, the integrator's own move routines;
+  interrupts (`ISignalDI`, `ISignalDO`, `IPers`) as FANUC condition monitors calling the `TRAP`.
+- **Data**: `num` and `bool` to registers and flags, data of the backup's own `RECORD` types field by field
+  (a state machine's state in a register named by its path), strings in string registers (texts compared,
+  measured, cut and passed on), calculations of any length; points worked out at run
+  time (palletizing: `Offs()` of loop counters, `RelTool()`, `CRobT()`) in position registers, jointtargets
+  read on the robot (`CJointT()`) in joint position registers; operator messages; comments.
+- **Calibration**: tools and work objects written part by part or copied at run time, FUNCs that build them
+  copied into each call, functions you provide as programs (their result read back from a register),
+  `SetSysData`; routines called by a name worked out at run time (`%"Bay_" + NumToStr(n,0)%`, `CallByVar`).
+- **With `--karel`**: `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of poses known only at run time, the
+  tool and user frames calibrated from them, and text files, by CrossArm's KAREL programs.
+
+Frames and points the programs compute are worked out at conversion time when every value they read
+is fixed; points worked out from data that changes at run time are kept in position registers. Marked
+`!TODO` in the program and listed in the report, never guessed: other routine parameters, frames
+computed from data that changes at run time in ways TP cannot write (those written part by part, copied or
+built by a FUNC of the backup are converted, and with `--karel` those computed by `PoseMult`, `PoseInv`,
+`RelTool` or `DefFrame`), reading the controller's state (`GetSysData`, `OpMode()`),
+error handlers beyond wait timeouts and the program's own errors, timer interrupts and a `TRAP` that moves the robot, analog inputs
+and a few ABB-specific instructions. The full table:
 
 | RAPID | FANUC TP | Notes |
 |---|---|---|
@@ -749,6 +784,155 @@ path within 10 mm of the ABB's, since the points are touched up on the robot any
 stays within 4 mm: on the way down onto a part the FANUC keeps to the line at least as long as the
 ABB, and the largest gap is a zoned reversal (down and back up through a zone), which turns up to
 4 mm shorter of the bottom ([validation](validation.md#13-the-path-where-zones-matter)).
+
+## What to expect
+
+**About 60 % of the instructions, on real programs.** On public open-source RAPID programs of widely
+mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
+depending on the program; programs built around files, sockets, operator dialogs or error handlers
+convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
+higher because we wrote the programs. Both figures are without `--karel` and without programs you provide
+(`external_routines`), which convert a few TODO more in programs that write text files or compute poses at
+run time. Converted means written in TP and loaded by the controller
+without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
+
+**The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
+files in ROBOGUIDE or on the controller, set the payloads, check reachability, and work through
+every `!TODO`.
+
+**The points are theoretical, to be touched up on the robot.** They are the ABB's, carried over
+exactly, but the FANUC robot is not where the ABB was, its tool is on another flange, and the cell
+was never exact to the millimetre: every point is re-taught at commissioning, as on any robot swap.
+What CrossArm sets out to do is give a program that goes where the ABB went, closely enough to be
+touched up rather than rewritten: **within 10 mm of the ABB's path**, the way it moves included.
+Measured, it stays within 4 mm.
+
+**Limits:**
+- Another robot model may need another posture, or may not reach a point at all: check reachability
+  in ROBOGUIDE.
+- An ABB tool goes on a FANUC robot through an adapter plate, which decides which way round the tool
+  sits. CrossArm puts the tool's guide pin where it was on the ABB; `"tool_pin": "+x"` turns the
+  tools for the ISO 9409-1 hole ([the tool on the flange](#the-tool-on-the-flange)).
+- Speeds and zones are measured per FANUC series: M-20iD (and ARC Mate 120iD), R-2000iC and
+  R-1000iA. For another robot CrossArm uses the M-20iD's and says so
+  ([speeds and zones](#speeds-and-zones)).
+
+How each figure was measured: [validation.md](validation.md).
+
+## FAQ
+
+### How do I convert an ABB RAPID program to FANUC TP?
+Download [CrossArm.exe](https://github.com/LeroyDu56/CrossArm/releases/latest), choose the ABB backup
+(folder or `.zip`) or the RAPID modules, optionally the backup of the FANUC robot the programs will
+run on, and click **Convert**. The `.LS` programs, an HTML report and a numbering file are written
+next to your input. From the command line: `crossarm convert abb_backup/ --fanuc fanuc_backup/`
+([the window](#the-window), [command line](#command-line)).
+
+### Can RobotStudio or ROBOGUIDE convert programs between ABB and FANUC?
+RobotStudio works in RAPID and ROBOGUIDE in TP and KAREL; neither is meant to translate the other
+brand's programs. Offline programming tools generate programs for many brands from a path you draw;
+translating an *existing* program — its logic, its I/O, its data — is a different job. CrossArm does
+that job, and ROBOGUIDE is then the place to check its output before it goes to the robot.
+
+### What is a FANUC `.LS` file?
+The text form of a FANUC TP (teach pendant) program: a header, numbered instructions and the
+positions they use. The controller runs the compiled `.TP`; ROBOGUIDE compiles a `.LS` into it, and
+so can a controller that accepts ASCII programs (the ASCII Upload option). CrossArm writes `.LS` files
+and can read them back byte for byte; for a controller without that option, it has FANUC MakeTP,
+installed with ROBOGUIDE, make the `.TP` too ([binary .TP programs](#binary-tp-programs)).
+
+### Are the converted programs ready to run on the robot?
+No, and CrossArm says so on every report. They are a starting point for commissioning: set the tool
+payloads, check tool and user frames, check reachability on the new robot model, work through every
+TODO, and touch up the points. ROBOGUIDE is the right place to do that before the real robot.
+
+### What happens to the touched-up points when the ABB program changes?
+Convert the new backup with `--keep-taught` (or step 5 of the window), giving it the robot's programs
+as they are now and the earlier CrossArm output: each point touched up on the robot keeps its taught
+value, unless its ABB position or its frames changed; those are written theoretical again and listed to
+touch up again. A conversion made before 1.6 wrote no `crossarm_points.json`: convert that old backup
+once with 1.6 or later to get one ([converting again](#converting-again-keeping-the-touch-ups)).
+
+### Why not 100 %?
+Three reasons, and the report gives each `!TODO` its cause.
+- **What TP cannot do** without KAREL or a robot option (`--karel` converts poses computed at run time
+  and text files): files, sockets and raw byte buffers; an
+  operator dialog that waits for an answer; more than 25 string registers; an event log;
+  trigonometric functions of data that changes at run time; setting some outputs in the middle of a
+  corner path; turning positions the robot measures (a calibration, a search on either edge of an
+  input) into a frame. A routine using files or sockets can be replaced by a TP or KAREL program written
+  on the FANUC side: the mapping file's `external_routines` makes its calls `CALL` that program
+  ([programs you provide](#programs-you-provide)).
+- **What CrossArm does not convert yet:** error handlers for the errors of the system (`ERR_...`; the
+  errors the program raises itself are converted since 1.10); data the programs work out other than as
+  constants; routines taking parameters of other types (optional numbers and texts); some conditions;
+  arrays of strings.
+- **Programs that are not complete:** a library using data or routines declared in another project
+  cannot be resolved, by CrossArm or by RobotStudio; the report lists them as "routine or data not in
+  the backup".
+
+### How close to the ABB is the converted program?
+The points are exactly the ABB's: the FANUC flange lands within 0.004 mm and 0.001° of where the ABB
+put it. How the robot moves between them cannot be exact (a CNT is not a RAPID zone), so CrossArm
+aims for a path within 10 mm of the ABB's. Measured against an IRB 6700 (corners on three FANUC
+robots; approaches, retracts, reversals and zigzags on two), it stays within 4 mm, and on the way
+down onto a part the FANUC keeps to the line at least as long as the ABB.
+
+### How are ABB robtargets converted to FANUC positions?
+The quaternion becomes W, P, R (fixed-axis XYZ angles), the position stays in millimetres in the
+user frame, and ABB `confdata` becomes a FANUC `CONFIG` string through conventions measured on both
+controllers. `Offs()` and `RelTool()` are resolved at conversion time; `MoveAbsJ` joints are mapped
+axis by axis (the FANUC J3 is absolute, the wrist axes turn the other way).
+
+### How does CrossArm number registers, I/O, frames and programs?
+Automatically from 1, with one numbering per controller shared by all robot tasks. Given the backup
+of the FANUC robot in place, it leaves that robot's numbers and program names alone. Every run
+writes `crossarm_mapping.json`: edit it and convert again to use your cell's own numbers
+([numbering](#numbering-mapping-file-and-target-robot)).
+
+### Does my backup leave my computer?
+No. CrossArm runs entirely offline, reads only the files you give it and writes its output next to
+them.
+
+### Which versions are supported?
+RAPID from RobotWare 6 and 7 backups (`.mod`, `.modx`, `.sys`, `.sysx`, `.prg`). On the FANUC side,
+the `.LS` format as FANUC controllers and current ROBOGUIDE versions export it. The conventions
+were measured against an IRB 6700 on an M-20iD/25, an R-2000iC/190S and an R-1000iA/80F; other
+models should be checked in ROBOGUIDE.
+
+### Is CrossArm free?
+Free for evaluation, development, testing, teaching and personal projects. Production use —
+programs that run on a real robot, conversions delivered to a customer, billed migration work —
+needs a commercial licence. See [LICENSING.md](../LICENSING.md).
+
+### Can it convert FANUC to ABB, or KUKA and Yaskawa programs?
+Not yet. CrossArm is built around a brand-neutral program model, and it can already read FANUC `.LS`
+files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadmap).
+
+## Roadmap
+
+Progress is measured as the share of RAPID instructions written as TP: on the three RobotWare
+backups of the test corpus, written for testing in three integrators' styles and checked on the
+controllers ([validation](validation.md#1-the-test-corpus)), 87 %, 93 % and 90 %; on public
+open-source programs, about 60 %. What is left gives the order of the next steps:
+
+1. Values only known at run time, and the conditions on them: what is left of them is spread over
+   many forms, each found in few programs.
+2. Routines taking optional parameters, and calls whose arguments TP cannot take.
+3. Error handlers (`ERROR`, `RETRY`, `RAISE`) for the errors of the instructions the program calls (those
+   it raises itself are converted since 1.10).
+4. Frames and positions measured on the robot (calibration): TP cannot compute a frame. Those computed
+   from fixed values, searches on one edge of an input, frames written part by part or copied, and FUNCs
+   building them are converted; with `--karel` (1.7), those computed by `PoseMult`, `PoseInv`, `RelTool` or
+   `DefFrame` too.
+
+Done in 1.7: KAREL, as an option, for the poses computed at run time and text files. Done in 1.8: tools and
+work objects computed by calibration routines (written part by part, copied, built by FUNCs, or by functions
+the integrator provides). Done in 1.9: the report as a cockpit (decision and figures first, detail on demand,
+actions saying who acts), a one-page summary, the comparison with the previous conversion, CSV. Done in
+1.10: the backup's FUNCs as TP programs, the errors the program raises itself, `CrossArm.exe` on the command
+line. Sockets are not planned: a routine using them can be replaced by a program the integrator writes
+(`external_routines`). Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
 
 ## How it works inside
 

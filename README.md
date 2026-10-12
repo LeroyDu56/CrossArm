@@ -2,103 +2,48 @@
 
 [![tests](https://github.com/LeroyDu56/CrossArm/actions/workflows/tests.yml/badge.svg)](https://github.com/LeroyDu56/CrossArm/actions/workflows/tests.yml)
 [![release](https://img.shields.io/github/v/release/LeroyDu56/CrossArm)](https://github.com/LeroyDu56/CrossArm/releases/latest)
-![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![dependencies](https://img.shields.io/badge/runtime%20dependencies-none-brightgreen)
-[![license](https://img.shields.io/badge/license-BUSL--1.1-blue)](LICENSE)
+[![license](https://img.shields.io/badge/license-BUSL--1.1-blue)](LICENSING.md)
 
-**CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`).** Give it a
-RobotWare backup — or loose `.mod`, `.modx` and `.sys` modules — and it writes one FANUC program per
-routine: motions, positions, tool and user frames, arm configuration, I/O, registers and program
-logic. Alongside, a report lists everything that still needs a person. Nothing is guessed.
+**CrossArm converts ABB robot programs (RAPID) into FANUC TP programs (`.LS`), and lists what is left
+to do before commissioning.** It is for integrators and plant teams moving a cell from ABB to FANUC
+robots, who would otherwise rewrite every program by hand.
 
-It is built for **robot migrations**. When a production cell moves from ABB to FANUC robots,
-rewriting the programs by hand takes days per robot, and it is where mistakes slip in: a mistyped
-frame, a swapped output, a posture that flips the wrist. CrossArm does the translation, fits the
-numbering to the FANUC robot already in place, and tells you exactly what is left to do before
-commissioning.
+**[Download CrossArm.exe](https://github.com/LeroyDu56/CrossArm/releases/latest)** — Windows, nothing
+to install, runs offline (or Python 3.11+ on any system, no dependencies).
 
-**[Download CrossArm.exe](https://github.com/LeroyDu56/CrossArm/releases/latest)** ·
+- **In:** a RobotWare 6 / 7 backup (folder or `.zip`) or RAPID modules; optionally the backup of the FANUC
+  robot in place, whose numbers and program names are left alone.
+- **Out:** one TP program per routine, `SETUP_FRAMES.LS` for the frames, an HTML report that opens on a
+  decision (ready, workable, not ready) with a commissioning checklist, and an editable numbering file.
+- **Not 100 %, not plug-and-play.** About 60 % of the instructions convert on public programs, 87 % to 93 %
+  on our own test corpus; the rest is marked `!TODO` with its cause, never guessed. The output is a
+  starting point for **commissioning**: check it in ROBOGUIDE, touch up the points on the robot.
+- **Licence:** free for evaluation and non-production use. Production use (programs run on a real robot,
+  delivered to a customer, billed migration work) needs a commercial licence:
+  **enzoleroy56@gmail.com** ([LICENSING.md](LICENSING.md)).
+
 [User guide](docs/guide.md) · [How it was validated](docs/validation.md) · [FAQ](#faq) ·
 [Changelog](CHANGELOG.md)
 
-| | |
-|---|---|
-| **Input** | ABB RobotWare 6 / 7 backup (folder or `.zip`), or RAPID modules (`.mod` `.modx` `.sys` `.sysx` `.prg`) |
-| **Output** | FANUC TP programs as `.LS` text (and binary `.TP` through FANUC MakeTP, optional; KAREL programs for what TP cannot compute, optional), an interactive HTML report that opens on a decision (ready, workable, not ready) and holds a commissioning checklist, a one-page summary and the figures as JSON, an editable numbering file, the points written (to keep the robot's touch-ups when converting again) |
-| **Optional** | the backup of the FANUC robot the programs will run on, so its numbers and program names are left free; its programs as they are now, so the points touched up on it are kept |
-| **Runs on** | Windows (`CrossArm.exe`, nothing to install) or any system with Python 3.11+ — entirely offline |
-| **Licence** | Business Source License 1.1: free for evaluation and non-production use ([details](LICENSING.md)) |
+## Try it in 2 minutes
 
-## How to use it
-
-Get **`CrossArm.exe`** from the [latest release](https://github.com/LeroyDu56/CrossArm/releases/latest):
-nothing to install.
+1. Download **`CrossArm.exe`** from the [latest release](https://github.com/LeroyDu56/CrossArm/releases/latest)
+   and open it.
+2. Choose the **ABB program**: a backup folder, a `.zip` or RAPID files (a sample:
+   [pick_and_place.mod](tests/fixtures/rapid/pick_and_place.mod)). Optionally, the backup of the **FANUC
+   robot** it will run on.
+3. **Convert.** The window gives the decision, how many programs are ready as is and what to look at first.
+   The programs and `crossarm_report.html` land in a new `crossarm_<name>` folder next to the input.
 
 ![CrossArm desktop window: ABB program and FANUC robot chosen, then the conversion summary with programs ready as is and items to review](docs/images/crossarm_window.png)
 
-1. Choose the **ABB program**: a backup folder, a `.zip` or RAPID files.
-2. Optionally, the **FANUC robot** it will run on (its backup): its frames, registers, I/O and
-   program names are left alone, and its speeds and zones are used.
-3. Optionally, **your numbering**: a `crossarm_mapping.json` from a previous run, edited with your
-   cell's numbers.
-4. Optionally, **binary `.TP` programs**, for a robot without the ASCII Upload option: FANUC MakeTP,
-   installed with ROBOGUIDE, makes them for a ROBOGUIDE robot like yours, in a `TP` folder to copy to a
-   USB stick.
-5. Optionally, the **positions touched up on the robot**, when converting again a program already
-   commissioned: the robot's programs as they are now and the earlier CrossArm output. A point whose
-   ABB position did not change keeps its touch-up.
-6. Optionally, **KAREL programs**, for what TP cannot compute (poses computed at run time, text files):
-   the robot needs the KAREL option (R632).
-7. **Convert.** The result gives the decision (ready, workable, not ready), how many programs are ready
-   as is and what to look at first.
+From the command line (`crossarm`, or `CrossArm.exe` with the same commands):
 
-The programs, the report and the numbering file land in a new `crossarm_<name>` folder next to the
-input, with `SETUP_FRAMES.LS`, which sets every tool and user frame on the robot. Dropping the
-backups on the icon converts them straight away. From the command line:
-`crossarm convert abb_backup/ --fanuc fanuc_backup/`, with `--tp-robot <ROBOGUIDE robot folder>` for the
-`.TP` ([user guide](docs/guide.md#command-line)); `CrossArm.exe convert ...` takes the same commands without
-opening its window (in a `.bat`, or `start /wait` at a cmd prompt).
+```
+crossarm convert abb_backup/ --fanuc fanuc_backup/
+```
 
-The report, `crossarm_report.html`, is one page that works offline, built as a cockpit: a line kept at the
-top gives the decision, the share converted, the TODO, the blocking causes and the points to touch up, and
-the rest stays folded until asked for. It opens on an analysis: whether the conversion is ready, workable or
-not ready, by a fixed rule printed under the decision, the 3 to 7 things to do first — each with the exact
-number of TODO it concerns, a link to them and who acts — the main TODO causes and the share converted by
-area. Then the detail, on demand: the programs in folders, each RAPID routine next to its TP, opened on its
-TODO; the items to review, filtered or searched, each leading to its line; and a commissioning checklist in
-the order the cell is brought up (frames and tools with their values, payloads, I/O, registers, points to
-touch up, motion to check), its ticks kept in the browser. The items and the checklist export as CSV; the
-report prints as a 2-page summary or as the site checklist. Next to it, `crossarm_report_summary.md` holds
-it on one page and `crossarm_summary.json` its figures; converting the same backup again says what changed
-since the previous conversion (TODO, warnings and % then and now, causes gone and new).
-
-**Converting again keeps the touch-ups.** Every conversion writes `crossarm_points.json`, the points it
-wrote and where each came from. When the ABB program changes after commissioning,
-`crossarm convert new_backup/ --keep-taught robot_programs/ --keep-taught crossarm_old/` (or step 5)
-reads the robot's programs (`.LS`, or `.TP` decoded by FANUC PrintTP) and keeps each touched-up point
-whose ABB position and frames did not change; the others are listed to touch up again, with how far the
-touch-up was.
-
-**Programs you provide.** A routine CrossArm cannot write (missing from the backup, or using files or
-sockets) can be a TP or KAREL program you write on the FANUC side: name it under `external_routines` in
-the mapping file and its calls become `CALL NAME(args)`, the report listing what each program receives.
-The mapping file CrossArm writes offers the candidates, inactive until a name is filled in.
-
-**KAREL for what TP cannot compute.** With `--karel` (or step 6), what TP has no arithmetic or instruction
-for is written as calls to CrossArm's own KAREL programs: poses computed while the robot runs (`PoseMult`,
-`PoseInv`, `RelTool`, `DefFrame`), the frames calibrated from them (`UFRAME[n]=PR[k]`), and RAPID's text files
-(`Open`, `Write`, `Close`, written on the controller's `UD1:`). The programs land in a `KAREL` folder,
-compiled by FANUC ktrans when ROBOGUIDE is installed, else as `.kl` with the command to compile them. A real
-robot needs the KAREL option (R632), and the `.pc` loaded before the `.LS`. Sockets stay TODO
-([user guide](docs/guide.md#karel-programs---karel)).
-
-**Calibration routines.** Tools and work objects that the programs calibrate while the robot runs are
-followed field by field: a frame written part by part (`w.uframe.trans := p.trans`) is read back from the
-controller, its parts written by TP and loaded again (`PR[91]=UFRAME[3]`, `PR[91,1]=PR[97,1]`,
-`UFRAME[3]=PR[91]`); a frame copied is loaded into the other one; a FUNC of the backup that builds a tool or a
-work object from such a frame is copied into each call; and a function you provide as a program gives its
-result back in a register (`external_routines` with `"returns"`). Each form was measured on ROBOGUIDE
-([user guide](docs/guide.md#frames-and-points-the-programs-compute)).
+The other steps of the window and every option: [user guide](docs/guide.md#the-window).
 
 ## An example
 
@@ -140,240 +85,87 @@ P[1]{
 
 And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that goes with it.
 
-## What it converts
-
-- **Motion**: `MoveJ`, `MoveL`, `MoveC`, `MoveAbsJ` with their targets (`Offs`, `RelTool` included),
-  the arm configuration, speeds and zones, tool and user frames, payloads (`GripLoad` included).
-- **I/O**: digital, group and analog signals, typed by the backup's `EIO.cfg`, pulses, clocks; waits,
-  including a wait with a time limit and its error handler.
-- **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR`, `WHILE`, conditions calling the backup's own functions, the
-  backup's FUNCs known only at run time as TP programs of their own, errors the program raises itself (`RAISE`)
-  and the `ERROR` handlers of its callers (`RETRY`, `TRYNEXT`), calls with
-  num, bool, string, point (robtarget), record, tool, work object, speed, zone and switch arguments, nums
-  passed by reference, the integrator's own move routines;
-  interrupts (`ISignalDI`, `ISignalDO`, `IPers`) as FANUC condition monitors calling the `TRAP`.
-- **Data**: `num` and `bool` to registers and flags, data of the backup's own `RECORD` types field by field
-  (a state machine's state in a register named by its path), strings in string registers (texts compared,
-  measured, cut and passed on), calculations of any length; points worked out at run
-  time (palletizing: `Offs()` of loop counters, `RelTool()`, `CRobT()`) in position registers, jointtargets
-  read on the robot (`CJointT()`) in joint position registers; operator messages; comments.
-- **Calibration**: tools and work objects written part by part or copied at run time, FUNCs that build them
-  copied into each call, functions you provide as programs (their result read back from a register),
-  `SetSysData`; routines called by a name worked out at run time (`%"Bay_" + NumToStr(n,0)%`, `CallByVar`).
-- **With `--karel`**: `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of poses known only at run time, the
-  tool and user frames calibrated from them, and text files, by CrossArm's KAREL programs.
-
-Frames and points the programs compute are worked out at conversion time when every value they read
-is fixed; points worked out from data that changes at run time are kept in position registers. Marked
-`!TODO` in the program and listed in the report, never guessed: other routine parameters, frames
-computed from data that changes at run time in ways TP cannot write (those written part by part, copied or
-built by a FUNC of the backup are converted, and with `--karel` those computed by `PoseMult`, `PoseInv`,
-`RelTool` or `DefFrame`), reading the controller's state (`GetSysData`, `OpMode()`),
-error handlers beyond wait timeouts and the program's own errors, timer interrupts and a `TRAP` that moves the robot, analog inputs
-and a few ABB-specific instructions. The full table is in the [user guide](docs/guide.md#what-is-converted).
-
 ## What to expect
 
-**About 60 % of the instructions, on real programs.** On public open-source RAPID programs of widely
-mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
-depending on the program; programs built around files, sockets, operator dialogs or error handlers
-convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
-higher because we wrote the programs. Both figures are without `--karel` and without programs you provide
-(`external_routines`), which convert a few TODO more in programs that write text files or compute poses at
-run time. Converted means written in TP and loaded by the controller
-without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
+- **Motion, I/O, logic and data convert**: moves with their targets, configuration, speeds and zones, tool and
+  user frames, payloads, signals typed by `EIO.cfg`, `IF` / `TEST` / `FOR` / `WHILE`, calls with arguments,
+  records, strings, interrupts, the backup's own FUNCs and errors ([full table](docs/guide.md#what-is-converted)).
+- **About 60 % of the instructions on public open-source programs** (from about 15 % to all of them per
+  project), **87 % to 93 % on our own test corpus**, written for testing. Converted means written in TP and
+  loaded by the controller without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
+- **The points are the ABB's, to be touched up.** The path stays within 10 mm of the ABB's (measured: within
+  4 mm); the FANUC robot is not where the ABB was, so every point is re-taught at commissioning.
+- **Measured, not assumed:** every form of instruction CrossArm writes was read back from a FANUC controller
+  in ROBOGUIDE, and its 40 controller probes on ROBOGUIDE and RobotStudio were all run again for 1.10.0
+  ([validation](docs/validation.md)).
+- **Check on your robot model:** reachability and posture in ROBOGUIDE; speeds and zones are measured for the
+  M-20iD, R-2000iC and R-1000iA series ([speeds and zones](docs/guide.md#speeds-and-zones)).
 
-**The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
-files in ROBOGUIDE or on the controller, set the payloads, check reachability, and work through
-every `!TODO`.
+## Beyond the basics
 
-**The points are theoretical, to be touched up on the robot.** They are the ABB's, carried over
-exactly, but the FANUC robot is not where the ABB was, its tool is on another flange, and the cell
-was never exact to the millimetre: every point is re-taught at commissioning, as on any robot swap.
-What CrossArm sets out to do is give a program that goes where the ABB went, closely enough to be
-touched up rather than rewritten: **within 10 mm of the ABB's path**, the way it moves included.
-Measured, it stays within 4 mm.
-
-**Limits:**
-- Another robot model may need another posture, or may not reach a point at all: check reachability
-  in ROBOGUIDE.
-- An ABB tool goes on a FANUC robot through an adapter plate, which decides which way round the tool
-  sits. CrossArm puts the tool's guide pin where it was on the ABB; `"tool_pin": "+x"` turns the
-  tools for the ISO 9409-1 hole ([the tool on the flange](docs/guide.md#the-tool-on-the-flange)).
-- Speeds and zones are measured per FANUC series: M-20iD (and ARC Mate 120iD), R-2000iC and
-  R-1000iA. For another robot CrossArm uses the M-20iD's and says so
-  ([speeds and zones](docs/guide.md#speeds-and-zones)).
-
-## How it was validated
-
-Where the two brands differ, CrossArm **measured** both controllers rather than assume, with an ABB
-IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs the controller's own software:
-
-| What | Result |
-|---|---|
-| RAPID instructions converted, public open-source programs (indicative, [why not all](#why-not-100-)) | about 60 %, from about 15 % to all of it per project |
-| RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
-| Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
-| Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on both simulators (ROBOGUIDE R-1000iA/80F, RobotStudio IRB 6700), all run again for 1.10.0 | 40 of 40 give what was measured |
-| With `--karel`: poses, frames and text files by CrossArm's KAREL programs, run on ROBOGUIDE | what RAPID computes and writes, within 0.001 mm and 0.01° |
-| Tools and work objects calibrated at run time: written part by part, copied, built by FUNCs copied into their calls, or by functions you provide, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm |
-| Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
-| Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
-| Joint moves, converted, against the ABB | −16 % to +19 % in time |
-| Corners, approaches, retracts, reversals, zigzags, converted, against the ABB | the path within 4 mm |
-
-Each probe runs again unattended on both simulators, and the tests fail if a change moves a result.
-The details, probe by probe: [docs/validation.md](docs/validation.md).
+Each in the [user guide](docs/guide.md):
+[your own numbering](docs/guide.md#numbering-mapping-file-and-target-robot) (`crossarm_mapping.json`) ·
+[converting again without losing the touch-ups](docs/guide.md#converting-again-keeping-the-touch-ups)
+(`--keep-taught`) · [programs you provide](docs/guide.md#programs-you-provide) for routines TP cannot write ·
+[KAREL programs](docs/guide.md#karel-programs---karel) for what TP cannot compute (`--karel`) ·
+[frames calibrated at run time](docs/guide.md#frames-and-points-the-programs-compute) ·
+[binary `.TP`](docs/guide.md#binary-tp-programs) through FANUC MakeTP ·
+[the report](docs/guide.md#reading-the-report) · [the tool on the flange](docs/guide.md#the-tool-on-the-flange) ·
+[roadmap](docs/guide.md#roadmap).
 
 ## FAQ
 
 ### How do I convert an ABB RAPID program to FANUC TP?
-Download [CrossArm.exe](https://github.com/LeroyDu56/CrossArm/releases/latest), choose the ABB backup
-(folder or `.zip`) or the RAPID modules, optionally the backup of the FANUC robot the programs will
-run on, and click **Convert**. The `.LS` programs, an HTML report and a numbering file are written
-next to your input. From the command line: `crossarm convert abb_backup/ --fanuc fanuc_backup/`.
-
-### Can RobotStudio or ROBOGUIDE convert programs between ABB and FANUC?
-RobotStudio works in RAPID and ROBOGUIDE in TP and KAREL; neither is meant to translate the other
-brand's programs. Offline programming tools generate programs for many brands from a path you draw;
-translating an *existing* program — its logic, its I/O, its data — is a different job. CrossArm does
-that job, and ROBOGUIDE is then the place to check its output before it goes to the robot.
-
-### What is a FANUC `.LS` file?
-The text form of a FANUC TP (teach pendant) program: a header, numbered instructions and the
-positions they use. The controller runs the compiled `.TP`; ROBOGUIDE compiles a `.LS` into it, and
-so can a controller that accepts ASCII programs (the ASCII Upload option). CrossArm writes `.LS` files
-and can read them back byte for byte; for a controller without that option, it has FANUC MakeTP,
-installed with ROBOGUIDE, make the `.TP` too.
+Open [CrossArm.exe](https://github.com/LeroyDu56/CrossArm/releases/latest), choose the ABB backup (folder or
+`.zip`) or the RAPID modules, optionally the backup of the FANUC robot, and click **Convert**. From the
+command line: `crossarm convert abb_backup/ --fanuc fanuc_backup/`.
 
 ### Are the converted programs ready to run on the robot?
-No, and CrossArm says so on every report. They are a starting point for commissioning: set the tool
-payloads, check tool and user frames, check reachability on the new robot model, work through every
-TODO, and touch up the points. ROBOGUIDE is the right place to do that before the real robot.
-
-### What happens to the touched-up points when the ABB program changes?
-Convert the new backup with `--keep-taught` (or step 5 of the window), giving it the robot's programs
-as they are now and the earlier CrossArm output: each point touched up on the robot keeps its taught
-value, unless its ABB position or its frames changed; those are written theoretical again and listed to
-touch up again. A conversion made before 1.6 wrote no `crossarm_points.json`: convert that old backup
-once with 1.6 to get one.
+No, and every report says so. They are a starting point for commissioning: set the payloads, check frames
+and reachability, work through every `!TODO`, touch up the points. ROBOGUIDE is the place to do that first.
 
 ### Why not 100 %?
-Three reasons, and the report gives each `!TODO` its cause.
-- **What TP cannot do** without KAREL or a robot option (`--karel` converts poses computed at run time
-  and text files): files, sockets and raw byte buffers; an
-  operator dialog that waits for an answer; more than 25 string registers; an event log;
-  trigonometric functions of data that changes at run time; setting some outputs in the middle of a
-  corner path; turning positions the robot measures (a calibration, a search on either edge of an
-  input) into a frame. A routine using files or sockets can be replaced by a TP or KAREL program written
-  on the FANUC side: the mapping file's `external_routines` makes its calls `CALL` that program.
-- **What CrossArm does not convert yet:** error handlers (`ERROR`, `RETRY`, `RAISE`); data the
-  programs work out other than as constants; routines taking parameters of other types (optional
-  numbers and texts); some conditions; arrays of strings.
-- **Programs that are not complete:** a library using data or routines declared in another project
-  cannot be resolved, by CrossArm or by RobotStudio; the report lists them as "routine or data not in
-  the backup".
-
-### How close to the ABB is the converted program?
-The points are exactly the ABB's: the FANUC flange lands within 0.004 mm and 0.001° of where the ABB
-put it. How the robot moves between them cannot be exact (a CNT is not a RAPID zone), so CrossArm
-aims for a path within 10 mm of the ABB's. Measured against an IRB 6700 (corners on three FANUC
-robots; approaches, retracts, reversals and zigzags on two), it stays within 4 mm, and on the way
-down onto a part the FANUC keeps to the line at least as long as the ABB.
-
-### How are ABB robtargets converted to FANUC positions?
-The quaternion becomes W, P, R (fixed-axis XYZ angles), the position stays in millimetres in the
-user frame, and ABB `confdata` becomes a FANUC `CONFIG` string through conventions measured on both
-controllers. `Offs()` and `RelTool()` are resolved at conversion time; `MoveAbsJ` joints are mapped
-axis by axis (the FANUC J3 is absolute, the wrist axes turn the other way).
-
-### How does CrossArm number registers, I/O, frames and programs?
-Automatically from 1, with one numbering per controller shared by all robot tasks. Given the backup
-of the FANUC robot in place, it leaves that robot's numbers and program names alone. Every run
-writes `crossarm_mapping.json`: edit it and convert again to use your cell's own numbers
-([user guide](docs/guide.md#numbering-mapping-file-and-target-robot)).
-
-### Does my backup leave my computer?
-No. CrossArm runs entirely offline, reads only the files you give it and writes its output next to
-them.
-
-### Which versions are supported?
-RAPID from RobotWare 6 and 7 backups (`.mod`, `.modx`, `.sys`, `.sysx`, `.prg`). On the FANUC side,
-the `.LS` format as FANUC controllers and current ROBOGUIDE versions export it. The conventions
-were measured against an IRB 6700 on an M-20iD/25, an R-2000iC/190S and an R-1000iA/80F; other
-models should be checked in ROBOGUIDE.
+Some RAPID has no TP equivalent without KAREL or a robot option (files, sockets, operator dialogs), some is
+not converted yet (handlers of system errors, some run-time values and conditions), and some programs are not
+complete (routines or data from another project). The report gives each `!TODO` its cause
+([details](docs/guide.md#why-not-100-)).
 
 ### Is CrossArm free?
-Free for evaluation, development, testing, teaching and personal projects. Production use —
-programs that run on a real robot, conversions delivered to a customer, billed migration work —
-needs a commercial licence. See [LICENSING.md](LICENSING.md).
+Free for evaluation, development, testing, teaching and personal projects. Production use needs a
+commercial licence ([LICENSING.md](LICENSING.md)).
 
-### Can it convert FANUC to ABB, or KUKA and Yaskawa programs?
-Not yet. CrossArm is built around a brand-neutral program model, and it can already read FANUC `.LS`
-files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadmap).
+### Does my backup leave my computer?
+No. CrossArm runs entirely offline and writes its output next to your input.
 
-## Roadmap
-
-Progress is measured as the share of RAPID instructions written as TP: on the three RobotWare
-backups of the test corpus, written for testing in three integrators' styles and checked on the
-controllers ([validation](docs/validation.md#1-the-test-corpus)), 87 %, 93 % and 90 %; on public
-open-source programs, about 60 %. What is left gives the order of the next steps:
-
-1. Values only known at run time, and the conditions on them: what is left of them is spread over
-   many forms, each found in few programs.
-2. Routines taking optional parameters, and calls whose arguments TP cannot take.
-3. Error handlers (`ERROR`, `RETRY`, `RAISE`) for the errors of the instructions the program calls (those
-   it raises itself are converted since 1.10).
-4. Frames and positions measured on the robot (calibration): TP cannot compute a frame. Those computed
-   from fixed values, searches on one edge of an input, frames written part by part or copied, and FUNCs
-   building them are converted; with `--karel` (1.7), those computed by `PoseMult`, `PoseInv`, `RelTool` or
-   `DefFrame` too.
-
-Done in 1.7: KAREL, as an option, for the poses computed at run time and text files. Done in 1.8: tools and
-work objects computed by calibration routines (written part by part, copied, built by FUNCs, or by functions
-the integrator provides). Done in 1.9: the report as a cockpit (decision and figures first, detail on demand,
-actions saying who acts), a one-page summary, the comparison with the previous conversion, CSV. Done in
-1.10: the backup's FUNCs as TP programs, the errors the program raises itself, `CrossArm.exe` on the command
-line. Sockets are
-not planned: a routine using them can be replaced by a program the
-integrator writes (`external_routines`).
-Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
+More questions (robtargets and `CONFIG`, numbering, supported versions, other brands):
+[user guide FAQ](docs/guide.md#faq).
 
 ## Documentation
 
-- [User guide](docs/guide.md): inputs and outputs, the full conversion table, the report and its
-  analysis, numbering and the mapping file, programs and functions you provide, converting again with the
-  touch-ups, KAREL programs (`--karel`), frames calibrated at run time, the tool on the flange, speeds and
-  zones.
+- [User guide](docs/guide.md): inputs and outputs, the full conversion table, the report, numbering and the
+  mapping file, programs you provide, converting again, KAREL, calibration, the tool on the flange, speeds
+  and zones, FAQ and roadmap.
 - [How it was validated](docs/validation.md): every probe and measurement.
 - [FANUC `.LS` format status](docs/fanuc_ls_format.md) and [design notes](docs/design.md).
-- [Contributing](CONTRIBUTING.md): bug reports, code layout, running the tests and the probes.
-- [Changelog](CHANGELOG.md), with what 1.x keeps stable. To cite CrossArm, use **Cite this
-  repository** on GitHub ([CITATION.cff](CITATION.cff)).
+- [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md), with what 1.x keeps stable · to cite
+  CrossArm, **Cite this repository** on GitHub ([CITATION.cff](CITATION.cff)).
 
 ## License
 
 CrossArm is published under the [Business Source License 1.1](LICENSE).
 
-**Non-production use is free**: reading the code, building it, evaluating it on your own backups,
-development, testing, teaching and personal projects.
+- **Non-production use is free**: reading the code, building it, evaluating it on your own backups,
+  development, testing, teaching and personal projects. Nothing is locked: the programs then start with
+  `CrossArm EVALUATION copy`.
+- **Production use requires a commercial licence**: converting programs that run on a real robot, that are
+  delivered to a customer, or that are part of billed migration work. Its licence file replaces the mark with
+  the licence number and company name. Where the line falls: [LICENSING.md](LICENSING.md); getting one:
+  [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md); contact: **enzoleroy56@gmail.com**.
+- Each released version becomes Apache 2.0 four years after it is published (v1.10.0 on 2030-10-12; every
+  date in [LICENSING.md](LICENSING.md)). Versions published before 1.0.0 keep the licence they were published
+  under. Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
-**Production use requires a commercial licence** — converting programs that run on a real robot,
-that are delivered to a customer, or that are part of billed migration work. See
-[LICENSING.md](LICENSING.md) for where the line falls, and
-[LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) to get one. Contact: **enzoleroy56@gmail.com**.
-
-Nothing is locked without a licence. The programs CrossArm writes then start with
-`CrossArm EVALUATION copy`, and a commercial licence comes with a licence file that replaces that
-mark with the licence number and company name.
-
-Each released version becomes Apache 2.0 four years after it is published: v1.10.0 on 2030-10-12, v1.9.0 and v1.8.0 on 2030-10-09,
-v1.7.0 on 2030-10-08, v1.6.0 and v1.5.0 on 2030-10-07, v1.4.0 on 2030-10-06, v1.3.0 on 2030-10-05, v1.2.0 and v1.1.0 on 2030-09-29, v1.0.0 on 2030-09-26.
-Versions published before 1.0.0 keep the licence they were published under.
-Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-
-FANUC, ROBOGUIDE and KAREL are trademarks of FANUC Corporation. ABB, RAPID, RobotStudio and
-RobotWare are trademarks of ABB Ltd. **CrossArm is an independent project, not affiliated with or
-endorsed by either company.** The `.LS` and RAPID formats were worked out by observing files and
-controller round trips, for interoperability.
+FANUC, ROBOGUIDE and KAREL are trademarks of FANUC Corporation. ABB, RAPID, RobotStudio and RobotWare are
+trademarks of ABB Ltd. **CrossArm is an independent project, not affiliated with or endorsed by either
+company.** The `.LS` and RAPID formats were worked out by observing files and controller round trips, for
+interoperability.
