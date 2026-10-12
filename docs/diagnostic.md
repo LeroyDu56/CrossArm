@@ -195,3 +195,64 @@ No EIO.cfg read.
 
 `RETURN` counts 1 use and none converted or TODO: it is in a FUNC, whose body is not counted on its own (the FUNC is
 converted where it is called).
+
+# Anonymized backup (`crossarm anonymize`)
+
+When a diagnostic report is not enough (a construction CrossArm converts wrongly, a TODO you want looked at), an
+anonymized copy of the backup shows the author the program's structure without its content. It converts as the
+backup does, but none of the backup's names, texts or comments is in it.
+
+```
+crossarm anonymize BACKUP|FILES [-o FILE.zip] [--seed N] [--keep-geometry] [--scramble-tools]
+                   [--write-mapping FILE] [--eio EIO.cfg]
+```
+
+It writes a .zip, by default `crossarm_anonymized.zip` next to the input (`_2`, `_3`... when it exists: the input's
+name is not in it). **Nothing is sent anywhere**: you read `anonymize_report.md` in the zip, and decide whether to send
+the zip, and how.
+
+What the zip holds:
+
+- **Only what CrossArm reads.** The RAPID modules (a backup keeps its `RAPID/TASKn/PROGMOD|SYSMOD` layout), each file
+  named after its module's new name; `SYSPAR/EIO.cfg` reduced to each signal's name, type and device and to each
+  section's records (renamed: no label, address or device map); `BACKINFO/backinfo.txt` reduced to the task names
+  (renamed), the RobotWare version, the ABB options with their code and the robot models. HOME, License, system.xml,
+  the .bin files, dates, paths, the system's name and serial number are left out. The zip's entries have a fixed date.
+- **Every name renamed, the same way everywhere** (RAPID ignores case): `MOD_1`, `PROC_12`, `FUNC_3`, `TRAP_2`,
+  `REC_1`, `FIELD_4`, `PARAM_2`, `TOOL_3`, `WOBJ_1`, `PT_17`, `JT_2`, `NUM_5`, `DO_5`, `DI_2`, `TASK_1`, `EXT_3` (a
+  name the backup uses without declaring it)... A name keeps what a rule of CrossArm reads in it: a signal name
+  starting with di / do keeps that start, an `ERR_` name keeps `ERR_`, and routines whose FANUC program names clash
+  once shortened still clash. Never renamed: RAPID's reserved words, its own instructions, functions, data types,
+  predefined data (`tool0`, `wobj0`, `v1000`, `z50`, `fine`...), constants and error numbers, the components of its
+  data types after a dot (`.trans`, `.uframe`) and the optional arguments of its own instructions (`\WObj`, `\Conc`).
+- **Comments removed** (a comment holding semicolons keeps them alone, `!;;`: the coverage counts an error handler's
+  instructions by its semicolons). **Each text replaced** by a code of the same length (`"SA_______"`), keeping its
+  apostrophes and semicolons and whether it has a character TP texts do not have; a text equal to a name of the
+  backup becomes that name's new name, and a text starting the names of routines called by a name built at run time
+  (`CallByVar "Station_", n`, `%"Station_" + NumToStr(n, 0)%`) is renamed with those routines. A text with no letter
+  and at most one digit (`","`, `" "`, `"1"`) is kept.
+- **Positions moved**, unless `--keep-geometry`: each declared robtarget by a random offset of its frame (the work
+  object its moves name, wobj0 otherwise: the same offset for every point of a frame, orientations kept), each work
+  object's user frame by the offset of wobj0; tool frames are kept unless `--scramble-tools`. A pose at 0,0,0 is
+  kept. Every other number is kept (speeds, zones, offsets, counters): the conversion depends on them.
+
+**Limit.** Joint positions (jointtarget, MoveAbsJ) are not moved while the robtargets are, so the cell's geometry no
+longer holds together: the conversion stays equivalent, but an anonymized backup cannot be used to check paths in
+ROBOGUIDE unless it is made with `--keep-geometry`.
+
+The offsets are random; `--seed N` makes them repeatable (the same input and seed give the same bytes). The seed is
+never written in the zip. `--write-mapping FILE` also writes the table of correspondence (original names and texts ->
+new ones, the offsets) to FILE, outside the zip: it reverses the anonymization, so keep it and never send it.
+
+Not handled: a routine name built at run time from several texts joined (`"Sta" + "tion_"`), and a position written
+in the code rather than declared (`p := [[...], ...]`, kept as written).
+
+Exit codes: 0 the zip is written (a RAPID file CrossArm failed to anonymize is left out of it, and said so); 2 the
+input cannot be read; 3 a CrossArm internal error (details in crossarm_error.txt).
+
+**Checked by a test.** `tests/test_anonymize.py` anonymizes every input at hand (the test fixtures, a module of
+tricky cases, and the author's local test corpus) and checks that the anonymized copy converts the same (the
+diagnostic of the original and of the copy are equal: programs, TODO and warnings by cause, share converted by area
+and per task, instructions, functions, calls, data types, records, control, signals; and as many points), and that
+nothing of the input is in the zip (the privacy audit of the diagnostic report, on the zip: identifiers, strings,
+comment words, numbers in texts and comments, file and folder names; every robtarget coordinate moved).

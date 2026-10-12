@@ -18,6 +18,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   of TODO, share converted per task, RobotWare version and options, signal types, CrossArm internal errors), to
   send to the author. No name, comment, text, number or path of the backup is written, checked by a test; nothing
   is sent anywhere. See [docs/diagnostic.md](docs/diagnostic.md). Conversions are unchanged.
+- New command `crossarm anonymize BACKUP`: writes a .zip holding only what CrossArm reads of the backup, every name
+  renamed (`PROC_12`, `PT_17`...), texts replaced, comments removed, positions moved by a random offset per frame
+  (`--keep-geometry` to keep them, `--scramble-tools` to move the tools, `--seed N` for the same bytes again), with
+  `anonymize_report.md` (counts only); `--write-mapping FILE` writes the table of correspondence outside the zip.
+  The copy converts the same, checked by a test. Joint positions are not moved, so it cannot be used to check paths
+  in ROBOGUIDE unless made with `--keep-geometry`. See [docs/diagnostic.md](docs/diagnostic.md).
 
 ## 1.10.1 — 2026-10-12
 

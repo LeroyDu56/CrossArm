@@ -8,6 +8,8 @@
     crossarm convert BACKUP|FILES [-o OUTDIR] [--map mapping.json] [--routine NAME ...] [--fanuc TARGET]
                      [--tp] [--tp-robot ROBOT] [--keep-taught PATH] [--karel]
     crossarm diagnose BACKUP|FILES [-o OUTDIR] [--map mapping.json] [--eio EIO.cfg] [--fanuc TARGET] [--karel]
+    crossarm anonymize BACKUP|FILES [-o FILE.zip] [--seed N] [--keep-geometry] [--scramble-tools]
+                       [--write-mapping FILE] [--eio EIO.cfg]
 
 `stats` parses every RAPID file under the given paths and reports what the V1
 parser recognises versus what it leaves as Unsupported — the tool used to decide
@@ -22,7 +24,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
-from crossarm import __version__, diagnose, pipeline
+from crossarm import __version__, anonymize, diagnose, pipeline
 from crossarm.convert import ConversionConfig
 from crossarm.fanuc.maketp import TpRequest
 from crossarm.rapid import RAPID_SUFFIXES, parse_file
@@ -136,6 +138,30 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="the target controller's existing programs, as for convert (repeatable)")
     p_diag.add_argument("--karel", action="store_true", help="convert as with convert --karel")
     p_diag.set_defaults(handler=_cmd_diagnose)
+
+    p_anon = sub.add_parser(
+        "anonymize", help="write an anonymized copy of a backup (.zip) that converts the same, to send to the author",
+        description="Write a .zip holding only what CrossArm reads of the backup (RAPID modules, EIO.cfg signals, "
+                    "task names, RobotWare options), every name renamed (MOD_1, PROC_12, PT_17...), every text "
+                    "replaced, the comments removed and the positions moved: it converts as the backup does. "
+                    "anonymize_report.md in the zip says what was changed, as counts. Nothing is sent anywhere. "
+                    + anonymize.LIMIT,
+        epilog=EXIT_CODES,
+    )  # fmt: skip
+    p_anon.add_argument("paths", type=Path, nargs="+", help="ABB backup (folder or .zip), or RAPID files/folders")
+    p_anon.add_argument("-o", "--output", type=Path,
+                        help="the .zip to write (default: crossarm_anonymized.zip next to the input)")
+    p_anon.add_argument("--seed", type=int,
+                        help="seed of the random position offsets: the same input and seed give the same bytes "
+                             "(default: random, never written)")  # fmt: skip
+    p_anon.add_argument("--keep-geometry", action="store_true",
+                        help="keep every position as written (to check paths in ROBOGUIDE)")
+    p_anon.add_argument("--scramble-tools", action="store_true", help="move the tool frames too (kept by default)")
+    p_anon.add_argument("--write-mapping", type=Path, metavar="FILE",
+                        help="also write the table original -> new names to FILE (outside the zip). It reverses "
+                             "the anonymization: keep it, never send it")  # fmt: skip
+    p_anon.add_argument("--eio", type=Path, help="ABB EIO.cfg giving the signal types, as for convert")
+    p_anon.set_defaults(handler=_cmd_anonymize)
     return parser
 
 
@@ -237,6 +263,25 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     as_json, as_md = diagnose.write(diag, args.output or diagnose.default_folder(args.paths))
     print(f"Diagnostic report written: {as_json} and {as_md}. Read the .md: it is exactly what the report "
           "holds. Nothing was sent: send these two files yourself if you wish.")
+    return 0
+
+
+def _cmd_anonymize(args: argparse.Namespace) -> int:
+    try:
+        result = anonymize.anonymize(args.paths, args.seed, args.keep_geometry, args.scramble_tools, args.eio)
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        print(f"CrossArm: {exc}", file=sys.stderr)
+        return 2
+    output = anonymize.write(result, args.output or anonymize.default_output(args.paths), args.write_mapping)
+    print(f"Anonymized backup written: {output}. Read {anonymize.REPORT} in it to see what was changed. Nothing was "
+          "sent: send the .zip yourself if you wish.")  # fmt: skip
+    if result.counts["not_anonymized"]:
+        print(f"CrossArm: {result.counts['not_anonymized']} RAPID file(s) left out of the zip: CrossArm failed to "
+              "anonymize them.", file=sys.stderr)  # fmt: skip
+    if args.write_mapping:
+        print(f"Table of correspondence written: {args.write_mapping}. {anonymize.MAPPING_WARNING}")
+    if not args.keep_geometry:
+        print(anonymize.LIMIT)
     return 0
 
 
