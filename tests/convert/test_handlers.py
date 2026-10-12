@@ -70,10 +70,11 @@ def test_retry_jumps_back_to_the_wait_and_the_rest_of_the_handler_runs_at_the_ti
     ]  # fmt: skip
 
 
-def test_a_timeout_path_that_falls_through_ends_the_routine():
+def test_a_timeout_path_that_falls_through_stops_the_program():
+    # RAPID stops the program at the end of a handler (RobotStudio 2026-10-12, convert.raised)
     handler = "ERROR\n  IF ERRNO=ERR_WAIT_MAXTIME THEN\n    nNext:=9;\n  ENDIF"
     lines = tp_lines(run(f"WaitUntil bDone\\MaxTime:=1;\n{handler}", DATA))
-    assert lines[lines.index("TIMER[10]=STOP") + 4 :] == ["R[2:nNext]=9", "END", "LBL[3]"]
+    assert lines[lines.index("TIMER[10]=STOP") + 4 :] == ["R[2:nNext]=9", "ABORT", "LBL[3]"]
 
 
 def test_what_cannot_be_written_leaves_the_wait_and_the_handler_todo():

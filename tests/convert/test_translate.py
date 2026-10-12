@@ -1124,7 +1124,6 @@ def test_the_error_handler_of_a_routine_using_files_or_sockets_is_said_so(body, 
 
 @pytest.mark.parametrize("body", [
     'SocketSend sCam\\Str:="go";\nMoveL p10,v100,fine,tool0;\nERROR\n  IF ERRNO=ERR_ROBLIMIT THEN\n    TRYNEXT;\n  ENDIF',
-    'SocketSend sCam\\Str:="go";\nCheckPart;\nERROR\n  IF ERRNO=ERR_PART THEN\n    TRYNEXT;\n  ENDIF',
     'WaitTime 1;\nERROR\n  IF ERRNO=ERR_SOCK_TIMEOUT THEN\n    RETRY;\n  ENDIF',
 ])  # fmt: skip
 def test_an_error_handler_for_other_errors_or_in_a_routine_without_files_or_sockets_stays_an_error_handler(body):

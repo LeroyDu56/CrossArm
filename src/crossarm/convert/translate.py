@@ -94,6 +94,7 @@ from crossarm.convert.karel_poses import place_frames as place_karel_frames
 from crossarm.convert.late_calls import LateCalls
 from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
+from crossarm.convert.raised import RaisedErrors, RaisedPaths
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
 from crossarm.convert.runtime_points import RuntimePoints, expr_nodes, find_runtime_points
 from crossarm.convert.source_map import SourceTags
@@ -848,6 +849,8 @@ class Converter:
         self._provided_entries(modules)
         self.routine_use = RoutineUse(self.procs | self.computer.functions, self.externals,
                                       KAREL_FILES if self.config.karel else (), self.config.karel)
+        # The program's own errors (RAISE ERR_X) and how each PROC's ERROR handler takes them (convert.raised)
+        self.raised = RaisedErrors(self.procs, self.symbols.type_of, self._errnum_constant)
         # FUNCs of the backup a converted line may call as a TP program of their own (convert.func_programs)
         self.func_layouts, self.func_why = func_layouts(modules, records, self.externals, self.routine_use.inside,
                                                          self.recursive)
@@ -903,6 +906,13 @@ class Converter:
                     use.layout = layout
                     use.arguments = arguments_of(layout, True, use.returns)
             self.provided[key] = use
+
+    def _errnum_constant(self, name: str) -> float | None:
+        """The value of a CONST errnum given as a number; None for any other."""
+        decl = self.symbols.get(name)
+        if decl is None or decl.storage != "CONST" or not isinstance(decl.init, n.Number):
+            return None
+        return float(decl.init.value)
 
     def _fine_now(self, expr: n.Expr) -> bool | None:
         """Whether a zone passed to a routine is fine, None when it is not known before the programs are written."""
@@ -2134,7 +2144,7 @@ class Converter:
 
 
 class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline,
-                         FuncPrograms, LateCalls, SystemData):
+                         FuncPrograms, LateCalls, SystemData, RaisedPaths):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2161,6 +2171,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         self._on_timeout: OnTimeout | None | bool = False  # what its ERROR handler does when a wait times out
         self.timed_waits = 0  # waits with \MaxTime written with the handler's timeout path
         self.error_jumps: tuple[int, int] | None = None  # (RETRY, TRYNEXT) labels while writing that path
+        self.retry_counter: str | None = None  # the register counting RETRY on a raised error's path (raised.py)
+        self.errno_live = False  # writing a handler's path for a raised error: ERRNO is CROSSARM.ERRNO
+        self.raised_sites = 0  # lines where its handler was written for a raised error
         self.strict = 0  # >0: a statement that cannot be converted fails the enclosing one instead of a TODO
         self.after: tuple[n.Stmt, ...] = ()  # what follows the statement being written, in its block
         self.last_tool: n.Expr | None = None  # the tool of the last move written, while it is still selected
@@ -2216,6 +2229,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 self.emit(f"{register}={self.args.register(slot.key)}")  # type: ignore[union-attr]
         if self.interrupt is not None:
             self._trap_prologue(self.interrupt)
+        self.raised_reset()
         self.block(self.routine.body)
         for text in self.epilogue:
             self.emit(text)
@@ -2471,6 +2485,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                               Blocker.OPTIONS_IGNORED)
                 value = self.single(seconds, bare=True)
                 self.emit(f"WAIT {value}" if value.startswith(("R[", "AR[")) else f"WAIT {fmt_seconds(float(value))}(sec)")
+            case n.ProcCall() if self.raising_call(s):
+                self.raised_site(s, lambda: self.call(s))  # convert.raised
+                self.forget((s,), Unknown(f"may be changed by the call at l.{s.span.line}"))
             case n.ProcCall():
                 self.call(s)
                 self.forget((s,), Unknown(f"may be changed by the call at l.{s.span.line}"))
@@ -2493,7 +2510,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             case n.Exit():
                 self.emit("ABORT")
             case n.Unsupported(kind="RETRY") if self.error_jumps:
-                self.emit(f"JMP LBL[{self.error_jumps[0]}]")
+                self.retry_jump()  # convert.raised
+            case n.Unsupported(kind="RAISE") if self.routine.kind == "PROC":
+                self.raise_stmt(s)  # convert.raised
             case n.Unsupported(kind="TRYNEXT") if self.error_jumps:
                 self.emit(f"JMP LBL[{self.error_jumps[1]}]")
             case n.Unsupported(kind="CONNECT"):
@@ -3229,6 +3248,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.late_call(call)  # convert.late_calls
         elif name == "SETSYSDATA" and name not in self.c.procs:
             self.set_sys_data(call)  # convert.system_data
+        elif name == "BOOKERRNO" and name not in self.c.procs and self.book_error(call):
+            pass  # convert.raised: the number of an error the program raises
         elif self.c.config.karel and name in FILE_INSTRUCTIONS and name not in self.c.procs:
             self.file_statement(call, name)  # convert.karel_files
         elif name in self.c.move_routines:
@@ -3483,7 +3504,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             LBL[1] / R[9]=TIMER[10] / IF (DI[1]=OFF AND R[9]<2) THEN / JMP LBL[1] / ENDIF
 
         Past it, the condition either came true, or time ran out: then the handler's path runs, RETRY
-        jumping back to the wait and TRYNEXT past it; the end of the handler ends the routine.
+        jumping back to the wait and TRYNEXT past it; the end of the handler stops the program (ABORT), as RAPID does.
         """
         if limit is None:
             self.emit(text)
@@ -3525,7 +3546,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.error_jumps, self.strict = None, self.strict - 1
         self.forget(path.steps, Unknown("may be changed where a wait times out"))  # ran only if the time ran out
         if not leaves(path.steps):
-            self.emit("END")  # the end of an error handler returns from the routine
+            self.emit("ABORT")  # the end of an error handler: RAPID stops the program (convert.raised)
         self.emit(f"LBL[{after}]")
 
     def on_timeout(self) -> OnTimeout | None:
@@ -3546,6 +3567,20 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             if stmts is not None and only_passes_on(stmts):
                 self.warn(handler, "ERROR handler only passes errors on (RAISE): nothing to convert here; the caller's"
                                    " handler, if any, is reported with the caller", Blocker.HANDLER)  # fmt: skip
+                return
+            if self.handler_written() and self.raised_sites:  # convert.raised
+                self.warn(handler, f"ERROR handler written at the {self.raised_sites} line(s) raising the program's"
+                                   " own errors; on FANUC any other error stops the program with an alarm",
+                          Blocker.HANDLER)  # fmt: skip
+                return
+            if self.handler_written():
+                self.warn(handler, "ERROR handler of the program's own errors, none of which reaches it: a routine"
+                                   " raising one without passing it on (ERROR RAISE;) stops the program, in RAPID"
+                                   " too; on FANUC any other error stops it with an alarm", Blocker.HANDLER)  # fmt: skip
+                return
+            if self.raised_sites:
+                self.todo(handler, "ERROR handler: its part for the program's own errors is written where they are"
+                                   " raised, the rest is not converted", Blocker.rapid(handler.kind))  # fmt: skip
                 return
             waits = sum(1 for s in walk_statements(self.routine.body) if _max_time_wait(s))
             path = self.on_timeout()
@@ -4519,6 +4554,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
     def arithmetic(self, expr: n.Expr) -> str:
         """Right-hand side of R[n]=...: a value or ONE arithmetic operation, as TP allows; what a larger
         calculation needs before it is worked out in scratch registers first (single())."""
+        if (number := self.error_value(expr)) is not None:  # convert.raised
+            return number
         try:
             return decimal(operand(register_value(self.c.evaluator.constant_number(expr))))
         except Unresolvable:
@@ -4582,6 +4619,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         if isinstance(expr, n.Index) and (element := self.number_element(expr)) is not None:
             return element
         if isinstance(expr, n.Name) and (number := self.interrupt_value(expr)) is not None:
+            return number
+        if (number := self.error_value(expr)) is not None:  # ERRNO, ERR_X (convert.raised)
             return number
         if isinstance(expr, n.Name):
             key = expr.name.upper()
@@ -4867,6 +4906,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             raise Untranslatable("TEST on a string: TP SELECT compares a register with numbers", Blocker.CONDITION)
         if isinstance(expr, n.Name) and (number := self.interrupt_value(expr)) is not None:
             return number  # CASE iStop: the interrupt's number
+        if (number := self.error_value(expr)) is not None:
+            return decimal(number)  # CASE ERR_X: the error's number (convert.raised)
         try:
             return decimal(operand(register_value(self.c.evaluator.constant_number(expr))))
         except Unresolvable as exc:

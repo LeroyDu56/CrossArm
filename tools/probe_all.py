@@ -74,6 +74,9 @@ probe, everything else in local/logs/probe_all.log):
     funcbody     FUNCs of the backup known at run time only, written by CrossArm as TP programs: num, bool (1 / 0),
                  robtarget results in R[AR[n]] / PR[AR[n]], RETURN inside an IF (END), called in an IF, ELSEIF, WHILE
                  test, a move, a FUNC calling a FUNC: twelve values as RAPID works them out
+    raise        errors the program raises itself (RAISE of its own errnum) as a register set before END and tested
+                 after the CALL, the caller's handler written there: RETRY (at most 4, then ABORT), TRYNEXT, RETURN,
+                 RAISE up two levels, ERRNO: eight values as RAPID works them out
     sysvars      load and run only: a TP program reads no system variable (the active UTOOL / UFRAME / payload,
                  the mode select key: VARS-034), so GetSysData and OpMode() stay TODO; UTOOL_NUM=R[n] loads
 
@@ -120,6 +123,7 @@ import make_pallet_probe
 import make_param_probe
 import make_point_probe
 import make_point_ref_probe
+import make_raise_probe
 import make_record_probe
 import make_search_probe
 import make_select_probe
@@ -479,6 +483,14 @@ def probe_funcbody() -> str:
     return f"FAIL {problem}" if problem else make_func_body_probe.summary(make_func_body_probe.stored())
 
 
+def probe_raise() -> str:
+    try:
+        problem = make_raise_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_raise_probe.summary(make_raise_probe.stored())
+
+
 def probe_sysvars() -> str:
     problem = make_sysvar_probe.run()
     return f"FAIL {problem}" if problem else "reads stop on VARS-034, selections from registers load, as measured"
@@ -582,7 +594,7 @@ def main() -> int:
               "external": probe_external, "taught": probe_taught,
               "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel, "karelpose": probe_karelpose,
               "karelfile": probe_karelfile, "framefield": probe_framefield,
-              "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody,
+              "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log

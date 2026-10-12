@@ -18,7 +18,7 @@ it runs out.
 What the handler does for ERR_WAIT_MAXTIME is written at the timeout label of each such wait, RETRY
 jumping back to the wait and TRYNEXT past it. A handler doing nothing but that, and passing any other
 error on, is then converted. So is a handler that only passes errors on (`RAISE;`): the error reaches
-the caller the same way on both controllers.
+the caller the same way on both controllers. The errors the program raises itself: crossarm.convert.raised.
 """
 
 import re
@@ -72,7 +72,8 @@ def _errno(expr: n.Expr) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class OnTimeout:
-    """What a handler does when a wait runs out of time: `steps`, then the end of the routine unless they leave."""
+    """What a handler does when a wait runs out of time: `steps`, then ABORT unless they leave: RAPID stops
+    the program at the end of a handler (convert.raised)."""
 
     steps: tuple[n.Stmt, ...]
     only: bool  # the handler does nothing for other errors but pass them on

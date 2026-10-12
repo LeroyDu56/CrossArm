@@ -10,6 +10,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   WHILE test, a move, an argument), the program writes its result in `R[AR[n]]` (bool as 1 / 0) or `PR[AR[n]]`.
   Only when its whole body converts; otherwise its calls stay TODO and name the statement of the FUNC that stops it.
   Measured on ROBOGUIDE (probe `funcbody`).
+- Errors the program raises itself (`RAISE ERR_X;` of its own errnum, `RAISE n;`) are converted: the routine sets a
+  register (`CROSSARM.RAISED`) and ends, its caller tests it after the `CALL` and runs its ERROR handler there
+  (RETRY at most 4 times then ABORT, TRYNEXT, RETURN, `RAISE` to its own caller, ERRNO in `CROSSARM.ERRNO`);
+  `BookErrNo` becomes a remark. As RAPID does, a RAISE in a routine without a handler, and the end of a handler,
+  stop the program (ABORT; previously the end of a wait's timeout handler ended the routine). Errors of the system
+  stay TODO. Measured on ROBOGUIDE (probe `raise`).
 
 ## 1.9.0 — 2026-10-09
 
