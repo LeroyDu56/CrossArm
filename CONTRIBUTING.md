@@ -7,9 +7,18 @@ not convert**, together with what the FANUC controller should produce for it.
 That is what drives the roadmap, and it is what every measured improvement so
 far has come from.
 
-**Please never attach a backup you are not free to share.** Strip names, coordinates, IP
-addresses and module names first, or describe the construct in the abstract.
-A three-line example is usually enough.
+**Please never attach a backup you are not free to share.** Two commands help instead
+([docs/diagnostic.md](docs/diagnostic.md)):
+
+- `crossarm diagnose BACKUP` (**Create diagnostic report** in the window): an anonymous report of
+  what CrossArm understood and converted, counts only, to attach to a
+  [diagnostic report issue](https://github.com/LeroyDu56/CrossArm/issues/new?template=diagnostic_report.yml);
+- `crossarm anonymize BACKUP`: a copy of the backup that converts the same, every name and text
+  replaced, to attach or to e-mail to enzoleroy56@gmail.com if it should not be public.
+
+For a construct converted wrongly, a three-line example rewritten with neutral names is usually
+enough ([conversion bug](https://github.com/LeroyDu56/CrossArm/issues/new?template=conversion_bug.yml)).
+If CrossArm stopped with exit code 3, attach the `crossarm_error.txt` it wrote.
 
 ## Code contributions
 

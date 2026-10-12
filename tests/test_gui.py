@@ -51,6 +51,9 @@ def app(window, monkeypatch):
 
     errors: list[str] = []
     monkeypatch.setattr(gui.messagebox, "showerror", lambda _title, message: errors.append(message))
+    opened: list[str] = []  # no test opens a browser: the URLs the window would open are recorded instead
+    monkeypatch.setattr(gui.webbrowser, "open", lambda url, *_args, **_kw: opened.append(url))
+    window.opened = opened  # type: ignore[attr-defined]
     while not window.messages.empty():
         window.messages.get()
     for child in window.winfo_children():
@@ -392,3 +395,51 @@ def test_every_step_title_and_tag_fit_on_a_narrow_window(app):
             assert tag.winfo_x() + tag.winfo_reqwidth() <= head.winfo_width(), tag.cget("text")
     finally:
         app.withdraw()
+
+
+def test_the_diagnostic_report_is_written_shown_and_only_the_issue_form_is_opened(app, module):
+    from crossarm import diagnose, gui
+
+    assert not app.diag_link.winfo_manager()  # nothing to diagnose before step 1
+    app.choose_source([module])
+    settle(app)
+    assert app.diag_link.winfo_manager() == "pack" and app.diag_link.cget("text") == "Create diagnostic report..."
+    app.create_diagnostic()
+    settle(app)
+    folder = module.parent / "crossarm_diag_pick_and_place"
+    md = folder / diagnose.DIAG_MD
+    assert md.exists() and (folder / diagnose.DIAG_JSON).exists()
+    assert not list(module.parent.glob("crossarm_pick_and_place*"))  # no program written next to the input
+    dialog = app.diag_dialog
+    assert dialog.title() == "Diagnostic report"
+    shown = dialog.view.get("1.0", "end-1c")
+    assert shown == md.read_text(encoding="utf-8") and "pick_and_place" not in shown  # what is sent, as written
+    assert app.opened == []  # nothing opened on its own
+    app.open_issue()
+    assert app.opened == [gui.ISSUE_URL]
+    assert gui.ISSUE_URL.endswith("/issues/new?template=diagnostic_report.yml")  # no data in the URL
+    assert "Diagnostic report written in crossarm_diag_pick_and_place" in app.state_label.cget("text")
+
+
+def test_an_anonymized_copy_is_written_from_the_diagnostic_window(app, module, monkeypatch):
+    from crossarm import anonymize, gui
+
+    shown: list[str] = []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda _title, message: shown.append(message))
+    app.choose_source([module])
+    settle(app)
+    app.create_anonymized()
+    settle(app)
+    archive = module.parent / "crossarm_anonymized.zip"
+    assert archive.exists() and app.errors == []
+    assert len(shown) == 1 and anonymize.LIMIT in shown[0] and "Nothing has been sent" in shown[0]
+    assert app.opened == []
+
+
+def test_the_result_panel_offers_the_diagnostic_report(app, module):
+    app.choose_source([module])
+    settle(app)
+    app.convert()
+    settle(app)
+    assert "Create diagnostic report..." in texts(app.right)
+    assert app.diag_link.winfo_manager() == "pack"

@@ -238,7 +238,8 @@ What the zip holds:
 
 **Limit.** Joint positions (jointtarget, MoveAbsJ) are not moved while the robtargets are, so the cell's geometry no
 longer holds together: the conversion stays equivalent, but an anonymized backup cannot be used to check paths in
-ROBOGUIDE unless it is made with `--keep-geometry`.
+ROBOGUIDE unless it is made with `--keep-geometry`. Positions written in an instruction rather than declared are
+kept as they are.
 
 The offsets are random; `--seed N` makes them repeatable (the same input and seed give the same bytes). The seed is
 never written in the zip. `--write-mapping FILE` also writes the table of correspondence (original names and texts ->
@@ -256,3 +257,21 @@ diagnostic of the original and of the copy are equal: programs, TODO and warning
 and per task, instructions, functions, calls, data types, records, control, signals; and as many points), and that
 nothing of the input is in the zip (the privacy audit of the diagnostic report, on the zip: identifiers, strings,
 comment words, numbers in texts and comments, file and folder names; every robtarget coordinate moved).
+
+# Sending a report or an anonymized backup
+
+In the window, **Create diagnostic report** (in the right-hand panel once the ABB program is chosen, and after a
+conversion) writes the two files with the window's choices, shows `crossarm_diag.md` as it is written, and offers:
+
+- **Open a GitHub issue**: opens the [diagnostic report form](https://github.com/LeroyDu56/CrossArm/issues/new?template=diagnostic_report.yml)
+  in your browser. The address carries no data: you attach `crossarm_diag.md` and `crossarm_diag.json` there
+  yourself. CrossArm makes no network request;
+- **Open folder**: the folder holding the two files;
+- **Anonymized copy...**: `crossarm anonymize` on the same input, next to it.
+
+An anonymized backup you would rather not publish in an issue: e-mail it to **enzoleroy56@gmail.com**. Never
+attach a backup that is not anonymized. A RAPID construction converted wrongly: the
+[conversion bug form](https://github.com/LeroyDu56/CrossArm/issues/new?template=conversion_bug.yml), with a few
+lines of RAPID rewritten so they hold nothing of your cell.
+
+**The first 10 users who send a diagnostic report (or an anonymized backup) made from a real backup get a free one-year commercial licence, at the author's discretion: one per company, sent by e-mail.**

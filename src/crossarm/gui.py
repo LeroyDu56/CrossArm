@@ -16,6 +16,8 @@ Written for someone who has never seen CrossArm and will not read a log:
 The right-hand panel first explains what the conversion produces, then shows the
 result in plain words — how many programs are ready, what needs attention first —
 with the report one click away. The technical log is kept in a separate window.
+"Create diagnostic report" (in that panel once an input is chosen) writes `crossarm diagnose`'s two files, shows
+the .md as written and opens GitHub's issue form in the browser on the user's click: CrossArm sends nothing itself.
 
 Inputs are inspected and converted in a background thread so the window never
 freezes. Files dropped on the CrossArm.exe icon arrive as arguments (see app.py):
@@ -29,12 +31,13 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser  # opens a page in the user's browser on their click: CrossArm itself sends nothing
 import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from crossarm import __version__, pipeline
+from crossarm import __version__, anonymize, diagnose, pipeline
 from crossarm._icon import PNG as ICON_PNG
 from crossarm.convert import ConversionConfig
 from crossarm.convert.analysis import NOT_READY, READY, WORKABLE
@@ -74,6 +77,9 @@ PRIMARY = "#1F2A44"
 PRIMARY_HOVER = "#2F3F66"
 PRIMARY_OFF = "#A7AFBD"
 FONT = "Segoe UI"
+# The issue form for a diagnostic report: the browser opens it empty, the user attaches the files. No data in the URL.
+ISSUE_URL = "https://github.com/LeroyDu56/CrossArm/issues/new?template=diagnostic_report.yml"
+CONTACT = "enzoleroy56@gmail.com"
 
 HOW_IT_WORKS = """\
 What CrossArm does
@@ -127,6 +133,13 @@ up on the robot. The path between them stays within 10 mm of the ABB's.
 Your files
 Everything runs on this computer: no file is sent anywhere. The output is written next to \
 your input, in a new crossarm_<name> folder; a previous one is never overwritten.
+
+Helping improve CrossArm
+"Create diagnostic report" writes crossarm_diag.md and crossarm_diag.json next to your input: \
+what CrossArm understood and converted, as counts only, with no name, comment, text, position or \
+path of your backup. Read the .md to see exactly what it holds. Nothing is sent: "Open a GitHub \
+issue" opens the issue page in your browser, where you attach the two files if you choose to. \
+"Anonymized copy" writes a .zip of the backup that converts the same, every name and text replaced.
 
 Licence
 Free for evaluation, development, teaching and personal use. Production use needs a \
@@ -283,6 +296,7 @@ class App(tk.Tk):
         self.log_lines: list[str] = []
         self.log_window: tk.Toplevel | None = None
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.diag_link: tk.Label | None = None  # "Create diagnostic report", in the right-hand panel
 
         self._styles()
         self._build()
@@ -439,6 +453,13 @@ class App(tk.Tk):
                    colour=MUTED, pad=(14, 0))  # fmt: skip
         self._text(panel, "The programs are a starting point for commissioning: check every TODO in the report "
                    "and touch up the points before running a robot.", colour=AMBER, pad=(10, 0))  # fmt: skip
+        self.diag_link = self._diagnostic_link(panel)  # shown once an input is chosen (_refresh)
+
+    def _diagnostic_link(self, panel: tk.Widget) -> tk.Label:
+        link = tk.Label(panel, text="Create diagnostic report...", bg=CARD_BG, fg=PRIMARY,
+                        font=(FONT, 9, "underline"), cursor="hand2", anchor="w")  # fmt: skip
+        link.bind("<Button-1>", lambda _: self.create_diagnostic())
+        return link
 
     def _show_result(self, run: pipeline.RunOutput) -> None:
         summary = summarize(run)
@@ -463,6 +484,8 @@ class App(tk.Tk):
         log = tk.Label(buttons, text="Log", bg=CARD_BG, fg=MUTED, font=(FONT, 9, "underline"), cursor="hand2")
         log.pack(side="right")
         log.bind("<Button-1>", lambda _: self.show_log())
+        self.diag_link = self._diagnostic_link(panel)
+        self.diag_link.pack(side="bottom", fill="x", pady=(0, 8))
         if move_decisions(run):
             choose = tk.Label(panel, text="Moves inside routines: choose which to convert...", bg=CARD_BG,
                               fg=PRIMARY, font=(FONT, 9, "underline"), cursor="hand2", anchor="w")  # fmt: skip
@@ -564,6 +587,15 @@ class App(tk.Tk):
                 "ok" if found else "fail")  # fmt: skip
         else:
             self.step_karel.show("Off: what TP cannot compute stays TODO; the report says how much KAREL would do.")
+        link = self.diag_link
+        if link is not None and link.winfo_exists():
+            usable = self.source is not None and not self.busy
+            link.config(fg=PRIMARY if usable else MUTED, cursor="hand2" if usable else "arrow")
+            if self.last is None:  # the panel before a conversion: nothing to diagnose before step 1
+                if self.source is None:
+                    link.pack_forget()
+                else:
+                    link.pack(side="bottom", fill="x", pady=(10, 0))
 
     def _set_busy(self, text: str) -> None:
         self.busy = True
@@ -771,6 +803,86 @@ class App(tk.Tk):
 
         self._run(work, "convert")
 
+    # -- feedback: diagnostic report, anonymized copy ---------------------------
+
+    def create_diagnostic(self) -> None:
+        """crossarm_diag.json + .md for the chosen input, converted with the window's choices (as `crossarm
+        diagnose` would), then shown: the user reads what they would send before deciding to send it."""
+        if self.source is None or self.busy:
+            return
+        self._set_busy("Writing the diagnostic report...")
+        source, target, mapping = list(self.source), self.target, self.mapping
+        choices, karel = dict(self.move_choices), self.karel.get()
+
+        def work():
+            config = ConversionConfig.from_mapping_file(mapping) if mapping else ConversionConfig()
+            config.move_routines.update(choices)
+            config.karel = karel
+            diag = diagnose.diagnose(source, config, fanuc=list(target) if target else None)
+            return "diagnosed", diagnose.write(diag, diagnose.default_folder(source))
+
+        self._run(work, "diagnose")
+
+    def _diagnosed(self, written: tuple[Path, Path]) -> None:
+        _json, md = written
+        self._set_idle(f"Diagnostic report written in {md.parent.name}, next to your input.")
+        self.show_diagnostic(md)
+
+    def show_diagnostic(self, md: Path) -> None:
+        """The report as it is written, read-only, and what the user can do with it: nothing leaves on its own."""
+        dialog = tk.Toplevel(self, bg=CARD_BG)
+        dialog.title("Diagnostic report")
+        dialog.transient(self)
+        body = tk.Frame(dialog, bg=CARD_BG)
+        body.pack(fill="both", expand=True, padx=18, pady=14)
+        tk.Label(body, text="Diagnostic report", bg=CARD_BG, fg=TEXT, font=(FONT, 11, "bold"),
+                 anchor="w").pack(fill="x")  # fmt: skip
+        tk.Label(body, text=(
+            f"Written in {md.parent.name}, next to your input: {diagnose.DIAG_MD} (below, exactly as written) and "
+            f"{diagnose.DIAG_JSON}. Counts only: no name, comment, text, position or path of your backup. "
+            "Nothing has been sent. To help improve CrossArm, open a GitHub issue and attach both files."
+        ), bg=CARD_BG, fg=MUTED, font=(FONT, 9), justify="left", anchor="w", wraplength=640).pack(fill="x", pady=(4, 8))  # fmt: skip
+        buttons = tk.Frame(body, bg=CARD_BG)
+        buttons.pack(side="bottom", fill="x", pady=(10, 0))
+        view = ScrolledText(body, font=("Consolas", 9), wrap="word", width=96, height=22)
+        view.pack(fill="both", expand=True)
+        view.insert("end", md.read_text(encoding="utf-8"))
+        view.config(state="disabled")
+        tk.Button(buttons, text="Open a GitHub issue", command=self.open_issue, font=(FONT, 10, "bold"), fg="white",
+                  bg=PRIMARY, activebackground=PRIMARY_HOVER, activeforeground="white", relief="flat", padx=14,
+                  pady=5, cursor="hand2", borderwidth=0).pack(side="left")  # fmt: skip
+        ttk.Button(buttons, text="Open folder", command=lambda: open_in_explorer(md.parent),
+                   style="Card.TButton").pack(side="left", padx=8)  # fmt: skip
+        ttk.Button(buttons, text="Anonymized copy...", command=self.create_anonymized,
+                   style="Card.TButton").pack(side="left")  # fmt: skip
+        ttk.Button(buttons, text="Close", command=dialog.destroy, style="Card.TButton").pack(side="right")
+        dialog.view = view  # type: ignore[attr-defined]
+        self.diag_dialog = dialog
+
+    def open_issue(self) -> None:
+        """The issue form in the user's browser. The URL carries no data: the user attaches the files there."""
+        webbrowser.open(ISSUE_URL)
+
+    def create_anonymized(self) -> None:
+        if self.source is None or self.busy:
+            return
+        self._set_busy("Writing the anonymized copy...")
+        source = list(self.source)
+
+        def work():
+            return "anonymized", anonymize.write(anonymize.anonymize(source), anonymize.default_output(source))
+
+        self._run(work, "anonymize")
+
+    def _anonymized(self, path: Path) -> None:
+        self._set_idle(f"Anonymized copy written: {path.name}, next to your input.")
+        messagebox.showinfo("CrossArm", (
+            f"Anonymized copy written: {path.name}, next to your input. It converts as your backup does; every "
+            f"name, text and comment is replaced ({anonymize.REPORT} in the zip says what changed, as counts).\n\n"
+            f"Nothing has been sent. To share it without publishing it, e-mail it to {CONTACT}.\n\n"
+            f"{anonymize.LIMIT}"
+        ))  # fmt: skip
+
     def _run(self, job, stage: str) -> None:
         context = {"stage": stage, "input": self.source, "target": self.target, "mapping": self.mapping}
 
@@ -802,6 +914,10 @@ class App(tk.Tk):
                 self._keep_checked(*payload)  # type: ignore[misc]
             elif kind == "done":
                 self._finished(payload)  # type: ignore[arg-type]
+            elif kind == "diagnosed":
+                self._diagnosed(payload)  # type: ignore[arg-type]
+            elif kind == "anonymized":
+                self._anonymized(payload)  # type: ignore[arg-type]
             elif kind == "error":
                 self._failed(*payload)  # type: ignore[misc]
         self.after(100, self._poll)
@@ -820,9 +936,10 @@ class App(tk.Tk):
             step.show(message[:1].upper() + message[1:], "fail")
             self._set_idle()
         else:
+            what = {"diagnose": "The diagnostic report", "anonymize": "The anonymized copy"}.get(stage, "The conversion")
             self._log(f"ERROR: {message}")
-            self._set_idle("Conversion failed: see the log.")
-            messagebox.showerror("CrossArm", f"The conversion failed:\n\n{message}")
+            self._set_idle(f"{what[4:].capitalize()} failed: see the log.")
+            messagebox.showerror("CrossArm", f"{what} failed:\n\n{message}")
 
     # -- output ---------------------------------------------------------------
 

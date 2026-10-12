@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Send an anonymized backup privately
+    url: https://github.com/LeroyDu56/CrossArm/blob/main/docs/diagnostic.md#sending-a-report-or-an-anonymized-backup
+    about: An anonymized backup (crossarm anonymize) you would rather not publish in an issue - e-mail it to enzoleroy56@gmail.com.
+  - name: Commercial licence
+    url: https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md
+    about: Production use needs a commercial licence - LICENSING.md says where the line falls and how to get one.

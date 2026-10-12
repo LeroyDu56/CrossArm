@@ -1,0 +1,47 @@
+name: Conversion bug
+description: A RAPID construction converted wrongly, or CrossArm stopped with an error.
+title: "Conversion bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste or attach a backup, module or program you are not free to share.** A few lines of RAPID rewritten with neutral names (`p10`, `tool1`, `doGrip`) and made-up positions are usually enough. For a whole backup, attach an anonymized copy (`crossarm anonymize BACKUP`) or e-mail it to enzoleroy56@gmail.com.
+  - type: textarea
+    id: rapid
+    attributes:
+      label: Minimal RAPID
+      description: The smallest RAPID that shows the problem, rewritten so it holds nothing of your cell.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: tp
+    attributes:
+      label: TP written by CrossArm
+      description: The lines of the .LS program CrossArm wrote for it.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the FANUC program should do
+      description: What you expected instead, and how you checked it (ROBOGUIDE, the controller's manual...).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CrossArm version
+      description: In the window's title, or `crossarm --version`.
+      placeholder: "1.11.0"
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: crossarm_error.txt
+      description: If CrossArm stopped with an internal error (exit code 3, or "unexpected error" in the window), attach crossarm_error.txt; it says where it was saved. A diagnostic report (crossarm_diag.md) helps too.
+    validations:
+      required: false

@@ -32,7 +32,8 @@ ONLY place deciding what an anonymized backup holds:
     - positions moved (unless --keep-geometry): each robtarget by a random offset of its frame (the work object
       its moves name, wobj0 otherwise: the same offset for every point of a frame, orientations kept), each work
       object's user frame by the offset of wobj0; tools kept unless --scramble-tools. A pose at 0,0,0 is kept.
-      Joint positions (jointtarget, MoveAbsJ) are not moved: see LIMIT. Every other number is kept (speeds, zones,
+      Joint positions (jointtarget, MoveAbsJ) and positions written in an instruction rather than declared are not
+      moved: see LIMIT. Every other number is kept (speeds, zones,
       offsets, counters: the conversion depends on them);
     - anonymize_report.md in the zip: counts only. The table of correspondence (original -> new) is written only
       with --write-mapping, to a file of its own, never in the zip. The offsets are random; --seed N makes them
@@ -67,7 +68,8 @@ REPORT = "anonymize_report.md"
 DEFAULT_NAME = "crossarm_anonymized"
 LIMIT = ("Joint positions (jointtarget, MoveAbsJ) are not moved while the robtargets are, so the cell's geometry no "
          "longer holds together: the conversion stays equivalent, but an anonymized backup cannot be used to check "
-         "paths in ROBOGUIDE unless it is made with --keep-geometry.")  # fmt: skip
+         "paths in ROBOGUIDE unless it is made with --keep-geometry. Positions written in an instruction rather "
+         "than declared are kept as they are.")  # fmt: skip
 MAPPING_WARNING = ("Keep this file: it reverses the anonymization (original names, texts and position offsets). "
                    "Never send it with the anonymized backup.")  # fmt: skip
 

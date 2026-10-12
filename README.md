@@ -113,6 +113,25 @@ Each in the [user guide](docs/guide.md):
 [the report](docs/guide.md#reading-the-report) · [the tool on the flange](docs/guide.md#the-tool-on-the-flange) ·
 [roadmap](docs/guide.md#roadmap).
 
+## Help improve CrossArm
+
+CrossArm improves on the backups people actually have. Two commands help, and both leave everything on your
+computer until you decide to send it:
+
+- **`crossarm diagnose BACKUP`** (**Create diagnostic report** in the window) writes `crossarm_diag.md` and
+  `crossarm_diag.json`: what CrossArm understood and converted, as counts only, with no name, comment, text,
+  number or path of the backup. The window shows the `.md` and opens the
+  [issue form](https://github.com/LeroyDu56/CrossArm/issues/new?template=diagnostic_report.yml) in your browser,
+  where you attach the two files.
+- **`crossarm anonymize BACKUP`** writes a `.zip` of the backup that converts the same, every name and text
+  replaced, the comments removed, the positions moved; e-mail it to **enzoleroy56@gmail.com** if you would
+  rather not publish it.
+
+Nothing is sent automatically: CrossArm has no network code. What the files contain:
+[docs/diagnostic.md](docs/diagnostic.md).
+
+**The first 10 users who send a diagnostic report (or an anonymized backup) made from a real backup get a free one-year commercial licence, at the author's discretion: one per company, sent by e-mail.**
+
 ## FAQ
 
 ### How do I convert an ABB RAPID program to FANUC TP?
@@ -136,6 +155,13 @@ projects); production use needs a commercial licence: enzoleroy56@gmail.com ([LI
 
 ### Does my backup leave my computer?
 No. CrossArm runs entirely offline and writes its output next to your input.
+
+### What does the diagnostic report contain?
+Counts only: the CrossArm version and operating system, the RobotWare version and options, how many tasks,
+modules, routines and lines, how often each RAPID instruction and function is used and how many of those uses
+were converted, the causes of TODO, the share converted per task, signal counts by type and CrossArm's own
+errors. Never a name, comment, text, number or path of the backup; a test checks it. Read `crossarm_diag.md`
+before sending it: it is the whole report ([docs/diagnostic.md](docs/diagnostic.md)).
 
 More questions (robtargets and `CONFIG`, numbering, supported versions, other brands):
 [user guide FAQ](docs/guide.md#faq).

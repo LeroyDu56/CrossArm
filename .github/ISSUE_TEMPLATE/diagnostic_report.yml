@@ -1,0 +1,44 @@
+name: Diagnostic report
+description: Send what CrossArm understood and converted of your backup (counts only, no content of the backup).
+title: "Diagnostic report: "
+labels: ["diagnostic"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you: a diagnostic report shows what CrossArm misses on real backups, which is what the roadmap is built on.
+
+        Make it with **Create diagnostic report** in the CrossArm window, or `crossarm diagnose BACKUP` on the command line. It writes `crossarm_diag.md` and `crossarm_diag.json`: counts only, no name, comment, text, number or path of your backup ([what it contains](https://github.com/LeroyDu56/CrossArm/blob/main/docs/diagnostic.md)). Read the `.md` before attaching it.
+
+        **Never attach a backup that is not anonymized.** To show a backup itself, make an anonymized copy (`crossarm anonymize BACKUP`, or **Anonymized copy...** in the window); to share it without publishing it, e-mail it to enzoleroy56@gmail.com.
+
+        The first 10 users who send a diagnostic report (or an anonymized backup) made from a real backup get a free one-year commercial licence, at the author's discretion: one per company, sent by e-mail.
+  - type: textarea
+    id: files
+    attributes:
+      label: Diagnostic report
+      description: Drag crossarm_diag.md and crossarm_diag.json here (or paste the content of crossarm_diag.md).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CrossArm version
+      description: In the window's title, or `crossarm --version`.
+      placeholder: "1.11.0"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what you got
+      description: Optional. A construction left TODO you would like converted, a program that looks wrong, a message you did not understand. Describe it without your cell's names or positions.
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before sending
+      options:
+        - label: I read crossarm_diag.md, and I attach no backup, module or program that is not anonymized.
+          required: true

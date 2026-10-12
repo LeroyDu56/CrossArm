@@ -187,7 +187,9 @@ gives the decision of the [analysis](#the-analysis-first) (ready, workable or no
 how many programs are ready as is and what to look at first — anything that would stop the programs
 loading or running comes before where the manual work is — with the touch-ups kept and to redo when step 5
 was used, the KAREL programs to load first when step 6 was, a line comparing with the previous conversion of
-the same backup when there is one, and the report one click away. **How it works** in the header explains the outputs and the limits
+the same backup when there is one, and the report one click away. **Create diagnostic report** (in the same panel, also before converting) writes an
+anonymous report to send, shows it and opens the issue form in your browser on your click
+([diagnostic report](#diagnostic-report-and-anonymized-copy)). **How it works** in the header explains the outputs and the limits
 in plain words. Dropping the backups on the `CrossArm.exe` icon converts them straight away.
 
 The executable is not code-signed. On first launch, SmartScreen may ask for confirmation
@@ -210,15 +212,27 @@ crossarm convert path/to/backup.zip --karel                            # what TP
 crossarm-gui                                                           # the desktop window
 crossarm parse   tests/fixtures/rapid/pick_and_place.mod              # RAPID AST as a readable listing
 crossarm stats   backup/RAPID                                          # parser coverage report
+crossarm diagnose path/to/backup.zip                                   # anonymous diagnostic report, to send
+crossarm anonymize path/to/backup.zip                                  # anonymized copy that converts the same
 ```
 
 `CrossArm.exe` takes the same commands without opening its window: `CrossArm.exe convert <backup> [options]`,
 `CrossArm.exe parse ...`, `CrossArm.exe stats ...`, `CrossArm.exe --help`, `CrossArm.exe --version`, with the
-same output and exit codes (0; 1 when a RAPID file has syntax errors; 2 for a usage error). Without arguments,
+same output and exit codes (0; 1 when a RAPID file has syntax errors; 2 for a usage error or an input that cannot
+be read; 3 for a CrossArm internal error, its details saved in `crossarm_error.txt`: please send that file).
+Without arguments,
 or given files dropped on its icon, it opens the window. A `.bat` script waits for it and reads its exit code
 (`%ERRORLEVEL%`); at a cmd prompt use `start /wait CrossArm.exe convert ...`, and in PowerShell
 `Start-Process CrossArm.exe -ArgumentList 'convert','backup.zip' -Wait -PassThru` (its `ExitCode`), as
 PowerShell does not wait for a program that has a window.
+
+### Diagnostic report and anonymized copy
+
+`crossarm diagnose BACKUP` writes `crossarm_diag.md` and `crossarm_diag.json` in `crossarm_diag_<name>` next to
+the input: what CrossArm understood and converted, as counts only (no name, comment, text, number or path of the
+backup). `crossarm anonymize BACKUP` writes `crossarm_anonymized.zip`, a copy of the backup that converts the
+same, every name and text replaced, comments removed and positions moved. Nothing is sent anywhere: you read the
+files and decide whether to send them. Options, contents and limits: [docs/diagnostic.md](diagnostic.md).
 
 ### Binary .TP programs
 
@@ -961,6 +975,11 @@ writes `crossarm_mapping.json`: edit it and convert again to use your cell's own
 ### Does my backup leave my computer?
 No. CrossArm runs entirely offline, reads only the files you give it and writes its output next to
 them.
+
+### What does the diagnostic report contain?
+Counts only: CrossArm and RobotWare versions, ABB options, how often each RAPID instruction and function is used
+and converted, the causes of TODO, the share converted per task, signal counts by type, CrossArm's own errors.
+Never a name, comment, text, number or path of the backup ([docs/diagnostic.md](diagnostic.md)).
 
 ### Which versions are supported?
 RAPID from RobotWare 6 and 7 backups (`.mod`, `.modx`, `.sys`, `.sysx`, `.prg`). On the FANUC side,

@@ -24,6 +24,11 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `anonymize_report.md` (counts only); `--write-mapping FILE` writes the table of correspondence outside the zip.
   The copy converts the same, checked by a test. Joint positions are not moved, so it cannot be used to check paths
   in ROBOGUIDE unless made with `--keep-geometry`. See [docs/diagnostic.md](docs/diagnostic.md).
+- Window: **Create diagnostic report** writes the diagnostic report of the chosen input, shows it as written, and
+  opens GitHub's issue form in the browser on a click (CrossArm sends nothing itself); **Anonymized copy...**
+  writes the anonymized .zip. Issue forms for a diagnostic report and a conversion bug. The first 10 users who
+  send a diagnostic report (or an anonymized backup) made from a real backup get a free one-year commercial
+  licence, at the author's discretion: one per company, sent by e-mail. Exit code 3 documented in the guide.
 
 ## 1.10.1 — 2026-10-12
 

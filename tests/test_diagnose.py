@@ -199,3 +199,18 @@ def test_no_shipped_module_can_reach_the_network(path):
             continue
         for name in names:
             assert name in ALLOWED or name.split(".")[0] not in FORBIDDEN, f"{path.name} imports {name}"
+
+
+def test_the_window_loads_no_network_module():
+    """The window imports webbrowser (it opens the issue form on the user's click): neither it nor anything the
+    window imports loads a network module."""
+    import subprocess
+    import sys
+
+    allowed = sorted(ALLOWED | {"urllib"})  # urllib: the empty package urllib.parse is in
+    probe = ("import sys; import crossarm.gui; "
+             f"print(sorted(m for m in sys.modules if m.split('.')[0] in {sorted(FORBIDDEN)!r} "
+             f"and m not in {allowed!r}))")  # fmt: skip
+    found = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60, check=False)
+    assert found.returncode == 0, found.stderr
+    assert found.stdout.strip() == "[]"
