@@ -80,6 +80,7 @@ from crossarm.convert.external import (
 from crossarm.convert.frame_fields import FrameFields
 from crossarm.convert.frame_writes import FrameWrites
 from crossarm.convert.func_inline import FuncInline, inlined_notes
+from crossarm.convert.func_programs import FuncPrograms, called_programs, func_layouts
 from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes_on
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
@@ -847,6 +848,12 @@ class Converter:
         self._provided_entries(modules)
         self.routine_use = RoutineUse(self.procs | self.computer.functions, self.externals,
                                       KAREL_FILES if self.config.karel else (), self.config.karel)
+        # FUNCs of the backup a converted line may call as a TP program of their own (convert.func_programs)
+        self.func_layouts, self.func_why = func_layouts(modules, records, self.externals, self.routine_use.inside,
+                                                         self.recursive)
+        self.func_named: set[str] = set()  # of which: those given a program name, a line calling them
+        self.late_names: set[str] = set()  # routines named once the others are written (late_program)
+        self.func_checked: dict[str, tuple[str, str] | None] = {}  # FUNC -> why it is not written (func_trouble)
         self.move_routine_calls: Counter[str] = Counter()
         # Interrupts (crossarm.convert.interrupts): upper-case intnum -> what the programs do with it, set by
         # convert(); the WHEN conditions each is armed on; the data a TRAP changes, never taken as known.
@@ -951,6 +958,7 @@ class Converter:
         for module, routine in selected:
             translator = _RoutineTranslator(self, module, routine, self.program_names[routine.name.upper()])
             self.result.programs.append(translator.run())
+        self._write_func_programs(selected, skipped)
         if wanted:
             found = {info.routine.upper() for info in self.result.programs}
             found |= {r.upper() for _, r, _ in self.result.skipped_routines}
@@ -993,6 +1001,84 @@ class Converter:
                                           for info in res.programs)  # fmt: skip
             res.karel_programs = list(res.karel_calls)
         return res
+
+    def _write_func_programs(self, selected: list[tuple[n.Module, n.Routine]], skipped: list[n.Routine]) -> None:
+        """The FUNCs the programs call as programs of their own (convert.func_programs), written after them, with
+        the routines of the system modules they call; and the FUNCs those call, until none is left."""
+        by_name = {r.name.upper(): (m, r) for m in self.modules for r in m.routines}
+        done = {r.name.upper() for _, r in selected}
+        new = list(self.result.programs)
+        late: list[tuple[n.Module, n.Routine]] = []
+        while True:
+            pending = sorted(k for k in called_programs(self, new) if k not in done)
+            if not pending:
+                break
+            added = [by_name[k] for k in pending]
+            done.update(pending)
+            before = list(self.result.from_system)
+            more = [(m, r) for m, r in self._called_from_system(selected + added) if r.name.upper() not in done]
+            self.result.from_system = before + [f"{m.name}.{r.name}" for m, r in more]
+            new = []
+            for module, routine in added + more:
+                done.add(routine.name.upper())
+                name = self.late_program(routine.name.upper())
+                self.result.program_keys[routine.name] = name
+                info = _RoutineTranslator(self, module, routine, name).run()
+                self.result.programs.append(info)
+                new.append(info)
+                selected.append((module, routine))
+                late.append((module, routine))
+        if late:  # written after all: no longer left out
+            skipped[:] = [r for r in skipped if all(r is not w for _, w in late)]
+            names = {(m.name, r.name) for m, r in late}
+            self.result.skipped_routines = [s for s in self.result.skipped_routines if (s[0], s[1]) not in names]
+
+    def func_program(self, key: str) -> str:
+        """The TP name of a FUNC called as a program (convert.func_programs), claimed on the controller."""
+        self.func_named.add(key)
+        return self.late_program(key)
+
+    def func_trouble(self, key: str) -> tuple[str, str] | None:
+        """Why the FUNC `key` is not written as a program: (its first statement left TODO, and why; its category).
+        None when its whole body converts. Found once, by converting it on a copy of this conversion: a program
+        whose result is not worked out would hand back a value it never wrote."""
+        if key in self.func_checked:
+            return self.func_checked[key]
+        self.func_checked[key] = None  # a FUNC calling itself back: taken as converting, while it is looked at
+        module, routine = next((m, r) for m in self.modules for r in m.routines if r.name.upper() == key)
+        trial = copy.deepcopy(self)
+        trial.result.notes = []
+        name = trial.late_program(key)
+        _RoutineTranslator(trial, module, routine, name).run()
+        todo = next((x for x in trial.result.notes if x.kind == "TODO" and x.program == name), None)
+        found = None
+        if todo is not None:
+            why, _, text = todo.message.partition(" — `")
+            found = (f"l.{todo.rapid_line} `{text.rstrip('`')}` is not: {why}" if text else f"l.{todo.rapid_line}: {why}",
+                     todo.category)  # fmt: skip
+        for other, why in trial.func_checked.items():  # the FUNCs it calls, looked at on the copy
+            self.func_checked.setdefault(other, why)
+        self.func_checked[key] = found
+        return found
+
+    def late_program(self, key: str) -> str:
+        """The name of a routine written once the others are (a FUNC called as a program, a routine of a system
+        module it calls): claimed then, as the routines written first claim theirs (_program_names)."""
+        if key in self.late_names:
+            return self.program_names[key]
+        routine = next(r for m in self.modules for r in m.routines if r.name.upper() == key)
+        old = self.program_names.get(key)
+        taken = self.shared.program_names | {v for k, v in self.program_names.items() if k != key and v != old}
+        name, base = self.program_name(routine.name, tp_program_name(routine.name, self.config.program_name_max_length),
+                                       taken)  # fmt: skip
+        if name != base:
+            self.note(name, None, "WARNING", f"routine {routine.name} written as {name}.LS: {base} is taken",
+                      Blocker.RENAMED)  # fmt: skip
+        self.shared.program_names.add(name)
+        self.shared.given_programs.add(name)
+        self.program_names[key] = name
+        self.late_names.add(key)
+        return name
 
     def _report_provided(self, selected: list[n.Routine]) -> None:
         """The provided programs this task calls or would have written, with where they are called and the registers
@@ -2048,7 +2134,7 @@ class Converter:
 
 
 class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline,
-                         LateCalls, SystemData):
+                         FuncPrograms, LateCalls, SystemData):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2063,10 +2149,13 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         self.active_ut: tuple[int, int | None] | None = None
         self.loop_vars: dict[str, str] = {}  # RAPID FOR variable -> register text
         layout = conv.signatures.get(routine.name.upper())
+        if routine.kind == "FUNC" and routine.name.upper() in conv.func_layouts:  # a FUNC written as a program
+            layout = conv.func_layouts[routine.name.upper()][0]
         self.args: Signature | None = layout if isinstance(layout, Signature) else None  # its parameters: AR[n]
         self.copies: dict[str, str] = {}  # parameters it changes: upper name -> register holding the copy
         # id() of a provided function's call being assigned -> (its result register, what it returns): calls.py
         self.provided_results: dict[int, tuple[str, str]] = {}
+        self.func_nodes: list[n.FuncCall] = []  # FUNCs the statement being written calls as programs (func_programs)
         self.given: dict[str, str] = {}  # its speeds and corners given as arguments ('V.TCP') -> their register
         self.both_ways: str | None = None  # the move being written: the register of a CNT some calls pass fine for
         self._on_timeout: OnTimeout | None | bool = False  # what its ERROR handler does when a wait times out
@@ -2273,6 +2362,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.after = stmts[i + 1 :]
             self.number_slots = set()
             self.text_slots: set[int] = set()  # the scratch string registers the statement being written uses
+            self.func_reset()
             outer, self.current = self.current, stmt
             if self.strict:
                 self.stmt(stmt)
@@ -2312,6 +2402,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             finally:
                 self.c.deferring(deferred)
                 self.current = outer
+                self.func_reset()
             self.tags.tag(self.lines, checkpoint[0], stmt.span.line)
 
     def not_declared(self, exc: BaseException) -> str | None:
@@ -2393,6 +2484,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 self.while_stmt(s)
             case n.Test():
                 self.test_stmt(s)
+            case n.Return(value=value) if value is not None and self.routine.name.upper() in self.c.func_layouts:
+                self.func_return(s)  # a FUNC written as a program (convert.func_programs)
             case n.Return(value=None):
                 for text in self.epilogue:
                     self.emit(text)
@@ -2669,6 +2762,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         """PR[k] for a robtarget parameter, PR[R[n]] for an array of points indexed at run time (the index worked
         out in a register first); None for anything else."""
         if (result := self.provided_point(expr)) is not None:  # a provided function's point (calls.py)
+            return result
+        if (result := self.func_point(expr)) is not None:  # a FUNC called as a program (convert.func_programs)
             return result
         if isinstance(expr, n.Name) and self.args and self.args.kind(expr.name) == "robtarget":
             return self.c.point_register(f"{self.args.routine}.{expr.name}")
@@ -4428,6 +4523,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             return decimal(operand(register_value(self.c.evaluator.constant_number(expr))))
         except Unresolvable:
             pass
+        self.func_first(expr)  # the FUNCs it calls as programs, before any scratch register is worked out
         if isinstance(expr, n.FuncCall) and expr.name.upper() == "STRLEN" and expr.name.upper() not in self.c.computer.functions:
             fixed = self.fixed_text(self.text_arg(expr, 0))
             return str(len(fixed)) if fixed is not None else f"STRLEN {self.text_source(self.text_arg(expr, 0), (1, 2))}"
@@ -4522,11 +4618,15 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             try:
                 fixed = fixed_math(self.c.computer, expr)  # Pow(2, nRings): TP has no power
             except Unresolvable as why:
+                if (result := self.func_number(expr)) is not None:  # a FUNC called as a program (func_programs)
+                    return result
                 raise Untranslatable(f"'{format_expr(expr)}' is not a simple numeric value ({why})",
                                      Blocker.VALUE) from why  # fmt: skip
             if fixed is not None:
                 self.saved_pers(fixed[1], expr)
                 return register_value(fixed[0])
+            if (result := self.func_number(expr)) is not None:
+                return result
             kind = self.c.symbols.type_of(expr.name) if isinstance(expr, n.Name) else None
             if kind in _POSITION_TYPES | _FRAME_TYPES or self.c.records.is_record(kind):
                 raise Untranslatable(f"'{expr.name}' is a {kind}: TP compares and calculates numbers, not a"  # type: ignore[union-attr]
@@ -4803,6 +4903,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         Negation is pushed down (De Morgan, inverted comparisons) so the output
         never needs the '!' operator.
         """
+        self.func_first(expr)  # the FUNCs it calls as programs, before any scratch register is worked out
         match expr:
             case n.UnaryOp(op="NOT", operand=operand):
                 return self.condition(operand, not negate)
@@ -4850,6 +4951,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                     return f"{signal}={'OFF' if negate else 'ON'}"
                 if isinstance(expr, n.Name) and self.absent(expr.name):  # IF bReady ...: declared nowhere
                     raise self.not_in_backup(expr.name, "data")
+                if (found := self.func_result(expr)) is not None and found[1] == "bool":  # convert.func_programs
+                    return f"{found[0]}={0 if negate else 1}"
+                self.func_excluded(expr)
         raise Untranslatable(f"condition not convertible: {format_expr(expr)}", Blocker.CONDITION)
 
 

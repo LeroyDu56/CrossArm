@@ -145,6 +145,8 @@ def at_run_time(c: "Converter", stmt: n.Assign, own: set[str], params: set[str],
         return False
     except Unresolvable:
         pass
+    if isinstance(stmt.value, n.FuncCall) and stmt.value.name.upper() in c.func_layouts:
+        return True  # a FUNC of the backup called as a program: its result comes back in a register (func_programs)
     for node in expr_nodes(stmt.value):
         if isinstance(node, n.FuncCall) and node.name.upper() in RUNTIME_FUNCTIONS:
             return True

@@ -65,7 +65,9 @@ def test_while_and_waituntil_use_the_same_tests():
     assert "WAIT (DI[2]=OFF)" in lines
 
 
-def test_functions_doing_more_than_returning_a_value_stay_todo():
+def test_functions_doing_more_than_returning_a_value_are_called_as_programs():
+    # Not copied into the condition (they change data, or read what changes): written as programs that give
+    # their result back in R[AR[last]] (convert.func_programs).
     procs = """FUNC bool Counted()
   nCalls:=nCalls+1;
   RETURN TRUE;
@@ -75,13 +77,19 @@ FUNC bool Above(num limit)
 ENDFUNC"""
     result = run("IF Counted() THEN\n  Set doA;\nENDIF\nIF Above(3) THEN\n  Set doB;\nENDIF", "VAR num nCalls;",
                  extra_procs=procs)  # fmt: skip
-    assert len(todos(result)) == 2 and not result.inlined
+    assert not todos(result) and not result.inlined
+    lines = tp_lines(result)
+    assert lines[0] == "CALL COUNTED(1)" and lines[1] == "IF (R[1:result]=1) THEN"
+    assert "CALL ABOVE(3,2)" in lines and "IF (R[2:result]=1) THEN" in lines
+    programs = {info.program.name: [line.text for line in info.program.lines[1:]] for info in result.programs}
+    assert programs["COUNTED"] == ["R[3:nCalls]=R[3:nCalls]+1", "R[AR[1]]=1"]
+    assert programs["ABOVE"] == ["IF (R[3:nCalls]>AR[1]) THEN", "R[AR[2]]=1", "ELSE", "R[AR[2]]=0", "ENDIF"]
 
 
 def test_a_local_of_the_caller_hiding_the_data_a_function_reads_stops_it():
     procs = "FUNC bool Ready()\n  RETURN bArmed;\nENDFUNC"
     result = run("VAR bool bArmed:=TRUE;\nIF Ready() THEN\n  Set doA;\nENDIF", DATA, extra_procs=procs)
-    assert len(todos(result)) == 1 and not result.inlined
+    assert not result.inlined and "CALL READY(1)" in tp_lines(result)  # not copied: called as a program
 
 
 def returned(body: str) -> str | None:

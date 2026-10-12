@@ -3,6 +3,14 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- A FUNC of the backup returning a num, a bool or a robtarget whose value is only known at run time is written as a
+  TP program: the caller makes `CALL F(args,k)` just before the line that reads it (assignment, IF / ELSEIF, each
+  WHILE test, a move, an argument), the program writes its result in `R[AR[n]]` (bool as 1 / 0) or `PR[AR[n]]`.
+  Only when its whole body converts; otherwise its calls stay TODO and name the statement of the FUNC that stops it.
+  Measured on ROBOGUIDE (probe `funcbody`).
+
 ## 1.9.0 — 2026-10-09
 
 For the report, which becomes a cockpit: in a minute, the reader knows where the conversion stands and what to
