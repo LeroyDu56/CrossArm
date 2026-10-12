@@ -166,7 +166,8 @@ def error_programs(numbers: dict[str, int]) -> list[Program]:
         "KRERRTYP": [f"CALL CA_POSEMULT({a},{b},2.5)"],
         "KRERRARG": [f"CALL CA_POSEMULT({a},{b})"],
         "KRERRJNT": [f"PR[{JOINTS}]=JPOS", f"CALL CA_POSEMULT({JOINTS},{b},{SPARE})"],
-        "KRERRUNI": [f"CALL KRCLEAR({CLEARED})", f"CALL CA_POSEMULT({CLEARED},{b},{SPARE})"],
+        # LPOS first: a register cleared keeps its representation, and a joint one stops on ROUT-032, not ROUT-038
+        "KRERRUNI": [f"PR[{CLEARED}]=LPOS", f"CALL KRCLEAR({CLEARED})", f"CALL CA_POSEMULT({CLEARED},{b},{SPARE})"],
     }
     return [Program(name, [Instruction(text) for text in [*lines, f"R[{FLAGS[name]}]=1"]],
                     attributes=Attributes(comment="KAREL error case", created=STAMP))

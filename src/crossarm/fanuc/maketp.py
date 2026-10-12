@@ -89,7 +89,9 @@ def core_version(robot: Path, maketp: Path) -> tuple[str, str] | tuple[None, str
     if not found:
         return None, f"no software version in {robot / 'frvirt.dat'}"
     versions = maketp.parent.parent / "Versions"
-    cores = sorted(versions.glob(f"V{found[1]}{found[2]}-*")) if versions.is_dir() else []
+    cores = [core for core in versions.glob(f"V{found[1]}{found[2]}-*") if core.name.split("-", 1)[1].isdigit()] \
+        if versions.is_dir() else []  # fmt: skip
+    cores.sort(key=lambda core: int(core.name.split("-", 1)[1]))  # V1010-10 after V1010-9, not before
     if not cores:
         return None, f"WinOLPC has no V{found[1]}.{found[2]} core for this robot (in {versions})"
     core = cores[-1].name  # V1010-1

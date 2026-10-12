@@ -84,7 +84,11 @@ Every register a probe reads is set to 0 first, so that no result can be left ov
 The programs loaded are deleted at the end. The probes overwrite tool frames 1 to 10, user frames 1 to 9, and
 position registers: use a test cell. The virtual pendant must be OFF.
 
-Usage:  python tools/probe_all.py [probe ...]      (default: all of them)
+Usage:  python tools/probe_all.py [--summary] [probe | group ...]      (default: all of them, ~35 min)
+        python tools/probe_all.py --groups                             (the groups, the time each takes)
+
+A group runs in less than 10 minutes (GROUPS, times measured on ROBOGUIDE V10.10): motion, data, timing, calls,
+library (--karel), frames, robotstudio.
 """
 
 import contextlib
@@ -585,6 +589,37 @@ def _run(folder: str, program: str, zero: list[int], check: Callable[[], str] | 
     return check() if check else ""
 
 
+# Probes run together in less than 10 minutes: (seconds each took on ROBOGUIDE V10.10, R-1000iA/80F).
+GROUPS: dict[str, dict[str, float]] = {
+    "motion": {"pose": 85, "pin": 79, "banks": 86, "compute": 54, "points": 54, "pallet": 32},
+    "data": {"negative": 8, "args": 15, "conditions": 11, "waits": 18, "setup": 16, "select": 13, "arrays": 13,
+             "interrupts": 27, "params": 14, "records": 70, "strings": 15, "arraywrite": 13, "flags": 12,
+             "flagarrays": 13, "pointref": 22, "joints": 20},
+    "timing": {"movedo": 72, "timeflag": 12, "speedargs": 132, "search": 250, "io": 20},
+    "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
+              "sysvars": 60},
+    "library": {"karel": 140, "karelpose": 136, "karelfile": 120},
+    "frames": {"framefield": 100, "funcinline": 100},
+    "robotstudio": {"abb": 74},
+}  # fmt: skip
+GROUP_LIMIT_S = 600
+
+
+def expand(names: list[str], probes: list[str]) -> list[str]:
+    """Probe names, groups replaced by their probes, in order and once each; [] -> every probe."""
+    if not names:
+        return list(probes)
+    out = []
+    for name in names:
+        if name in GROUPS:
+            out += GROUPS[name]
+        elif name in probes:
+            out.append(name)
+        else:
+            raise SystemExit(f"unknown probe or group {name!r}: probes {', '.join(probes)}; groups {', '.join(GROUPS)}")
+    return list(dict.fromkeys(out))
+
+
 def main() -> int:
     probes = {"negative": probe_negative, "args": probe_args, "conditions": probe_conditions, "waits": probe_waits,
               "setup": probe_setup, "pose": probe_pose, "pin": probe_pin, "banks": probe_banks,
@@ -598,8 +633,14 @@ def main() -> int:
               "sysvars": probe_sysvars,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
+    grouped = [probe for group in GROUPS.values() for probe in group]
+    assert sorted(grouped) == sorted(probes), "every probe in exactly one group"
+    if "--groups" in sys.argv:
+        for group, times in GROUPS.items():
+            print(f"{group:12s} {sum(times.values()) / 60:4.1f} min  {' '.join(times)}")
+        return 0
     summary = "--summary" in sys.argv
-    chosen = [name for name in sys.argv[1:] if name != "--summary"] or list(probes)
+    chosen = expand([name for name in sys.argv[1:] if name != "--summary"], list(probes))
     failed = 0
     log = None
     if summary:

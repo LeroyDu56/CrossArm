@@ -48,3 +48,14 @@ def test_probes_sent_to_the_server_do_not_stop_it():
         module = parse_module(served)
         assert module.routines, name
         assert "Stop;" not in [line.strip() for line in served.splitlines()], name
+
+
+def test_probe_groups_cover_every_probe_once_and_each_runs_in_less_than_ten_minutes():
+    import probe_all
+
+    names = [probe for group in probe_all.GROUPS.values() for probe in group]
+    assert len(names) == len(set(names)) == 40
+    assert probe_all.expand([], names) == names
+    assert probe_all.expand(["frames", "karel", "funcinline"], names) == ["framefield", "funcinline", "karel"]
+    for group, times in probe_all.GROUPS.items():
+        assert sum(times.values()) < probe_all.GROUP_LIMIT_S, group

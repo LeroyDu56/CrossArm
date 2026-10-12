@@ -73,6 +73,16 @@ def test_robot_neighborhood_names_a_robot_by_its_path_with_the_drive_as_first_fo
         "\\C\\Users\\me\\Documents\\My Workcells\\Cell\\Robot_1")  # fmt: skip
 
 
+def test_the_latest_core_build_is_compared_as_a_number_not_as_text(winolpc):
+    """V1010-10 is newer than V1010-9 (text order would put it first), as 1.10 is newer than 1.9."""
+    exe, robot = winolpc
+    for build in ("2", "9", "10"):
+        (exe.parent.parent / "Versions" / f"V1010-{build}" / "bin").mkdir(parents=True)
+    version, path = maketp.core_version(robot, exe)
+    assert version == "V10.10-10"
+    assert path.endswith("V1010-10\\bin\\")
+
+
 def test_a_roboguide_robot_gets_a_robot_ini_with_its_software_core(winolpc, programs, tmp_path):
     exe, robot = winolpc
     run = FakeMakeTP(refuse={"BAD": REFUSAL})
