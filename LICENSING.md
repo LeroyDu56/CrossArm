@@ -5,7 +5,7 @@ CrossArm is published under the [Business Source License 1.1](LICENSE).
 **Free for evaluation and other non-production use; production use needs a commercial licence: enzoleroy56@gmail.com.**
 
 Each released version becomes Apache 2.0 four years after it is published;
-versions 1.10.1 and 1.10.0 convert on **2030-10-12**, versions 1.9.0 and 1.8.0 on 2030-10-09, version 1.7.0 on 2030-10-08, versions 1.6.0 and 1.5.0 on 2030-10-07, version 1.4.0 on
+versions 1.11.0, 1.10.1 and 1.10.0 convert on **2030-10-12**, versions 1.9.0 and 1.8.0 on 2030-10-09, version 1.7.0 on 2030-10-08, versions 1.6.0 and 1.5.0 on 2030-10-07, version 1.4.0 on
 2030-10-06, version 1.3.0 on 2030-10-05, versions 1.2.0 and 1.1.0 on 2030-09-29, version 1.0.0 on 2030-09-26.
 
 This page explains where the line falls, in plain terms. **It is not part of

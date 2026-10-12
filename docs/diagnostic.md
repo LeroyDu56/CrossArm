@@ -66,7 +66,7 @@ same, as keys and numbers):
 Counts only: no name, comment, text, number or path of the backup is in this report or in crossarm_diag.json.
 
 - Schema version: 1
-- CrossArm 1.10.1, Python 3.14.6, Windows 11, 2026-10-12
+- CrossArm 1.11.0, Python 3.14.6, Windows 11, 2026-10-12
 - Input: files, 1 task(s), 1 program module(s), 0 system module(s), 76 lines
 - Routines: 3 PROC, 1 FUNC, 0 TRAP
 - Files not read: 0, syntax errors: 0

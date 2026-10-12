@@ -3,7 +3,9 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.11.0 — 2026-10-12
+
+Field feedback without sharing the backup: an anonymous diagnostic report and an anonymized copy of a backup, both made on the user's machine and sent by the user. The programs written are the same as 1.10.1.
 
 - Robustness: a damaged or unusual backup no longer stops the conversion. A statement nested more than 40 levels
   deep (or an expression more than 60) is a syntax error of its own; a module CrossArm fails on outside a statement

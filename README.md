@@ -189,7 +189,7 @@ CrossArm is published under the [Business Source License 1.1](LICENSE).
   delivered to a customer, or that are part of billed migration work. Its licence file replaces the mark with
   the licence number and company name. Where the line falls: [LICENSING.md](LICENSING.md); getting one:
   [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md); contact: **enzoleroy56@gmail.com**.
-- Each released version becomes Apache 2.0 four years after it is published (v1.10.1 on 2030-10-12; every
+- Each released version becomes Apache 2.0 four years after it is published (v1.11.0 on 2030-10-12; every
   date in [LICENSING.md](LICENSING.md)). Versions published before 1.0.0 keep the licence they were published
   under. Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
