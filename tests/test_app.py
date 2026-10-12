@@ -29,6 +29,18 @@ def test_command_line_or_dropped_files(args, expected):
     assert is_command_line(args) is expected
 
 
+def test_the_exe_runs_every_command_of_the_command_line():
+    """A command missing from CLI_COMMANDS would open the window with the command taken as a dropped file."""
+    import argparse
+
+    from crossarm.app import CLI_COMMANDS
+    from crossarm.cli import _build_parser
+
+    sub = next(a for a in _build_parser()._actions if isinstance(a, argparse._SubParsersAction))
+    assert set(sub.choices) == CLI_COMMANDS
+    assert all(is_command_line([name, "x"]) for name in sub.choices)
+
+
 def test_exe_command_line_version_and_help_without_a_window(capsys, monkeypatch):
     monkeypatch.setitem(sys.modules, "crossarm.gui", None)  # importing the GUI (Tk) would fail
     assert main(["--version"]) == 0

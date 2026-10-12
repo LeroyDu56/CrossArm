@@ -48,6 +48,7 @@ jobs:
           }
       - name: Smoke test (command line, no window, exit codes)
         shell: pwsh
+        timeout-minutes: 5  # a command taken for dropped files would open the window and never return
         # The exe is windowed: Start-Process -Wait is what waits for it and keeps its exit code.
         run: |
           $exe = "dist\CrossArm.exe"
@@ -68,6 +69,14 @@ jobs:
             Write-Error "convert failed"; exit 1
           }
           if (-not (Test-Path "$out\MAIN.LS")) { Write-Error "no MAIN.LS"; exit 1 }
+          if ((Invoke-CrossArm "diagnose", "tests\fixtures\rapid\pick_and_place.mod", "-o", "$env:RUNNER_TEMP\diag") -ne 0) {
+            Write-Error "diagnose failed"; exit 1
+          }
+          if (-not (Test-Path "$env:RUNNER_TEMP\diag\crossarm_diag.json")) { Write-Error "no crossarm_diag.json"; exit 1 }
+          if ((Invoke-CrossArm "anonymize", "tests\fixtures\rapid\pick_and_place.mod", "-o", "$env:RUNNER_TEMP\anon.zip") -ne 0) {
+            Write-Error "anonymize failed"; exit 1
+          }
+          if (-not (Test-Path "$env:RUNNER_TEMP\anon.zip")) { Write-Error "no anonymized zip"; exit 1 }
           $code = Invoke-CrossArm "convert", "--no-such-option"
           if ($code -ne 2) { Write-Error "usage error exit code $code, not 2"; exit 1 }
           exit 0

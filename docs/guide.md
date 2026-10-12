@@ -217,7 +217,8 @@ crossarm anonymize path/to/backup.zip                                  # anonymi
 ```
 
 `CrossArm.exe` takes the same commands without opening its window: `CrossArm.exe convert <backup> [options]`,
-`CrossArm.exe parse ...`, `CrossArm.exe stats ...`, `CrossArm.exe --help`, `CrossArm.exe --version`, with the
+`CrossArm.exe parse ...`, `CrossArm.exe stats ...`, `CrossArm.exe diagnose ...`, `CrossArm.exe anonymize ...`,
+`CrossArm.exe --help`, `CrossArm.exe --version`, with the
 same output and exit codes (0; 1 when a RAPID file has syntax errors; 2 for a usage error or an input that cannot
 be read; 3 for a CrossArm internal error, its details saved in `crossarm_error.txt`: please send that file).
 Without arguments,

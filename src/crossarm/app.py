@@ -6,7 +6,7 @@
     CrossArm.exe                      opens the window
     CrossArm.exe <backup or files>    what Windows passes when items are dropped on the icon:
                                      the window opens and converts them right away
-    CrossArm.exe convert|parse|stats ...,  CrossArm.exe --help | --version
+    CrossArm.exe convert|parse|stats|diagnose|anonymize ...,  CrossArm.exe --help | --version
                                      the `crossarm` command line, without a window: same commands,
                                      options, output and exit codes (0 ok, 1 syntax errors, 2 usage)
 
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 # First arguments that select the command line rather than files dropped on the icon.
-CLI_COMMANDS = frozenset({"convert", "parse", "stats"})
+CLI_COMMANDS = frozenset({"convert", "parse", "stats", "diagnose", "anonymize"})  # every `crossarm` command (tested)
 
 
 def is_command_line(args: list[str]) -> bool:
