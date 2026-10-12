@@ -16,6 +16,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `BookErrNo` becomes a remark. As RAPID does, a RAISE in a routine without a handler, and the end of a handler,
   stop the program (ABORT; previously the end of a wait's timeout handler ended the routine). Errors of the system
   stay TODO. Measured on ROBOGUIDE (probe `raise`).
+- Fixed (since 1.0): a num or bool of a routine with the name of module data, or of data of a routine it calls (or
+  that calls it), shared that data's `R[]` / `F[]`, so either changed the other without warning. It now has its own,
+  named `ROUTINE.name` in the mapping file (added keys only); a mapping file naming it by its RAPID name pins the
+  module data.
 
 ## 1.9.0 — 2026-10-09
 

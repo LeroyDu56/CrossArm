@@ -149,6 +149,78 @@ def test_a_1_2_mapping_naming_a_counter_by_its_rapid_name_still_pins_it():
     assert table.number("i") == 2  # data named i: never the counter's register a second time
 
 
+
+HIDDEN = "VAR bool bArmed:=FALSE;\nVAR num nCount:=0;"
+HIDING = """PROC main()
+  VAR bool bArmed:=TRUE;
+  VAR num nCount:=3;
+  IF diX=1 bArmed:=FALSE;
+  nCount:=nCount+1;
+  Side;
+  IF bArmed Set doA;
+  IF nCount>2 Set doB;
+ENDPROC
+PROC Side()
+  bArmed:=TRUE;
+  nCount:=nCount+5;
+ENDPROC"""
+
+
+def convert_hiding(cfg: ConversionConfig):
+    source = f"MODULE M\n{HIDDEN}\n{HIDING}\nENDMODULE\n"
+    return convert([parse_module(source)], cfg, routines=["main", "Side"], sources={"M": source})
+
+
+def lines_of(result) -> dict[str, list[str]]:
+    return {info.program.name: [getattr(x, "text", "") for x in info.program.lines[1:]] for info in result.programs}
+
+
+def test_a_routine_s_data_hiding_module_data_has_a_register_and_a_flag_of_its_own(tmp_path):
+    """Up to 1.10, main's bArmed / nCount shared the module's F[] / R[]: Side changed what main tested."""
+    result = convert_hiding(config())
+    lines = lines_of(result)
+    assert lines["MAIN"][:2] == ["F[1]=(ON)", "R[1:nCount]=3"]
+    assert lines["SIDE"] == ["F[2]=(ON)", "R[2:nCount]=R[2:nCount]+5"]
+    assert "IF (F[1]=ON) THEN" in lines["MAIN"] and "IF (R[1:nCount]>2) THEN" in lines["MAIN"]
+    written = mapping_of(result)
+    assert written["flags"] == {"main.bArmed": 1, "bArmed": 2}
+    assert written["registers"] == {"main.nCount": 1, "nCount": 2}
+    # Given back, the same numbers; a mapping written before naming them all bArmed / nCount pins the module data.
+    path = tmp_path / "map.json"
+    path.write_text(json.dumps(written), encoding="utf-8")
+    assert lines_of(convert_hiding(ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1)))) == lines
+    path.write_text(json.dumps({"flags": {"bArmed": 5}, "registers": {"nCount": 7}}), encoding="utf-8")
+    lines = lines_of(convert_hiding(ConversionConfig.from_mapping_file(path, timestamp=datetime(2026, 1, 1))))
+    assert lines["SIDE"] == ["F[5]=(ON)", "R[7:nCount]=R[7:nCount]+5"]
+    assert lines["MAIN"][:2] == ["F[1]=(ON)", "R[1:nCount]=3"]
+
+
+def test_data_of_the_same_name_in_a_routine_and_one_it_calls_are_kept_apart():
+    """main's n survives the call to Side, which counts with its own n; Other never runs inside main: shared."""
+    source = """MODULE M
+PROC main()
+  VAR num n:=5;
+  VAR bool b:=TRUE;
+  Side;
+  IF n>2 AND b Set doA;
+ENDPROC
+PROC Side()
+  VAR num n:=0;
+  VAR bool b:=FALSE;
+  n:=n+1;
+ENDPROC
+PROC Other()
+  VAR num n:=1;
+ENDPROC
+ENDMODULE
+"""
+    result = convert([parse_module(source)], config(), routines=["main", "Side", "Other"], sources={"M": source})
+    lines = lines_of(result)
+    assert lines["MAIN"][:2] == ["R[1:n]=5", "F[1]=(ON)"] and "IF (R[1:n]>2 AND F[1]=ON) THEN" in lines["MAIN"]
+    assert lines["SIDE"] == ["R[2:n]=0", "F[2]=(OFF)", "R[2:n]=R[2:n]+1"]
+    assert lines["OTHER"] == ["R[3:n]=1"]
+    assert mapping_of(result)["registers"] == {"main.n": 1, "Side.n": 2, "n": 3}
+
 # -- the names of the programs -------------------------------------------------------------------
 
 TEXTS = "VAR string sState:=\"\";"

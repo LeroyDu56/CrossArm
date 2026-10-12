@@ -496,10 +496,12 @@ class NumberTable:
         self._next = _DEFERRED + 1000 * next(_TABLES)  # this table's placeholders
 
     def number(self, name: str, key: str | None = None, detail: str = "", after_pinned: bool = False,
-               top: int | None = None) -> int:  # fmt: skip
+               top: int | None = None, by_name: bool = True) -> int:  # fmt: skip
         """`after_pinned`: a number past every one the mapping file pins, when it does not pin this one (a
         field of a record: a mapping file written before records were converted never names it). `top`: the
-        highest free number up to it instead of the lowest (the scratch string registers).
+        highest free number up to it instead of the lowest (the scratch string registers). `by_name`: False for a
+        key that never takes the number its RAPID name pins (a routine's data hiding module data of that name: the
+        name pins the module data).
 
         `key` tells apart what shares a RAPID name: the FOR counter `i` of each routine (`MAIN.i`), the
         registers CrossArm uses itself (`CROSSARM.TESTVALUE`). The mapping file names those by their key.
@@ -511,7 +513,7 @@ class NumberTable:
         if key in self.pending and not self.defer:  # first used where it was deferred: numbered here, as before
             placeholder = self.pending.pop(key)
             del self.assigned[key]
-            self.resolved[placeholder] = number = self.number(name, given, detail, after_pinned, top)
+            self.resolved[placeholder] = number = self.number(name, given, detail, after_pinned, top, by_name)
             return number
         if key in self.assigned:
             return self.assigned[key].number
@@ -519,7 +521,7 @@ class NumberTable:
         old = name.upper()
         if key in self.fixed and not (key == old and self.fixed[key] in self.by_name):
             number, fixed = self.fixed[key], True
-        elif key != old and old in self.fixed and self.fixed[old] not in taken:
+        elif by_name and key != old and old in self.fixed and self.fixed[old] not in taken:
             number, fixed = self.fixed[old], True
             self.by_name.add(number)
         elif self.defer:
@@ -586,9 +588,9 @@ class TableView:
         return self.table.reserved
 
     def number(self, name: str, key: str | None = None, detail: str = "", after_pinned: bool = False,
-               top: int | None = None) -> int:  # fmt: skip
+               top: int | None = None, by_name: bool = True) -> int:  # fmt: skip
         self.keys.add((key or name).upper())
-        return self.table.number(name, key, detail, after_pinned, top)
+        return self.table.number(name, key, detail, after_pinned, top, by_name)
 
     def release(self, key: str) -> None:
         self.keys.discard(key.upper())
@@ -841,6 +843,7 @@ class Converter:
             routine = next(r for m in modules for r in m.routines if r.kind == "PROC" and r.name.upper() == name)
             self.signatures[name] = signature(routine, records, fine)
         self.procs = {r.name.upper(): r for m in modules for r in m.routines if r.kind == "PROC"}
+        self.symbols.apart = locals_apart(self.procs)
         # Routines the integrator provides as programs (external_routines): upper-case name -> the entry, its
         # record in the result; RAPID's own instructions are not routines (said once, left alone).
         self.externals: dict[str, ProvidedRoutine] = {}
@@ -2087,10 +2090,17 @@ class Converter:
         detail = ""
         if decl is not None and decl.init is not None:
             detail = f"RAPID {decl.storage} initial value {format_expr(decl.init)}: set it on the controller"
-        return f"R[{self.registers.number(name, key, detail)}:{_comment(name)}]"
+        hiding = key is None and (key := self.symbols.hiding_key(name)) is not None
+        by_name = not hiding or self.symbols.get_global(name) is None  # a 1.x file naming it pins the module data
+        return f"R[{self.registers.number(name, key, detail, by_name=by_name)}:{_comment(name)}]"
 
     def flag(self, name: str) -> str:
-        return f"F[{self.flags.number(name)}:{_comment(name)}]"
+        """F[n:name]. A bool of the routine hiding a module bool of the same name, or one a routine it calls or
+        that calls it declares too, has a flag of its own (key `ROUTINE.name`, as a FOR counter): sharing one,
+        either would change the other."""
+        key = self.symbols.hiding_key(name)
+        by_name = key is None or self.symbols.get_global(name) is None
+        return f"F[{self.flags.number(name, key, by_name=by_name)}:{_comment(name)}]"
 
     def signal(self, expr: n.Expr, program: str, line: int) -> str | None:
         """'DI[n]' / 'DO[n]' if expr designates a digital signal, else None."""
@@ -5053,3 +5063,18 @@ def convert(
         result.karel_todo = karel_would(result, again.convert(routines, program_modules))
     return result
 
+
+def locals_apart(procs: dict[str, n.Routine]) -> frozenset[tuple[str, str]]:
+    """(ROUTINE, NAME) of the num / bool data of a PROC that a PROC it calls, directly or not, also declares: kept
+    in a register / flag of its own (key `ROUTINE.name`), as the callee would change the caller's otherwise. Data
+    of the same name in routines that never run one inside the other share one, as before."""
+    declared = {name: {s.name.upper() for s in routine.body if isinstance(s, n.DataDecl)
+                       and s.type_name.lower() in ("num", "dnum", "bool")} for name, routine in procs.items()}  # fmt: skip
+    apart: set[tuple[str, str]] = set()
+    for name, routine in procs.items():
+        if not declared[name]:
+            continue
+        for callee in called_by(routine, procs) - {name}:
+            for shared in declared[name] & declared[callee]:
+                apart |= {(name, shared), (callee, shared)}
+    return frozenset(apart)

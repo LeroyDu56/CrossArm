@@ -134,6 +134,9 @@ class Symbols:
     def __init__(self, declarations: dict[str, n.DataDecl], assigned: frozenset[str] = frozenset()) -> None:
         self._globals = declarations
         self._locals: dict[str, n.DataDecl] = {}
+        self._routine = ""
+        # (ROUTINE, NAME) of routine data a routine it calls, or that calls it, also declares (translate.locals_apart)
+        self.apart: frozenset[tuple[str, str]] = frozenset()
         # Names that appear on the left of ':=' anywhere: a VAR among them is not a constant.
         self._assigned = assigned
 
@@ -154,6 +157,16 @@ class Symbols:
 
     def enter_routine(self, routine: n.Routine) -> None:
         self._locals = {s.name.upper(): s for s in routine.body if isinstance(s, n.DataDecl)}
+        self._routine = routine.name
+
+    def hiding_key(self, name: str) -> str | None:
+        """`ROUTINE.name`: the register / flag key of a data of the routine hiding module data of the same name, or
+        data of the same name of a routine it calls or that calls it (each needs its own); None for any other name,
+        numbered by its name."""
+        key = name.upper()
+        if key in self._locals and (key in self._globals or (self._routine.upper(), key) in self.apart):
+            return f"{self._routine}.{self._locals[key].name}"
+        return None
 
     def is_local(self, name: str) -> bool:
         return name.upper() in self._locals
