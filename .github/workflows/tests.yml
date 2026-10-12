@@ -27,4 +27,7 @@ jobs:
         # Windows runners can open a Tk window: the desktop app's tests must run there, not skip.
         env:
           CROSSARM_REQUIRE_GUI: ${{ runner.os == 'Windows' && '1' || '' }}
-        run: python -m pytest -ra
+        run: python -m pytest -ra --junitxml=junit.xml
+      - name: Failed tests as annotations
+        if: failure()
+        run: python tools/ci_annotate.py junit.xml
