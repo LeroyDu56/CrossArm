@@ -81,7 +81,7 @@ from crossarm.convert.external import (
 from crossarm.convert.frame_fields import FrameFields
 from crossarm.convert.frame_writes import FrameWrites
 from crossarm.convert.func_inline import FuncInline, inlined_notes
-from crossarm.convert.func_programs import FuncPrograms, called_programs, func_layouts
+from crossarm.convert.func_programs import FuncPrograms, called_programs, func_call_sites, func_layouts
 from crossarm.convert.handlers import OnTimeout, leaves, on_timeout, only_passes_on
 from crossarm.convert.handlers import body as handler_body
 from crossarm.convert.inline import REAL_CONTROLLER, Inliner
@@ -436,6 +436,9 @@ class ConversionResult:
     # Each FUNC of the backup copied into its calls (crossarm.convert.func_inline) -> the (TP program, RAPID line) of
     # each call written so; the HTML report shows them program by program.
     inlined_sites: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
+    # Each FUNC of the backup written as a TP program (crossarm.convert.func_programs) -> the (TP program, RAPID
+    # line) of each line calling it so, the lines left TODO not counted; its program: program_keys[FUNC].
+    func_calls: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
     # What changed since the previous conversion of this task (crossarm.convert.run_summary.Since; set by the pipeline
     # when an earlier crossarm_summary.json is found), None otherwise.
     since: "Since | None" = None
@@ -863,6 +866,7 @@ class Converter:
         self.func_layouts, self.func_why = func_layouts(modules, records, self.externals, self.routine_use.inside,
                                                          self.recursive)
         self.func_named: set[str] = set()  # of which: those given a program name, a line calling them
+        self.func_called: list[tuple[str, str, int]] = []  # (FUNC upper case, program, line) of each such call
         self.late_names: set[str] = set()  # routines named once the others are written (late_program)
         self.func_checked: dict[str, tuple[str, str] | None] = {}  # FUNC -> why it is not written (func_trouble)
         self.move_routine_calls: Counter[str] = Counter()
@@ -990,6 +994,7 @@ class Converter:
         self._place_computed()
         place_karel_frames(self)  # before the registers are numbered: they stay placeholders until then
         inlined_notes(self)
+        func_call_sites(self)
         self._place_points()
         self._place_number_arrays()
         self._place_payloads()

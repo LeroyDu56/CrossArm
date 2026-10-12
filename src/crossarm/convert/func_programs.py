@@ -80,6 +80,19 @@ def func_layouts(modules: Iterable[n.Module], records: Mapping[str, tuple[tuple[
     return found, why
 
 
+def func_call_sites(conv: "Converter") -> None:
+    """ConversionResult.func_calls: the lines calling each FUNC written as a program, those left TODO not
+    counted."""
+    todo = {(note.program, note.rapid_line) for note in conv.result.notes if note.kind == "TODO"}
+    names = {r.name.upper(): r.name for m in conv.modules for r in m.routines}
+    for key, program, line in conv.func_called:
+        if (program, line) in todo:
+            continue
+        sites = conv.result.func_calls.setdefault(names.get(key, key), [])
+        if (program, line) not in sites:
+            sites.append((program, line))
+
+
 def called_programs(conv: "Converter", programs) -> set[str]:
     """The FUNCs (upper case) some of these programs CALL as programs of their own."""
     names = {conv.program_names[key]: key for key in conv.func_named}
@@ -138,6 +151,7 @@ class FuncPrograms:
                                  f" {trouble[0]}", trouble[1])  # fmt: skip
         layout, kind = entry
         name = self.c.func_program(expr.name.upper())
+        self.c.func_called.append((expr.name.upper(), self.name, expr.span.line))  # type: ignore[attr-defined]
         same = sum(1 for node in self.func_nodes if node.name.upper() == expr.name.upper())
         # a register per caller: a FUNC another FUNC calls never writes over the result its own caller reads next
         key = f"{self.name}.{name}.{RESULT}{same + 1 if same else ''}"  # type: ignore[attr-defined]

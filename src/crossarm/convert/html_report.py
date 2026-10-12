@@ -145,6 +145,7 @@ class _Facts:
     karel: list[tuple[str, int]] = field(default_factory=list)  # (KAREL program, calls here)
     inlined: list[tuple[str, list[int], int]] = field(default_factory=list)  # (FUNC, RAPID lines here, sites in all)
     provided: list[tuple[str, str, list[int]]] = field(default_factory=list)  # (routine, its TP program, lines here)
+    funcs: list[tuple[str, str, list[int]]] = field(default_factory=list)  # (FUNC, its TP program, lines here)
 
     @property
     def karel_calls(self) -> int:
@@ -157,6 +158,10 @@ class _Facts:
     @property
     def provided_calls(self) -> int:
         return sum(len(lines) for _, _, lines in self.provided)
+
+    @property
+    def func_calls(self) -> int:
+        return sum(len(lines) for _, _, lines in self.funcs)
 
 
 def _facts(result: ConversionResult) -> dict[str, _Facts]:
@@ -171,6 +176,12 @@ def _facts(result: ConversionResult) -> dict[str, _Facts]:
             here[program].append(line)
         for program, lines in here.items():
             out[program].inlined.append((function, sorted(lines), len(sites)))
+    for function, sites in result.func_calls.items():
+        here = defaultdict(list)
+        for program, line in sites:
+            here[program].append(line)
+        for program, lines in here.items():
+            out[program].funcs.append((function, result.program_keys.get(function, function), sorted(lines)))
     for use in result.provided:
         here = defaultdict(list)
         for program, line in use.calls:
@@ -188,7 +199,8 @@ def _lines(program: str, lines: list[int], anchors: set[tuple[str, int]]) -> str
 
 
 def _facts_list(name: str, facts: _Facts, anchors: set[tuple[str, int]]) -> str:
-    """What --karel did here, the FUNCs copied in here and the provided routines called here, one line each."""
+    """What --karel did here, the FUNCs copied in here or called as programs, and the provided routines called
+    here, one line each."""
     items = []
     if facts.karel:
         calls = ", ".join(f"<code>{_e(k)}</code> ({count})" for k, count in facts.karel)
@@ -198,6 +210,10 @@ def _facts_list(name: str, facts: _Facts, anchors: set[tuple[str, int]]) -> str:
         items.append(f'<li><span class="tag inl">inlined</span> <code>{_e(function)}()</code> copied here at'
                      f" {_s(len(lines), 'call site')} ({_lines(name, lines, anchors)}; {total} in all): change the"
                      " FUNC in the RAPID, then convert again with the same mapping file.</li>")  # fmt: skip
+    for function, program, lines in facts.funcs:
+        items.append(f'<li><span class="tag inl">FUNC program</span> <code>{_e(function)}()</code> called as'
+                     f" <code>CALL {_e(program)}</code> ({_lines(name, lines, anchors)}): the FUNC of the backup,"
+                     " written as a TP program; its result is read from the register passed last.</li>")  # fmt: skip
     for routine, program, lines in facts.provided:
         items.append(f'<li><span class="tag ext">provided</span> <code>{_e(routine)}</code> called as'
                      f" <code>CALL {_e(program)}</code> ({_lines(name, lines, anchors)}): a program the integrator"
@@ -314,6 +330,8 @@ def _badges(todo: int, warnings: int, facts: "_Facts | None" = None) -> str:
             out += f' <span class="tag kar">{_s(facts.karel_calls, "KAREL call")}</span>'
         if facts.inlined_sites:
             out += f' <span class="tag inl">{_s(facts.inlined_sites, "inlined FUNC site")}</span>'
+        if facts.func_calls:
+            out += f' <span class="tag inl">{_s(facts.func_calls, "FUNC program call")}</span>'
         if facts.provided_calls:
             out += f' <span class="tag ext">{_s(facts.provided_calls, "provided routine call")}</span>'
     return out
@@ -671,6 +689,8 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
         f'<p class="decision"><span class="vtag">{_e(decision.level)}</span> {_e(decision.sentence)}</p>',
         f'<p class="rule">{_e(decision.rule)}</p>{why}'
         + (f'<p class="karel-use">{inline(analysis.karel_use(result))}</p>' if analysis.karel_use(result) else "")
+        + (f'<p class="karel-use">{inline(analysis.func_programs_use(result))}</p>'
+           if analysis.func_programs_use(result) else "")
         + _since(result) + "</div>",
         (f'<div class="vareas"><h3>Converted by area</h3><ul class="areas">{areas}</ul>'
          + (f'<p class="biz">{_e(business(result))}</p>' if business(result) else "") + "</div>" if areas else ""),

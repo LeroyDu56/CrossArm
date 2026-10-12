@@ -122,3 +122,22 @@ def test_the_mapping_names_the_func_programs():
     mapping = json.loads(build_mapping(result, ConversionConfig()))
     assert mapping["programs"]["Gap"] == "GAP"
     assert not any(s[1] == "Gap" for s in result.skipped_routines)
+
+
+def test_the_reports_name_the_func_programs_and_those_left_todo():
+    from crossarm.convert import analysis
+    from crossarm.convert.html_report import build_html_report
+
+    funcs = FUNCS + """    FUNC num Ask()
+        VAR num n;
+        n:=UINumEntry(\\Header:="Rows"\\Message:="How many?");
+        RETURN n;
+    ENDFUNC
+"""
+    result = run("        nGap:=Gap(2);\n        nGap:=Ask();", funcs)
+    assert result.func_calls == {"Gap": [("MAIN", 9)]}
+    assert "`Gap()` as `GAP` (1 call)" in analysis.func_programs_use(result)
+    action = next(a for a in analysis.priority_actions(result) if "not written as TP programs" in a.title)
+    assert action.todo == 1 and "`Ask()` (1 TODO)" in action.detail
+    page = build_html_report(result, ConversionConfig(), ["m.mod"], title="t")
+    assert "1 FUNC program call" in page and "CALL GAP</code>" in page and "1 FUNC of the backup written" in page

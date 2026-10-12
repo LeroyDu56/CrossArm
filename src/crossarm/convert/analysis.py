@@ -319,6 +319,20 @@ def karel_use(result: ConversionResult) -> str:
             " KAREL either.")  # fmt: skip
 
 
+def func_programs_use(result: ConversionResult) -> str:
+    """The FUNCs of the backup written as TP programs (crossarm.convert.func_programs), each with its calls; ""
+    for none."""
+    if not result.func_calls:
+        return ""
+    shown = [f"`{name}()` as `{result.program_keys.get(name, name)}` ({_plural(len(sites), 'call')})"
+             for name, sites in sorted(result.func_calls.items(), key=lambda kv: (-len(kv[1]), kv[0]))]  # fmt: skip
+    return (f"{_plural(len(result.func_calls), 'FUNC')} of the backup written as TP programs: {_names(shown, 4)};"
+            " a line reading one first runs `CALL F(args,k)`, the result left in R[k] (PR[k] for a robtarget).")
+
+
+_FUNC_TODO = re.compile(r"(\w+)\(\) is written as a program only when its whole body converts")
+
+
 def _todo(count: int) -> str:
     return f"{count} TODO"
 
@@ -434,6 +448,22 @@ def priority_actions(result: ConversionResult, config: ConversionConfig | None =
             f"{_names(shown, 4)} call sites: CrossArm writes the body of each into every call, so a change of one in"
             " the RAPID changes nothing on the robot until the backup is converted again, with the same mapping file.",
             "#review", "Items to review", Blocker.INLINED, who=(integrator,)))  # fmt: skip
+    unwritten: dict[str, list[Note]] = defaultdict(list)
+    for note in result.notes:
+        if note.kind == "TODO" and (match := _FUNC_TODO.search(note.message)):
+            unwritten[match[1]].append(note)
+    if unwritten:
+        notes = [note for group in unwritten.values() for note in group]
+        shown = [f"`{name}()` ({_todo(len(group))})" for name, group in sorted(unwritten.items(),
+                                                                          key=lambda kv: (-len(kv[1]), kv[0]))]  # fmt: skip
+        actions.append(Action(
+            f"Finish the {_plural(len(unwritten), 'FUNC')} not written as TP programs",
+            f"{_names(shown, 4)}: CrossArm writes a FUNC of the backup as a TP program only when its whole body"
+            " converts, and each TODO names the first line of its body that does not, and why. Rewrite that part,"
+            " or provide the FUNC as a program of your own (`external_routines` with `returns`), then convert again.",
+            "#review", "Items to review", todo=len(notes),
+            programs=tuple(sorted({note.program for note in notes if note.program})),
+            who=_who((note.category for note in notes), integrator)))  # fmt: skip
     banked = [f for f in (*result.utools, *result.uframes) if f.bank is not None]
     if banked:
         slots = sorted({f"{'UTOOL' if f in result.utools else 'UFRAME'}[{f.slot}]" for f in banked})
@@ -576,6 +606,7 @@ def analysis_markdown(result: ConversionResult, config: ConversionConfig | None 
           if coverage.total else []),
         *([f"- {sentence}"] if sentence else []),
         *([f"- {karel_use(result)}"] if karel_use(result) else []),
+        *([f"- {func_programs_use(result)}"] if func_programs_use(result) else []),
         (f"- {clean} of {len(result.programs)} programs with no TODO, {len(result.programs) - clean} with TODO"
          f" ({_plural(result.todo_count, 'TODO', 'TODO')})."),
         *([f"- {result.since.text()}"] if result.since is not None else []),

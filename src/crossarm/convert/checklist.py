@@ -334,10 +334,21 @@ def _payloads(result: ConversionResult, config: ConversionConfig, places: _Place
     return intro, items
 
 
+# The registers CrossArm keeps for the program's own errors (crossarm.convert.raised), by mapping key.
+_RESERVED = (
+    ("CROSSARM.RAISED", ("reserved by CrossArm: the error a routine ends with (0: none), set by the routines that"
+                         " raise the program's own errors and tested after each CALL of them")),
+    ("CROSSARM.ERRNO", "reserved by CrossArm: ERRNO, the error an ERROR handler takes"),
+    ("CROSSARM.RETRY.", ("reserved by CrossArm: the RETRY count of this routine's ERROR handler (at most 4, then"
+                         " the program stops)")),
+)  # fmt: skip
+
+
 def _allocations(allocations: list[Allocation], prefix: str, places: _Places, what: str) -> list[_Item]:
     items = []
     for a in allocations:
         notes = [a.detail] if a.detail else []
+        notes += [why for key, why in _RESERVED if a.key == key or (key.endswith(".") and a.key.startswith(key))]
         if a.fixed:
             notes.append("number pinned in the mapping file")
         note = "; ".join(notes)
@@ -537,10 +548,32 @@ def _motion(result: ConversionResult, config: ConversionConfig, places: _Places)
     return intro, items
 
 
+def _whole_run(result: ConversionResult, places: _Places, cause: str, title: str, note: str) -> list[_Item]:
+    """One item for the warnings of `cause` in every program (none: no item)."""
+    notes = sorted((x for x in result.notes if x.kind == "WARNING" and x.category == cause),
+                   key=lambda x: (x.program, x.rapid_line or 0))  # fmt: skip
+    if not notes:
+        return []
+    programs = sorted({x.program for x in notes if x.program})
+    shown = ", ".join(f"{_e(p)}.LS" for p in programs[:6]) + (f" and {len(programs) - 6} more" if len(programs) > 6 else "")
+    return [_Item(f"{cause}|all|{len(notes)}", title,
+                  note=f'<span class="tag warn">{len(notes)} line{"s" if len(notes) > 1 else ""}</span> {note}'
+                  + (f" ({shown})" if shown else ""),
+                  links=places.links([(x.program, x.rapid_line) for x in notes], "at"))]  # fmt: skip
+
+
 def _assumptions(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
     taken = _FRAME_CAUSES + _PAYLOAD_CAUSES + _IO_CAUSES + _POINT_CAUSES + _MOTION_CAUSES
     intro = "The other lines converted on an assumption (the warnings): check that it holds on this cell."
-    return intro, _note_items(result, places, None, kinds=("WARNING",), skip=taken)
+    items = _whole_run(result, places, Blocker.SAVED_VALUE, "PERS read at their saved value: check the value on"
+                       " the robot", "A PERS no program changes (or one another task gives its value) is written"
+                       " at the value saved in the backup: set on the ABB controller since, it is not.")  # fmt: skip
+    items += _whole_run(result, places, Blocker.HANDLER, "ERROR handlers converted in part: check what other errors"
+                        " do", "Each is written where the program raises its own errors or where a wait with MaxTime"
+                        " times out, or left out (it only passes errors on, a BACKWARD handler); on FANUC any other"
+                        " error stops the program with an alarm.")  # fmt: skip
+    return intro, items + _note_items(result, places, None, kinds=("WARNING",),
+                                      skip=taken + (Blocker.SAVED_VALUE, Blocker.HANDLER))  # fmt: skip
 
 
 _MOTIONS = {"J": "Joint", "L": "Linear", "C": "Circular"}

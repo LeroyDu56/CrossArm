@@ -65,6 +65,10 @@ def test_a_pers_another_task_gives_its_value_is_read_at_that_value():
     lines = [getattr(x, "text", "") for x in result.programs[0].program.lines]
     assert any(x.startswith("FOR R[") and x.endswith("TO 7") for x in lines), lines
     assert any("nRings, a PERS" in x.message for x in result.notes)  # read at the value the backup saved
+    from crossarm.convert.html_report import build_html_report
+
+    page = build_html_report(result, cfg, ["b.mod"], title="t")
+    assert "PERS read at their saved value: check the value on the robot" in page  # a checklist item
 
 
 def test_a_pers_two_tasks_give_different_values_is_not_taken():

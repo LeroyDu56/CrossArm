@@ -21,8 +21,8 @@ from crossarm.convert.translate import ConversionResult
 README = (
     "Numbers CrossArm allocated automatically, in order of first use. "
     "Change them to the ones the controller already uses, then convert again with "
-    "--map on this file. Names match the RAPID data, case-insensitively; a routine's FOR counters and "
-    "the copies of its parameters are named Routine.name, the registers CrossArm uses itself CROSSARM.name. "
+    "--map on this file. Names match the RAPID data, case-insensitively; a routine's FOR counters, "
+    "the copies of its parameters and its data hiding data of the same name are named Routine.name, the registers CrossArm uses itself CROSSARM.name. "
     "Keys starting with _ are ignored."
 )
 STRING_REGISTERS_README = (

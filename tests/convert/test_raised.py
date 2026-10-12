@@ -60,6 +60,11 @@ def test_raise_in_a_routine_passing_it_on_sets_the_register_and_ends():
         "IF (R[3:ErrNo]=10000) THEN", "JMP LBL[2]", "ENDIF", "ABORT", "LBL[2]", "R[2:nCount]=0",
     ]
     assert any("written at the 1 line(s) raising" in w for w in notes(result, "WARNING"))
+    from crossarm.convert.html_report import build_html_report
+
+    page = build_html_report(result, ConversionConfig(), ["m.mod"], title="t")
+    assert "Reserved by CrossArm: the error a routine ends with" in page and "Reserved by CrossArm: ERRNO" in page
+    assert "ERROR handlers converted in part" in page
 
 
 def test_without_a_handler_the_error_stops_the_program():

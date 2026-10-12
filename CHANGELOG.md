@@ -30,6 +30,11 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   it opens the window as before. In a script (.bat) cmd waits for it; at the prompt, use `start /wait`.
 - Fixed: the newest WinOLPC core build (`V1010-10` after `V1010-9`) is chosen by number, not as text. Tests run on
   Ubuntu 24.04 and 26.04 as well as Windows, with the Node 24 versions of the GitHub actions.
+- The report says what this adds: the FUNCs written as TP programs in the analysis and in each calling program's
+  header, an action for those left TODO (the line of their body that stops them, who acts); in the checklist, the
+  registers kept for the program's own errors (`CROSSARM.RAISED`, `CROSSARM.ERRNO`, `CROSSARM.RETRY.<routine>`),
+  one item for the ERROR handlers converted in part and one for the PERS read at their saved value (check the value
+  on the robot).
 
 ## 1.9.0 — 2026-10-09
 
