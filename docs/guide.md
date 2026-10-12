@@ -1,21 +1,122 @@
 # CrossArm user guide
 
-The [README](../README.md) says what CrossArm does. This guide covers how to use it in detail: what it
-reads, what it writes, how to number the programs for your cell, and the choices it makes for you.
-How each of those choices was checked is in [validation.md](validation.md).
+How to use CrossArm: start with the [quick start](#quick-start) and [what to expect](#what-to-expect); the
+reference below it is there to look things up, not to read in one go. What CrossArm is, in one screen: the
+[README](../README.md). How each figure and each choice was checked: [validation.md](validation.md).
 
+**Start here**
+- [Quick start](#quick-start)
+- [What to expect](#what-to-expect)
+- [Upgrading to 1.10](#upgrading-to-110)
+
+**Reference**
 - [Input: what CrossArm reads](#input-what-crossarm-reads)
 - [The window](#the-window)
-- [Command line](#command-line)
-- [What is converted](#what-is-converted)
-- [Reading the report](#reading-the-report)
-- [Numbering: mapping file and target robot](#numbering-mapping-file-and-target-robot)
+- [Command line](#command-line):
+  [binary .TP programs](#binary-tp-programs),
+  [converting again, keeping the touch-ups](#converting-again-keeping-the-touch-ups),
+  [KAREL programs](#karel-programs---karel)
+- [What is converted](#what-is-converted):
+  [frames and points the programs compute](#frames-and-points-the-programs-compute)
+- [Reading the report](#reading-the-report):
+  [the analysis first](#the-analysis-first),
+  [summaries and comparison](#summaries-and-comparison-with-the-previous-conversion)
+- [Numbering: mapping file and target robot](#numbering-mapping-file-and-target-robot):
+  [the mapping file](#the-mapping-file),
+  [programs you provide](#programs-you-provide),
+  [the FANUC robot in place](#the-fanuc-robot-in-place)
 - [The tool on the flange](#the-tool-on-the-flange)
 - [Speeds and zones](#speeds-and-zones)
-- [What to expect](#what-to-expect)
+
+**Questions**
 - [FAQ](#faq)
 - [Roadmap](#roadmap)
 - [How it works inside](#how-it-works-inside)
+
+## Quick start
+
+1. **Get it.** Download `CrossArm.exe` from the
+   [latest release](https://github.com/LeroyDu56/CrossArm/releases/latest) (Windows, nothing to install; on
+   first launch SmartScreen may ask **More info → Run anyway**). With Python 3.11 or later, `pip install -e .` in a
+   clone of the repository gives the same `crossarm` command ([command line](#command-line)).
+2. **Convert.** In the window, choose the ABB backup (folder, `.zip` or RAPID modules) and, if you have it, the
+   backup of the FANUC robot the programs will run on, then **Convert** ([the window](#the-window)). From a
+   prompt, the same thing:
+
+   ```bash
+   CrossArm.exe convert abb_backup.zip --fanuc fanuc_backup/
+   ```
+
+   Everything is written to a new `crossarm_<name>` folder next to the backup
+   ([what CrossArm writes](#input-what-crossarm-reads)).
+3. **Read the report.** Open `crossarm_report.html`: the line at the top gives the decision (ready, workable or
+   not ready) and the figures, then what to do first and who acts; each `!TODO` gives its cause
+   ([reading the report](#reading-the-report)).
+4. **Commission.** Load the `.LS` programs in ROBOGUIDE (or on the controller), run `SETUP_FRAMES` once, set
+   the payloads, check reachability, work through every `!TODO` and touch up the points
+   ([what to expect](#what-to-expect)).
+5. **Next time.** Give back the edited `crossarm_mapping.json` to keep your numbers
+   ([the mapping file](#the-mapping-file)), and the robot's programs with `--keep-taught` to keep the
+   touch-ups ([converting again](#converting-again-keeping-the-touch-ups)).
+
+Without a licence, every program starts with the remark `CrossArm EVALUATION copy`: free for evaluation,
+production use needs a licence ([LICENSING.md](../LICENSING.md)).
+
+## What to expect
+
+**About 60 % of the instructions, on real programs.** On public open-source RAPID programs of widely
+mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
+depending on the program; programs built around files, sockets, operator dialogs or error handlers
+convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
+higher because we wrote the programs. Both figures are without `--karel` and without programs you provide
+(`external_routines`), which convert a few TODO more in programs that write text files or compute poses at
+run time. Converted means written in TP and loaded by the controller
+without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
+
+**The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
+files in ROBOGUIDE or on the controller, set the payloads, check reachability, and work through
+every `!TODO`.
+
+**The points are theoretical, to be touched up on the robot.** They are the ABB's, carried over
+exactly, but the FANUC robot is not where the ABB was, its tool is on another flange, and the cell
+was never exact to the millimetre: every point is re-taught at commissioning, as on any robot swap.
+What CrossArm sets out to do is give a program that goes where the ABB went, closely enough to be
+touched up rather than rewritten: **within 10 mm of the ABB's path**, the way it moves included.
+Measured, it stays within 4 mm.
+
+**Limits:**
+- Another robot model may need another posture, or may not reach a point at all: check reachability
+  in ROBOGUIDE.
+- An ABB tool goes on a FANUC robot through an adapter plate, which decides which way round the tool
+  sits. CrossArm puts the tool's guide pin where it was on the ABB; `"tool_pin": "+x"` turns the
+  tools for the ISO 9409-1 hole ([the tool on the flange](#the-tool-on-the-flange)).
+- Speeds and zones are measured per FANUC series: M-20iD (and ARC Mate 120iD), R-2000iC and
+  R-1000iA. For another robot CrossArm uses the M-20iD's and says so
+  ([speeds and zones](#speeds-and-zones)).
+
+How each figure was measured: [validation.md](validation.md).
+
+## Upgrading to 1.10
+
+A mapping file written by an earlier version is read as before, and the command line keeps its options. Two
+changes can make a program converted again with 1.10 differ from the one converted before; look for them before
+replacing programs already commissioned:
+
+- **Data of a routine with the name of module data get their own register.** Since 1.0, a num or bool of a
+  routine with the name of module data, or of data of a routine it calls (or that calls it), shared that data's
+  `R[]` / `F[]`, so either changed the other without warning. 1.10 gives it its own, named `ROUTINE.name` in
+  the mapping file (keys are only added). *What to do:* convert again, look for the new `ROUTINE.name` keys in
+  `crossarm_mapping.json` and give them your cell's numbers if it has its own; a key naming the data by its
+  RAPID name keeps pinning the module data, as before.
+- **The end of an ERROR handler stops the program (`ABORT`), as in RAPID.** So does a `RAISE` in a routine
+  without a handler. Before 1.10, the end of a wait's timeout handler ended the routine (`END`) and the caller
+  went on, which the ABB never did. *What to do:* nothing for the program to behave as on the ABB; if a program
+  converted by an earlier version was commissioned around the old behaviour, check its handlers before
+  replacing it. The checklist of the report has an item for the ERROR handlers converted in part.
+
+Also new in 1.10, nothing to do: FUNCs of the backup known only at run time become TP programs of their own,
+the errors the program raises itself are converted, and `CrossArm.exe` runs the command line too
+([CHANGELOG](../CHANGELOG.md)).
 
 ## Input: what CrossArm reads
 
@@ -785,40 +886,6 @@ stays within 4 mm: on the way down onto a part the FANUC keeps to the line at le
 ABB, and the largest gap is a zoned reversal (down and back up through a zone), which turns up to
 4 mm shorter of the bottom ([validation](validation.md#13-the-path-where-zones-matter)).
 
-## What to expect
-
-**About 60 % of the instructions, on real programs.** On public open-source RAPID programs of widely
-mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
-depending on the program; programs built around files, sockets, operator dialogs or error handlers
-convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
-higher because we wrote the programs. Both figures are without `--karel` and without programs you provide
-(`external_routines`), which convert a few TODO more in programs that write text files or compute poses at
-run time. Converted means written in TP and loaded by the controller
-without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
-
-**The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
-files in ROBOGUIDE or on the controller, set the payloads, check reachability, and work through
-every `!TODO`.
-
-**The points are theoretical, to be touched up on the robot.** They are the ABB's, carried over
-exactly, but the FANUC robot is not where the ABB was, its tool is on another flange, and the cell
-was never exact to the millimetre: every point is re-taught at commissioning, as on any robot swap.
-What CrossArm sets out to do is give a program that goes where the ABB went, closely enough to be
-touched up rather than rewritten: **within 10 mm of the ABB's path**, the way it moves included.
-Measured, it stays within 4 mm.
-
-**Limits:**
-- Another robot model may need another posture, or may not reach a point at all: check reachability
-  in ROBOGUIDE.
-- An ABB tool goes on a FANUC robot through an adapter plate, which decides which way round the tool
-  sits. CrossArm puts the tool's guide pin where it was on the ABB; `"tool_pin": "+x"` turns the
-  tools for the ISO 9409-1 hole ([the tool on the flange](#the-tool-on-the-flange)).
-- Speeds and zones are measured per FANUC series: M-20iD (and ARC Mate 120iD), R-2000iC and
-  R-1000iA. For another robot CrossArm uses the M-20iD's and says so
-  ([speeds and zones](#speeds-and-zones)).
-
-How each figure was measured: [validation.md](validation.md).
-
 ## FAQ
 
 ### How do I convert an ABB RAPID program to FANUC TP?
@@ -899,6 +966,11 @@ RAPID from RobotWare 6 and 7 backups (`.mod`, `.modx`, `.sys`, `.sysx`, `.prg`).
 the `.LS` format as FANUC controllers and current ROBOGUIDE versions export it. The conventions
 were measured against an IRB 6700 on an M-20iD/25, an R-2000iC/190S and an R-1000iA/80F; other
 models should be checked in ROBOGUIDE.
+
+### What changes when I upgrade to 1.10?
+Mapping files and the command line keep working. Two changes can make a program converted again differ: data of
+a routine with the name of module data get their own register (a fix since 1.0), and the end of an ERROR handler
+stops the program as in RAPID. What to do: [upgrading to 1.10](#upgrading-to-110).
 
 ### Is CrossArm free?
 Free for evaluation, development, testing, teaching and personal projects. Production use —

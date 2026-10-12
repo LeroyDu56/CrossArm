@@ -8,6 +8,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - Docs: the README is a short entry page (what CrossArm does, for whom, download, what to expect, licence);
   the full conversion summary, the longer FAQ, what to expect in detail and the roadmap moved to the
   [user guide](docs/guide.md).
+- Docs: the user guide opens on a quick start, what to expect and [upgrading to 1.10](docs/guide.md#upgrading-to-110)
+  (the two changes a program converted again can show), with the reference after it; the validation page opens on
+  a one-page [summary](docs/validation.md#summary) (what is measured, on what, the figures published).
 
 ## 1.10.0 — 2026-10-12
 

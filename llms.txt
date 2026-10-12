@@ -17,9 +17,9 @@ Key facts:
 
 ## Docs
 
-- [README](https://github.com/LeroyDu56/CrossArm#readme): what CrossArm does, how to use it, what to expect, FAQ
-- [User guide](https://github.com/LeroyDu56/CrossArm/blob/main/docs/guide.md): full conversion table, report and its analysis, summaries and comparison with the previous conversion, numbering and mapping file, programs the integrator provides, converting again with --keep-taught, KAREL programs (--karel), tool on the flange, speeds and zones
-- [Validation](https://github.com/LeroyDu56/CrossArm/blob/main/docs/validation.md): every probe and measurement on RobotStudio and ROBOGUIDE
+- [README](https://github.com/LeroyDu56/CrossArm#readme): the entry page: what CrossArm does and for whom, download, try it, what to expect, licence
+- [User guide](https://github.com/LeroyDu56/CrossArm/blob/main/docs/guide.md): quick start, what to expect, upgrading to 1.10, then the reference: full conversion table, report and its analysis, summaries and comparison with the previous conversion, numbering and mapping file, programs the integrator provides, converting again with --keep-taught, KAREL programs (--karel), tool on the flange, speeds and zones; FAQ, roadmap
+- [Validation](https://github.com/LeroyDu56/CrossArm/blob/main/docs/validation.md): a one-page summary (what is measured, on what, the figures published), then every probe and measurement on RobotStudio and ROBOGUIDE
 - [FANUC .LS format status](https://github.com/LeroyDu56/CrossArm/blob/main/docs/fanuc_ls_format.md): every emitted construct and its source of truth
 - [Design notes](https://github.com/LeroyDu56/CrossArm/blob/main/docs/design.md)
 - [Changelog](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md)

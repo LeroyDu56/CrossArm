@@ -80,6 +80,8 @@ src/crossarm/
   rapid/                 lexer, parser, AST, EIO.cfg reader, JSON/pseudo-code output
   convert/               data evaluation, confdata -> CONFIG, speeds and zones, RAPID -> TP, report
   fanuc/                 TP program model, .LS writer and lossless parser, numbers used on a controller
+  karel/                 CrossArm's own KAREL programs (.kl), written with --karel
+  licence.py             licence file check (evaluation copy without one)
 tools/                   controller probes (make_*_probe.py), the ROBOGUIDE and RobotStudio runners
                          (roboguide.py, robotstudio.py and CrossArmServer.mod, probe_all.py),
                          corpus_snapshot.py, tp_forms.py, icon and preview generators

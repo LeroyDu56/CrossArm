@@ -7,7 +7,40 @@ the controller measurements stored as fixtures, runs in CI on Windows and Linux.
 The reference robots are an ABB IRB 6700 in RobotStudio and FANUC robots in ROBOGUIDE, which runs
 the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an R-1000iA/80F.
 
-**In short**
+## Summary
+
+**What is measured.** Every form of TP instruction CrossArm writes is loaded on a FANUC controller and read
+back as written. The conversions that matter are then run: the converted program on the FANUC controller, the
+RAPID on the ABB controller, and what they do compared (values, flange poses, paths, times). The share of RAPID
+converted is counted on two corpora.
+
+**On what.** An ABB IRB 6700 in RobotStudio (RobotWare 8.1); FANUC robots in ROBOGUIDE, which runs the
+controller's own software: an M-20iD/25, an R-2000iC/190S and an R-1000iA/80F (the probes run on the last, V10.10). A local test corpus
+written for testing (three RobotWare backups in three integrators' styles, three FANUC backups, calibration
+modules), and public open-source RAPID programs. Simulated controllers only: the points are theoretical and
+touched up on the robot at commissioning anyway.
+
+**The figures published.**
+
+| What | Result |
+|---|---|
+| RAPID instructions converted, public open-source programs ([what that means](#public-programs)) | about 60 % |
+| RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
+| Programs of the three RobotWare backups, loaded on a FANUC controller | 130 of 130 |
+| Forms of instruction CrossArm writes, read back from the controller | 234, stored as written |
+| Controller probes, all run again for 1.10.0 | 40 of 40 give what was measured |
+| Flange pose, RobotStudio against ROBOGUIDE | within 0.004 mm and 0.001° |
+| Path through corners, approaches, retracts, reversals, zigzags | within 4 mm of the ABB's |
+
+Both coverage figures are without `--karel` and without provided routines. **What they do not say:**
+converted means written in TP and loaded by the controller without an error, not validated on a robot; the
+output is a starting point for commissioning ([user guide](guide.md#what-to-expect)).
+
+**Reading on.** [All results](#all-results) lists every check in one table; the [sections](#sections) below
+it give, for each, how it was measured and the tool that measures it again.
+
+## All results
+
 
 | What | Result |
 |---|---|
@@ -50,6 +83,10 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 | FUNCs building tools and work objects from frames calibrated at run time, copied into each call, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm |
 | Functions the integrator provides (`external_routines` with `"returns"`), their results read back, run on ROBOGUIDE | the values and the flange where RAPID puts them |
 | A TP program reading a system variable (what `GetSysData` and `OpMode()` read), on ROBOGUIDE | loads, stops on the line (VARS-034): left TODO, saying so |
+| FUNCs of the backup known only at run time, written as TP programs, run on ROBOGUIDE | the values RAPID works out, the positions within 0.0001 mm |
+| Errors the program raises itself (`RAISE`), converted with a register, run on ROBOGUIDE | the values RAPID works out; a `RETRY` past its limit, `ABORT` |
+
+## Sections
 
 1. [The test corpus](#1-the-test-corpus)
 2. [Round trip through a FANUC controller](#2-round-trip-through-a-fanuc-controller)
@@ -94,6 +131,8 @@ the controller's own software: an M-20iD/25 first, then an R-2000iC/190S and an 
 41. [FUNCs copied into their calls, run](#41-funcs-copied-into-their-calls-run)
 42. [Functions the integrator provides, run](#42-functions-the-integrator-provides-run)
 43. [System variables read by TP, refused](#43-system-variables-read-by-tp-refused)
+44. [FUNCs of the backup as TP programs, run](#44-funcs-of-the-backup-as-tp-programs-run)
+45. [Errors the program raises itself, run](#45-errors-the-program-raises-itself-run)
 
 ## 1. The test corpus
 

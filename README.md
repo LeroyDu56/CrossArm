@@ -142,10 +142,12 @@ More questions (robtargets and `CONFIG`, numbering, supported versions, other br
 
 ## Documentation
 
-- [User guide](docs/guide.md): inputs and outputs, the full conversion table, the report, numbering and the
+- [User guide](docs/guide.md): [quick start](docs/guide.md#quick-start),
+  [upgrading to 1.10](docs/guide.md#upgrading-to-110), then the reference: inputs and outputs, the full conversion table, the report, numbering and the
   mapping file, programs you provide, converting again, KAREL, calibration, the tool on the flange, speeds
   and zones, FAQ and roadmap.
-- [How it was validated](docs/validation.md): every probe and measurement.
+- [How it was validated](docs/validation.md): a [one-page summary](docs/validation.md#summary), then every
+  probe and measurement.
 - [FANUC `.LS` format status](docs/fanuc_ls_format.md) and [design notes](docs/design.md).
 - [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md), with what 1.x keeps stable · to cite
   CrossArm, **Cite this repository** on GitHub ([CITATION.cff](CITATION.cff)).
