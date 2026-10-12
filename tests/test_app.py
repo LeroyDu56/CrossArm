@@ -3,7 +3,68 @@
 
 """Desktop entry point without a window (the GUI itself needs a display)."""
 
-from crossarm.app import main
+import sys
+
+import pytest
+
+from crossarm import __version__
+from crossarm.app import _attach_console, is_command_line, main
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ([], False),
+        (["backup.zip"], False),
+        (["abb_backup", "fanuc_backup"], False),
+        (["convert", "backup.zip"], True),
+        (["parse", "a.mod"], True),
+        (["stats", "."], True),
+        (["--help"], True),
+        (["-h"], True),
+        (["--version"], True),
+    ],
+)
+def test_command_line_or_dropped_files(args, expected):
+    assert is_command_line(args) is expected
+
+
+def test_exe_command_line_version_and_help_without_a_window(capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "crossarm.gui", None)  # importing the GUI (Tk) would fail
+    assert main(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == f"CrossArm {__version__}"
+    assert main(["--help"]) == 0
+    assert "convert" in capsys.readouterr().out
+    assert main(["convert", "--help"]) == 0
+    assert "--keep-taught" in capsys.readouterr().out
+
+
+def test_exe_command_line_exit_codes_match_the_crossarm_command(tmp_path, fixtures_dir, monkeypatch, capsys):
+    monkeypatch.setitem(sys.modules, "crossarm.gui", None)
+    source = tmp_path / "pick_and_place.mod"
+    source.write_bytes((fixtures_dir / "rapid" / "pick_and_place.mod").read_bytes())
+    assert main(["convert", str(source), "-o", str(tmp_path / "out")]) == 0
+    assert (tmp_path / "out" / "MAIN.LS").exists()
+    bad = tmp_path / "bad.mod"
+    bad.write_text("MODULE B\nPROC p()\n  x := ;\nENDPROC\nENDMODULE\n", encoding="utf-8")
+    assert main(["parse", str(bad)]) == 1
+    assert main(["parse", str(tmp_path / "nope.mod")]) == 2
+    assert main(["convert", "--no-such-option"]) == 2  # argparse usage error
+    assert "usage: crossarm" in capsys.readouterr().err
+
+
+def test_windowed_exe_without_streams_still_prints(monkeypatch):
+    """A windowed exe started from Explorer has no console: sys.stdout is None, printing must not fail."""
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr("crossarm.app._attach_parent_console", lambda: False)
+    _attach_console()
+    try:
+        assert sys.stdout is not None and sys.stderr is not None
+        print("converted")
+    finally:
+        sys.stdout.close()
+        sys.stderr.close()
 
 
 def test_headless_conversion_of_dropped_files(tmp_path, fixtures_dir, monkeypatch, capsys):

@@ -24,6 +24,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   z of a robtarget parameter are read in its position register (`PR[k,1]`), except in an exact comparison (`=`,
   `<>`), left TODO as the point is touched up on the robot; a PERS a task declares without value takes the value
   another task of the backup gives it (the usual way of sharing one), read as saved with a warning.
+- `CrossArm.exe` runs the command line without opening its window: `CrossArm.exe convert <backup> [options]`,
+  `parse`, `stats`, `--help`, `--version` do what the `crossarm` command does, with its output and exit codes
+  (0, 1 when a file has syntax errors, 2 for a usage error). Without arguments, or given files dropped on its icon,
+  it opens the window as before. In a script (.bat) cmd waits for it; at the prompt, use `start /wait`.
+- Fixed: the newest WinOLPC core build (`V1010-10` after `V1010-9`) is chosen by number, not as text. Tests run on
+  Ubuntu 24.04 and 26.04 as well as Windows, with the Node 24 versions of the GitHub actions.
 
 ## 1.9.0 — 2026-10-09
 

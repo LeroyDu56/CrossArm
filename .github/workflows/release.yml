@@ -13,8 +13,8 @@ jobs:
   windows-exe:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install
@@ -46,6 +46,31 @@ jobs:
           if (-not (Select-String -Path "$out\crossarm_report.md" -Pattern '\| Taken \|' -Quiet)) {
             Write-Error "the FANUC backup was not used"; exit 1
           }
+      - name: Smoke test (command line, no window, exit codes)
+        shell: pwsh
+        # The exe is windowed: Start-Process -Wait is what waits for it and keeps its exit code.
+        run: |
+          $exe = "dist\CrossArm.exe"
+          function Invoke-CrossArm([string[]] $Arguments) {
+            $o = "$env:RUNNER_TEMP\cli_stdout.txt"; $e = "$env:RUNNER_TEMP\cli_stderr.txt"
+            $p = Start-Process $exe -ArgumentList $Arguments -Wait -PassThru -NoNewWindow `
+              -RedirectStandardOutput $o -RedirectStandardError $e
+            Get-Content $o, $e | Write-Host
+            return $p.ExitCode
+          }
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ((Invoke-CrossArm "--version") -ne 0) { Write-Error "--version failed"; exit 1 }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP\cli_stdout.txt" -SimpleMatch "CrossArm $version" -Quiet)) {
+            Write-Error "--version does not print CrossArm $version"; exit 1
+          }
+          $out = "$env:RUNNER_TEMP\cli_out"
+          if ((Invoke-CrossArm "convert", "tests\fixtures\rapid\pick_and_place.mod", "-o", $out) -ne 0) {
+            Write-Error "convert failed"; exit 1
+          }
+          if (-not (Test-Path "$out\MAIN.LS")) { Write-Error "no MAIN.LS"; exit 1 }
+          $code = Invoke-CrossArm "convert", "--no-such-option"
+          if ($code -ne 2) { Write-Error "usage error exit code $code, not 2"; exit 1 }
+          exit 0
       - name: Bundle the Python licence (THIRD_PARTY_LICENSES.md)
         shell: pwsh
         run: |
