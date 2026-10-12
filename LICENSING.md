@@ -28,7 +28,7 @@ ever disagree, `LICENSE` wins.
   or not the conversion itself is billed.
 - Using CrossArm as part of a billed service, such as a cell migration or a
   robot changeover.
-- Offering CrossArm, or a service built on it, to other people.
+- Offering CrossArm, or a service built on it, to other people for production use.
 
 ## The short version
 
