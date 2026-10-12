@@ -200,6 +200,10 @@ class RaisedPaths:
         """`write` (a CALL of a routine that can end with an error, or the error set by a RAISE), then what
         this routine does with that error."""
         kind = self._kind()
+        if kind == HANDLER and self.error_jumps is not None:
+            # An error raised in the ERROR handler itself goes to the caller (RAPID): the handler is not written
+            # again for it, which a call in it of a routine ending with that error repeated without end.
+            kind = PASSES if self.routine.name.upper() in self.c.raised.passes else NONE
         if kind == UNREADABLE:
             raise Untranslatable("this routine's ERROR handler could not be read: what it does with the error is"
                                  " not known", Blocker.rapid("ERROR_HANDLER"))  # fmt: skip

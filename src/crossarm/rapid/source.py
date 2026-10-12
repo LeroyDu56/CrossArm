@@ -12,19 +12,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _UTF8_BOM = b"\xef\xbb\xbf"
+_UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")  # a module saved as "Unicode" by a Windows text editor
 
 
 @dataclass(frozen=True, slots=True)
 class SourceFile:
     path: str
     text: str  # decoded, newlines normalised to "\n"
-    encoding: str  # "utf-8", "utf-8-sig" or "cp1252"
+    encoding: str  # "utf-8", "utf-8-sig", "utf-16" or "cp1252"
 
 
 def decode(data: bytes) -> tuple[str, str]:
     """Decode raw bytes, returning (text, encoding_used). Never raises."""
     if data.startswith(_UTF8_BOM):
         return data[len(_UTF8_BOM):].decode("utf-8", errors="replace"), "utf-8-sig"
+    if data.startswith(_UTF16_BOMS):
+        return data.decode("utf-16", errors="replace"), "utf-16"
     try:
         return data.decode("utf-8"), "utf-8"
     except UnicodeDecodeError:

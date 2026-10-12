@@ -3,6 +3,17 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- Robustness: a damaged or unusual backup no longer stops the conversion. A statement nested more than 40 levels
+  deep (or an expression more than 60) is a syntax error of its own; a module CrossArm fails on outside a statement
+  is left out, with a TODO "module X not converted: CrossArm internal error, please report it", and the others
+  converted; a file the parser fails on is listed with the syntax errors; a damaged zip says so. Fixed: a routine
+  raising an error, called in the ERROR handler of that error, made the conversion recurse without end;
+  `Abs(Abs(x))` in a condition took twice as long per level; a confdata of 3 values was an internal error.
+  UTF-16 modules (saved as "Unicode" by a text editor) are read. New exit code 3: a CrossArm internal error, its
+  details saved in crossarm_error.txt. Programs converted from the local test corpus are the same.
+
 ## 1.10.1 — 2026-10-12
 
 Documentation only: the programs written are the same as 1.10.0.

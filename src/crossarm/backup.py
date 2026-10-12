@@ -28,6 +28,7 @@ import re
 import shutil
 import tempfile
 import zipfile
+import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -166,6 +167,24 @@ def read_files(paths: list[Path]) -> Source:
     return Source(name, "files", tasks, eio, first.parent)
 
 
+# What a damaged zip raises: cut short (a copy that did not finish), bytes changed, encrypted (RuntimeError), or
+# compressed in a way Python cannot read (NotImplementedError).
+ZIP_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError)
+
+
+def extract_zip(path: Path, target: Path) -> None:
+    """Extract a zip the user gave; a damaged one is a ValueError saying so, not a traceback."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            _safe_extract(archive, target)
+    except ZIP_ERRORS as exc:
+        raise ValueError(f"cannot read the zip file {path.name}: {exc}. Extract it with Windows and give the folder "
+                         "instead, or copy the backup from the robot again") from exc  # fmt: skip
+    except OSError as exc:  # a name Windows refuses (damaged entry), or the disk full
+        raise ValueError(f"cannot extract the zip file {path.name} to {target}: {exc}. Extract it with Windows and "
+                         "give the folder instead") from exc  # fmt: skip
+
+
 def _safe_extract(archive: zipfile.ZipFile, target: Path) -> None:
     """Extract, refusing entries that would land outside the target (zip slip)."""
     root = target.resolve()
@@ -189,8 +208,7 @@ def open_source(paths: list[Path]) -> Iterator[Source]:
     if len(paths) == 1 and paths[0].suffix.lower() == ".zip":
         temp = Path(tempfile.mkdtemp(prefix="crossarm_"))
         try:
-            with zipfile.ZipFile(paths[0]) as archive:
-                _safe_extract(archive, temp)
+            extract_zip(paths[0], temp)
             root = find_backup_root(temp)
             source = read_backup(root) if root else read_files([temp])
             source.name, source.location = paths[0].stem, paths[0].parent

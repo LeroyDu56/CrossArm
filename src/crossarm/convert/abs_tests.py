@@ -39,6 +39,8 @@ def unfold_abs(expr: n.Expr, constant: Callable[[n.Expr], float | None]) -> n.Ex
                 op, limit = _MIRROR[op], left
             else:
                 return expr
+            while (inner := _abs_of(x)) is not None:  # Abs(Abs(x)) is Abs(x): unfolded once, not twice per level
+                x = inner
             value = constant(limit)
             if value is None or value < 0 or _abs_of(limit) is not None:
                 return expr

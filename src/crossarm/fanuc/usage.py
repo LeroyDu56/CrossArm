@@ -26,7 +26,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from crossarm.backup import _safe_extract
+from crossarm.backup import ZIP_ERRORS, extract_zip
 from crossarm.fanuc.ls_parser import LSFormatError, parse_ls
 from crossarm.fanuc.tp import Instruction, Program
 from crossarm.rapid import RAPID_SUFFIXES
@@ -108,7 +108,7 @@ def is_fanuc_input(path: Path) -> bool:
         try:
             with zipfile.ZipFile(path) as archive:
                 names = archive.namelist()
-        except zipfile.BadZipFile:
+        except ZIP_ERRORS:  # damaged: not taken for FANUC programs, the conversion says it cannot read it
             return False
     else:
         return False
@@ -148,8 +148,7 @@ def read_controller(paths: Iterable[Path]) -> ControllerUsage:
         if path.is_file() and path.suffix.lower() == ".zip":
             temp = Path(tempfile.mkdtemp(prefix="crossarm_fanuc_"))
             try:
-                with zipfile.ZipFile(path) as archive:
-                    _safe_extract(archive, temp)
+                extract_zip(path, temp)
                 files = sorted(temp.rglob("*"))
                 _scan_files([p for p in files if p.suffix.lower() == ".ls"], usage)
                 usage.robot = usage.robot or robot_model(files)

@@ -29,6 +29,10 @@ from crossarm.rapid import nodes as n
 from crossarm.rapid.to_json import dumps, result_to_data
 from crossarm.rapid.to_pseudo import to_pseudo
 from crossarm.rapid.walk import module_statements
+from crossarm.support import internal_error, write_error_report
+
+EXIT_CODES = ("exit codes: 0 done; 1 a RAPID file has syntax errors; 2 usage error or input that cannot be read; "
+              "3 CrossArm internal error (its details saved in crossarm_error.txt, please send that file)")  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,11 +41,21 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
     args = _build_parser().parse_args(argv)
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except Exception as exc:  # noqa: BLE001 - a bug in CrossArm: a message and a report, not a raw traceback
+        context = {"command": " ".join(sys.argv[1:] if argv is None else argv)}
+        try:
+            where = f" Details saved in {write_error_report(exc, context)}: please send that file."
+        except OSError:
+            where = ""
+        print(f"CrossArm: {internal_error(exc)}.{where}", file=sys.stderr)
+        return 3
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="crossarm", description="Industrial robot program converter (ABB RAPID -> FANUC TP).")
+    parser = argparse.ArgumentParser(prog="crossarm", description="Industrial robot program converter (ABB RAPID -> FANUC TP).",
+                                     epilog=EXIT_CODES)
     parser.add_argument("--version", action="version", version=f"CrossArm {__version__}")
     sub = parser.add_subparsers(required=True, metavar="COMMAND")
 

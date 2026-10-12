@@ -12,7 +12,14 @@ Error handling strategy — industrial programs are much bigger than the V1 subs
   * A statement the parser cannot read is rewound, skipped as a whole (compound
     blocks are balanced) and also becomes an Unsupported node, plus an error
     diagnostic. Parsing then resumes with the next statement.
+  * Nesting is bounded: blocks and expressions nested deeper than MAX_NESTING, or an
+    expression deeper than MAX_EXPRESSION_DEPTH (a chain of a thousand '+'), are read
+    as a syntax error of that statement. Real programs stay far below; without the
+    bound, such a line would exhaust Python's recursion in the parser or in the
+    converter's tree walks and cost the whole backup.
 """
+
+from dataclasses import fields, is_dataclass
 
 from crossarm.diagnostics import Diagnostic, Severity, Span
 from crossarm.rapid import nodes as n
@@ -43,6 +50,25 @@ _MOVES = {"MOVEJ": n.MoveKind.J, "MOVEL": n.MoveKind.L, "MOVEC": n.MoveKind.C, "
 
 _RELATIONAL = ("=", "<>", "<", "<=", ">", ">=")
 
+MAX_NESTING = 40  # blocks, parentheses, calls, aggregates, NOT and signs nested in one another
+MAX_EXPRESSION_DEPTH = 60  # levels of one statement's expression tree (a chain of operators is one level each)
+_STATEMENTS = tuple(t for t in n.Stmt.__args__)  # type: ignore[attr-defined]
+
+
+def expression_depth(stmt: object) -> int:
+    """The deepest expression of a statement or declaration, not counting the statements it holds (their own
+    expressions are measured when they are read). Iterative: it measures what recursion could not walk."""
+    deepest = 0
+    stack: list[tuple[object, int]] = [(stmt, 0)]
+    while stack:
+        node, depth = stack.pop()
+        deepest = max(deepest, depth)
+        for item in (getattr(node, f.name) for f in fields(node)):  # type: ignore[arg-type]
+            for child in item if isinstance(item, tuple) else (item,):
+                if is_dataclass(child) and not isinstance(child, (type, Span, *_STATEMENTS)):
+                    stack.append((child, depth + 1))
+    return deepest
+
 
 def parse(text: str) -> tuple[n.Module | None, list[Diagnostic]]:
     """Parse a whole RAPID module. Never raises on bad input."""
@@ -60,6 +86,7 @@ class Parser:
         self.comments = comments
         self.comment_pos = 0
         self.diagnostics: list[Diagnostic] = []
+        self.nesting = 0  # blocks and expressions being read, one in another (MAX_NESTING)
 
     # ------------------------------------------------------------------
     # Token helpers
@@ -116,6 +143,16 @@ class Parser:
 
     def error(self, message: str, token: Token) -> None:
         self.diagnostics.append(Diagnostic(Severity.ERROR, message, self.span(token)))
+
+    def nest(self) -> None:
+        """One level deeper; the caller undoes it (`self.nesting -= 1`) in a finally."""
+        self.nesting += 1
+        if self.nesting > MAX_NESTING:
+            raise ParseError(f"nested more than {MAX_NESTING} levels deep: not read", self.tok)
+
+    def check_depth(self, node: object, start: Token) -> None:
+        if expression_depth(node) > MAX_EXPRESSION_DEPTH:
+            raise ParseError(f"expression more than {MAX_EXPRESSION_DEPTH} levels deep: not read", start)
 
     # ------------------------------------------------------------------
     # Comments: kept aside by the lexer, re-inserted between statements
@@ -222,7 +259,9 @@ class Parser:
             self.expect_op("}")
         init = self.expr() if self.accept_op(":=") else None
         self.expect_op(";")
-        return n.DataDecl(self.span(start), storage, type_name, name, dims, init, scope)
+        decl = n.DataDecl(self.span(start), storage, type_name, name, dims, init, scope)
+        self.check_depth(decl, start)
+        return decl
 
     def routine(self, start: Token, scope: str | None) -> n.Routine:
         kind = self.advance().value  # PROC / FUNC / TRAP
@@ -337,6 +376,13 @@ class Parser:
 
     def block(self, terminators: set[str] | frozenset[str]) -> list[n.Stmt]:
         """Statements up to (not including) one of the terminator keywords."""
+        self.nest()
+        try:
+            return self._block(terminators)
+        finally:
+            self.nesting -= 1
+
+    def _block(self, terminators: set[str] | frozenset[str]) -> list[n.Stmt]:
         body: list[n.Stmt] = []
         while True:
             body += self.take_comments_before(self.tok.start)
@@ -353,7 +399,9 @@ class Parser:
     def statement_with_recovery(self) -> n.Stmt:
         start_index = self.pos
         try:
-            return self.statement()
+            stmt = self.statement()
+            self.check_depth(stmt, self.tokens[start_index])
+            return stmt
         except ParseError as exc:
             self.pos = start_index
             start = self.tok
@@ -551,6 +599,13 @@ class Parser:
         return items
 
     def expr(self) -> n.Expr:
+        self.nest()
+        try:
+            return self._expr()
+        finally:
+            self.nesting -= 1
+
+    def _expr(self) -> n.Expr:
         left = self.and_expr()
         while self.tok.is_kw("OR", "XOR"):
             op = self.advance()
@@ -567,7 +622,11 @@ class Parser:
     def not_expr(self) -> n.Expr:
         if self.tok.is_kw("NOT"):
             op = self.advance()
-            return n.UnaryOp(self.span(op), "NOT", self.not_expr())
+            self.nest()
+            try:
+                return n.UnaryOp(self.span(op), "NOT", self.not_expr())
+            finally:
+                self.nesting -= 1
         return self.relational()
 
     def relational(self) -> n.Expr:
@@ -594,7 +653,11 @@ class Parser:
     def unary(self) -> n.Expr:
         if self.tok.is_op("-", "+"):
             op = self.advance()
-            return n.UnaryOp(self.span(op), op.value, self.unary())
+            self.nest()
+            try:
+                return n.UnaryOp(self.span(op), op.value, self.unary())
+            finally:
+                self.nesting -= 1
         return self.postfix()
 
     def postfix(self) -> n.Expr:

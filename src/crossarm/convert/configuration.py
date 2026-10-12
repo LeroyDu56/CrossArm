@@ -88,6 +88,8 @@ def j6_on_turn_boundary(faceplate: Pose, conf: tuple[int, int, int, int], tolera
     (0.00057 deg), sits between. With J4 off the arm's plane, J6 depends on the arm's lengths and is
     not checked: a target that puts J6 exactly on 180 there is not found.
     """
+    if len(conf) != 4:
+        return False  # not a robtarget's confdata: fanuc_config says so
     x, y, _ = faceplate.pos
     if math.hypot(x, y) < 1e-6:  # above axis 1: J1 is not set by the position
         return False

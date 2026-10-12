@@ -25,11 +25,10 @@ import json
 import math
 import shutil
 import tempfile
-import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from crossarm.backup import _safe_extract
+from crossarm.backup import extract_zip
 from crossarm.convert.translate import ConversionResult, FrameInfo, PointInfo
 from crossarm.fanuc.ls_parser import LSFormatError, parse_ls
 from crossarm.fanuc.maketp import TpRequest, print_tp
@@ -321,8 +320,7 @@ def read_robot(paths: list[Path], tp: TpRequest | None = None, decode=print_tp) 
             if path.is_file() and path.suffix.lower() == ".zip":
                 temp = Path(tempfile.mkdtemp(prefix="crossarm_taught_"))
                 temps.append(temp)
-                with zipfile.ZipFile(path) as archive:
-                    _safe_extract(archive, temp)
+                extract_zip(path, temp)
                 files += sorted(p for p in temp.rglob("*") if p.is_file())
             elif path.is_dir():
                 files += sorted(p for p in path.rglob("*") if p.is_file())

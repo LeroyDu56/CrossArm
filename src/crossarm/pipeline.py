@@ -65,7 +65,7 @@ from crossarm.licence import LicenceStatus
 from crossarm.licence import current as current_licence
 from crossarm.rapid import ParseResult, parse_file
 from crossarm.rapid.eio import find_eio, read_eio
-from crossarm.support import log_text
+from crossarm.support import internal_error, log_text
 
 Log = Callable[[str], None]
 
@@ -226,7 +226,14 @@ def _parse_task(task: TaskSource) -> tuple[list[ParseResult], list[str]]:
     parsed: list[ParseResult] = []
     errors: list[str] = []
     for path in task.files:
-        parsed_file = parse_file(path)
+        try:
+            parsed_file = parse_file(path)
+        except OSError as exc:  # locked, or gone since the backup was listed
+            errors.append(f"{path.name}: cannot be read ({exc.strerror or exc})")
+            continue
+        except Exception as exc:  # noqa: BLE001 - one file must never cost the whole backup
+            errors.append(f"{path.name}: not read: {internal_error(exc)}")
+            continue
         if parsed_file.module is None:
             errors.append(f"{path.name}: not a RAPID module ({parsed_file.diagnostics[0].message})")
             continue
@@ -246,11 +253,13 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
     modules = [p.module for p in parsed if p.module is not None]
     program_names = {m.name.upper() for p, m in zip(parsed, modules, strict=True) if Path(p.path) in set(task.program_files)}
 
-    result = convert(
-        modules, config, routines,
-        sources={m.name: p.text for p, m in zip(parsed, modules, strict=True)}, signals=signals,
-        program_modules=program_names if source.kind == "backup" else None, shared=numbers,
+    result, left_out = convert_isolating(
+        modules, config, routines, {m.name: p.text for p, m in zip(parsed, modules, strict=True)}, signals,
+        program_names if source.kind == "backup" else None, numbers,
     )  # fmt: skip
+    for module, why in left_out:
+        result.notes.append(Note("", None, "TODO", f"module {module} not converted: {why}", Blocker.INTERNAL))
+        log(f"  {task.name}: module {module} not converted: {why}")
     result.shared_with = other_tasks
     if mapping_warning:
         result.notes.append(Note("", None, "WARNING", mapping_warning, Blocker.OTHER))
@@ -338,6 +347,34 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         for point in result.taught.of(AGAIN):
             log(f"    touch up again: {point.program} P[{point.number}] {point.source}: {point.why}")
     return out
+
+
+def convert_isolating(modules: list, config: ConversionConfig, routines: list[str] | None,
+                      sources: dict[str, str], signals, program_modules: set[str] | None,
+                      shared: ControllerScope) -> tuple[ConversionResult, list[tuple[str, str]]]:  # fmt: skip
+    """convert(), leaving out a module CrossArm fails on outside a statement (a bug in CrossArm: one statement that
+    fails is already a TODO of its own), so that one module never costs the task. Returns the result and (module,
+    why) for each module left out. The modules CrossArm fails on are found converting each on its own; the
+    numbers the failed conversion took are given back first. Raises when no module alone explains the failure."""
+    saved = shared.checkpoint()
+    try:
+        return convert(modules, config, routines, sources, signals, program_modules, shared), []
+    except Exception as exc:  # noqa: BLE001 - the modules are looked at one by one below
+        first = exc
+    failing: dict[int, str] = {}
+    for module in modules:
+        try:
+            convert([module], config, None, {module.name: sources.get(module.name, "")}, signals, None,
+                    ControllerScope.from_config(config))  # fmt: skip
+        except Exception as exc:  # noqa: BLE001
+            failing[id(module)] = internal_error(exc)
+    kept = [m for m in modules if id(m) not in failing]
+    if not failing or not kept:
+        raise first
+    shared.restore(saved)
+    result = convert(kept, config, routines, {m.name: sources[m.name] for m in kept if m.name in sources}, signals,
+                     program_modules, shared)  # fmt: skip
+    return result, [(m.name, failing[id(m)]) for m in modules if id(m) in failing]
 
 
 def run(

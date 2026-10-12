@@ -564,6 +564,13 @@ class NumberTable:
     def allocations(self) -> list[Allocation]:
         return sorted(self.assigned.values(), key=lambda a: a.number)
 
+    def copy(self) -> "NumberTable":
+        """The table as it is now, apart from what is numbered after (ControllerScope.checkpoint)."""
+        table = copy.copy(self)
+        table.skip, table.assigned, table.by_name = set(self.skip), dict(self.assigned), set(self.by_name)
+        table.pending, table.resolved = dict(self.pending), dict(self.resolved)
+        return table
+
 
 _DEFERRED = 100_000_000  # placeholders of numbers deferred (NumberTable.defer): 9 digits and more
 _TABLES = itertools.count()
@@ -638,6 +645,22 @@ class ControllerScope:
     # PERS a task gives its value, which the others declare without one: upper-case name -> that declaration
     # (convert.shared_pers). Empty: only the task being converted is known.
     saved_pers: dict[str, n.DataDecl] = field(default_factory=dict)
+
+    def checkpoint(self) -> "ControllerScope":
+        """What converting a task changes, as it is now: restore() puts it back after a conversion that failed, so
+        that converting the task again (without a module CrossArm fails on) numbers it as if it were the first time."""
+        saved = copy.copy(self)
+        for name in ("registers", "flags", "douts", "dins", "gouts", "gins", "aouts", "timers", "strings"):
+            table = getattr(self, name)
+            setattr(saved, name, table.copy() if table is not None else None)
+        saved.program_names, saved.given_programs = set(self.program_names), set(self.given_programs)
+        saved.array_bases = dict(self.array_bases)
+        return saved
+
+    def restore(self, saved: "ControllerScope") -> None:
+        fresh = saved.checkpoint()  # saved stays as it is: it can be restored again
+        for name in (f.name for f in dataclasses.fields(self)):
+            setattr(self, name, getattr(fresh, name))
 
     @classmethod
     def from_config(cls, cfg: ConversionConfig, existing_programs: Iterable[str] = ()) -> "ControllerScope":

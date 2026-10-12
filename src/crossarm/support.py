@@ -38,6 +38,13 @@ def log_text(inputs: Iterable[Path], target: Iterable[Path], lines: Iterable[str
     return "\n".join([*header, *lines]) + "\n"
 
 
+def internal_error(exc: BaseException) -> str:
+    """One line naming a CrossArm bug and where in CrossArm it happened, for a report or a log."""
+    frames = traceback.extract_tb(exc.__traceback__)
+    where = f" (at {Path(frames[-1].filename).name}:{frames[-1].lineno})" if frames else ""
+    return f"CrossArm internal error, please report it: {type(exc).__name__}: {exc}{where}"
+
+
 def error_folder() -> Path:
     """Where the window leaves an error report: the user's local application data."""
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_STATE_HOME") or str(Path.home())
@@ -60,4 +67,4 @@ def write_error_report(exc: BaseException, context: dict[str, object], folder: P
     return path
 
 
-__all__ = ["environment", "error_folder", "log_text", "write_error_report"]
+__all__ = ["environment", "error_folder", "internal_error", "log_text", "write_error_report"]
