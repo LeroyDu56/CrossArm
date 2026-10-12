@@ -20,6 +20,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   that calls it), shared that data's `R[]` / `F[]`, so either changed the other without warning. It now has its own,
   named `ROUTINE.name` in the mapping file (added keys only); a mapping file naming it by its RAPID name pins the
   module data.
+- `Abs(x)` compared with a constant in a condition is converted as two comparisons of x (`x>c OR x<-c`); the x, y,
+  z of a robtarget parameter are read in its position register (`PR[k,1]`), except in an exact comparison (`=`,
+  `<>`), left TODO as the point is touched up on the robot; a PERS a task declares without value takes the value
+  another task of the backup gives it (the usual way of sharing one), read as saved with a warning.
 
 ## 1.9.0 — 2026-10-09
 

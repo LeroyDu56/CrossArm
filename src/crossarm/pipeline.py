@@ -38,6 +38,7 @@ from crossarm.convert.coverage import Coverage, fmt_percent
 from crossarm.convert.html_report import build_html_report
 from crossarm.convert.motion import M20ID_25, profile_for
 from crossarm.convert.setup import SETUP_NAME, SETUP_NAME_SHORT, build_setup
+from crossarm.convert.shared_pers import saved_values
 from crossarm.convert.taught import (
     AGAIN,
     POINTS_FILE,
@@ -416,6 +417,8 @@ def run(
         parsed = [_parse_task(task) for task in source.tasks]
         # A PERS is shared by the tasks: what one task changes, a frame another computes from is not fixed.
         shared.written = Written.of(p.module for modules, _ in parsed for p in modules if p.module is not None)
+        # A PERS a task declares without value has the one another task gives it.
+        shared.saved_pers = saved_values(p.module for modules, _ in parsed for p in modules if p.module is not None)
         tasks = []
         if tp is not None:
             log("Binary .TP programs: made by FANUC MakeTP, which loads each program into the robot's virtual "

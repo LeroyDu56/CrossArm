@@ -176,6 +176,11 @@ class RuntimePoints:
             key = name.upper()
         return key if key in self.c.runtime_points else None
 
+    def parameter_axis(self, expr: n.Expr) -> bool:
+        """x, y or z of a robtarget parameter (read in its position register, runtime_axis)."""
+        path = path_of(expr) if isinstance(expr, n.Component) else None
+        return bool(path and len(path) == 3 and path[1] == "TRANS" and self.args and self.args.kind(path[0]) == "robtarget")
+
     def runtime_set(self, name: str) -> None:
         """A point kept in a register must have been set: not when its last assignment was left TODO."""
         unset = self.known.get(f"{name.upper()}#UNSET")
@@ -185,6 +190,12 @@ class RuntimePoints:
     def runtime_axis(self, expr: n.Expr) -> str | None:
         """`PR[k,3]` for `pDepose.trans.z`, pDepose kept in PR[k]; None for anything else."""
         path = path_of(expr) if isinstance(expr, n.Component) else None
+        if path and self.args and self.args.kind(path[0]) == "robtarget":
+            # A robtarget parameter, in the position register its caller passes it in: x, y, z read as PR[k,i]
+            axis = {("TRANS", "X"): 1, ("TRANS", "Y"): 2, ("TRANS", "Z"): 3}.get(path[1:])
+            slot = next((s for s in self.args.slots if s.key == path[0].upper()), None)
+            if axis is not None and slot is not None:
+                return f"{self.c.point_register(f'{self.args.routine}.{slot.name}')[:-1]},{axis}]"
         if not path or not (key := self.runtime_key(path[0])):
             return None
         root = expr

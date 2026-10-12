@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from crossarm.convert.abs_tests import unfold_abs
 from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, fine_given, signature
 from crossarm.convert.blockers import Blocker, Untranslatable
 from crossarm.convert.calls import RoutineCalls
@@ -631,6 +632,9 @@ class ControllerScope:
     strings: NumberTable | None = None  # SR[n]; None: made from the configuration when first needed
     # The first register of each PERS array of numbers kept in registers: the tasks share a PERS, and so its block.
     array_bases: dict[str, int] = field(default_factory=dict)
+    # PERS a task gives its value, which the others declare without one: upper-case name -> that declaration
+    # (convert.shared_pers). Empty: only the task being converted is known.
+    saved_pers: dict[str, n.DataDecl] = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, cfg: ConversionConfig, existing_programs: Iterable[str] = ()) -> "ControllerScope":
@@ -771,6 +775,7 @@ class Converter:
         self.evaluator = Evaluator(self.symbols)
         cfg = self.config
         shared = self.shared = shared or ControllerScope.from_config(cfg)
+        self.symbols.given_values(shared.saved_pers)  # a PERS another task gives its value (convert.shared_pers)
         self.computer = Computer(modules, self.symbols, shared.written or Written.of(modules))
         self.records = Records(modules, self.symbols, self.computer.layouts, self.computer.written,
                                self._fixed_value, Written.of(modules) if shared.written else None)  # fmt: skip
@@ -4948,12 +4953,19 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.emit(("!" + ascii_text(format_expr(expr))[:REMARK_MAX]).rstrip())
         return simpler
 
+    def constant_or_none(self, expr: n.Expr) -> float | None:
+        try:
+            return self.c.evaluator.constant_number(expr)
+        except Unresolvable:
+            return None
+
     def condition(self, expr: n.Expr, negate: bool = False) -> str:
         """RAPID boolean expression -> TP mixed-logic condition, without outer parentheses.
 
         Negation is pushed down (De Morgan, inverted comparisons) so the output
         never needs the '!' operator.
         """
+        expr = unfold_abs(expr, self.constant_or_none)  # Abs(x) > c: x > c OR x < -c (convert.abs_tests)
         self.func_first(expr)  # the FUNCs it calls as programs, before any scratch register is worked out
         match expr:
             case n.UnaryOp(op="NOT", operand=operand):
@@ -4972,6 +4984,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 return f"{parts[0]} {op} {parts[1]}"
             case n.BinaryOp(op=op, left=left, right=right) if op in _NEGATED:
                 op = _NEGATED[op] if negate else op
+                if op in ("=", "<>") and any(self.parameter_axis(side) for side in (left, right)):
+                    raise Untranslatable(f"{format_expr(expr)}: a point's x, y or z compared exactly: the point is"
+                                         " written to 0.001 mm and touched up on the robot, the test would not hold"
+                                         " (compare within a tolerance: Abs(x - c) < 0.5)", Blocker.CONDITION)  # fmt: skip
                 signal = self.c.signal(left, self.name, expr.span.line)
                 if signal is not None:
                     if op not in ("=", "<>"):

@@ -152,6 +152,13 @@ class Symbols:
                     assigned.add(name.upper())
         return cls(table, frozenset(assigned))
 
+    def given_values(self, saved: dict[str, n.DataDecl]) -> None:
+        """Module PERS declared without a value take the one another task of the controller gives them."""
+        from crossarm.convert.shared_pers import given_value
+
+        if saved:
+            self._globals = {key: given_value(decl, saved) for key, decl in self._globals.items()}
+
     def is_assigned(self, name: str) -> bool:
         return name.upper() in self._assigned
 
