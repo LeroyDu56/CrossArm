@@ -7,6 +7,7 @@
     crossarm stats PATH [PATH ...]
     crossarm convert BACKUP|FILES [-o OUTDIR] [--map mapping.json] [--routine NAME ...] [--fanuc TARGET]
                      [--tp] [--tp-robot ROBOT] [--keep-taught PATH] [--karel]
+    crossarm diagnose BACKUP|FILES [-o OUTDIR] [--map mapping.json] [--eio EIO.cfg] [--fanuc TARGET] [--karel]
 
 `stats` parses every RAPID file under the given paths and reports what the V1
 parser recognises versus what it leaves as Unsupported — the tool used to decide
@@ -21,7 +22,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
-from crossarm import __version__, pipeline
+from crossarm import __version__, diagnose, pipeline
 from crossarm.convert import ConversionConfig
 from crossarm.fanuc.maketp import TpRequest
 from crossarm.rapid import RAPID_SUFFIXES, parse_file
@@ -117,6 +118,24 @@ def _build_parser() -> argparse.ArgumentParser:
              "(R632)",
     )  # fmt: skip
     p_conv.set_defaults(handler=_cmd_convert)
+
+    p_diag = sub.add_parser(
+        "diagnose", help="write an anonymous diagnostic report of a backup (counts only), to send to the author",
+        description="Convert the backup in a temporary folder (nothing written next to it) and write "
+                    "crossarm_diag.json and crossarm_diag.md: what CrossArm understood and converted, as counts "
+                    "only. No name, comment, text, number or path of the backup is written: read the .md to see "
+                    "exactly what the report holds. Nothing is sent anywhere: the files stay on this computer.",
+        epilog=EXIT_CODES,
+    )  # fmt: skip
+    p_diag.add_argument("paths", type=Path, nargs="+", help="ABB backup (folder or .zip), or RAPID files/folders")
+    p_diag.add_argument("-o", "--output", type=Path,
+                        help="folder for the two files (default: crossarm_diag_<name> next to the input)")
+    p_diag.add_argument("--map", type=Path, help="JSON mapping file, as for convert")
+    p_diag.add_argument("--eio", type=Path, help="ABB EIO.cfg giving the signal types, as for convert")
+    p_diag.add_argument("--fanuc", type=Path, action="append",
+                        help="the target controller's existing programs, as for convert (repeatable)")
+    p_diag.add_argument("--karel", action="store_true", help="convert as with convert --karel")
+    p_diag.set_defaults(handler=_cmd_diagnose)
     return parser
 
 
@@ -199,6 +218,26 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         return 2
     print(f"{output.programs} programs, {output.todo} TODO: see crossarm_report.html in each folder")
     return 1 if any(task.syntax_errors for task in output.tasks) else 0
+
+
+
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    try:
+        config = ConversionConfig.from_mapping_file(args.map) if args.map else ConversionConfig()
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"CrossArm: invalid mapping file {args.map}: {exc}", file=sys.stderr)
+        return 2
+    if args.karel:
+        config = replace(config, karel=True)
+    try:
+        diag = diagnose.diagnose(args.paths, config, args.eio, args.fanuc)
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        print(f"CrossArm: {exc}", file=sys.stderr)
+        return 2
+    as_json, as_md = diagnose.write(diag, args.output or diagnose.default_folder(args.paths))
+    print(f"Diagnostic report written: {as_json} and {as_md}. Read the .md: it is exactly what the report "
+          "holds. Nothing was sent: send these two files yourself if you wish.")
+    return 0
 
 
 if __name__ == "__main__":  # python -m crossarm.cli used to do nothing and exit 0

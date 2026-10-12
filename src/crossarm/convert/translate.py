@@ -148,6 +148,7 @@ from crossarm.rapid import nodes as n
 from crossarm.rapid.eio import Signal
 from crossarm.rapid.to_pseudo import format_expr
 from crossarm.rapid.walk import walk_statements
+from crossarm.support import record_internal
 
 if TYPE_CHECKING:
     from crossarm.convert.run_summary import Since
@@ -442,6 +443,10 @@ class ConversionResult:
     # What changed since the previous conversion of this task (crossarm.convert.run_summary.Since; set by the pipeline
     # when an earlier crossarm_summary.json is found), None otherwise.
     since: "Since | None" = None
+    # Each instruction coverage counted, by id() -> converted or not, and the modules they belong to (which keep
+    # those ids valid): what `crossarm diagnose` counts per RAPID instruction. Never written in an output.
+    instructions: dict[int, bool] = field(default_factory=dict)
+    modules: list[n.Module] = field(default_factory=list)
 
     @property
     def todo_count(self) -> int:
@@ -1040,7 +1045,9 @@ class Converter:
         declared = {r.name.upper() for m in self.modules for r in m.routines}
         # A routine wrapping a move is counted where it is called, as a FUNC is: not as a routine left out.
         left_out = [r for r in skipped if r.name.upper() not in self.move_routines]
-        res.coverage = measure([r for _, r in selected], left_out, self.not_converted, declared, set(self.move_routines))
+        res.coverage = measure([r for _, r in selected], left_out, self.not_converted, declared, set(self.move_routines),
+                               res.instructions)  # fmt: skip
+        res.modules = list(self.modules)
         if self.config.karel:
             res.karel_calls = karel_calls((info.program.name, [line.text for line in info.program.lines
                                                                if isinstance(line, Instruction)])
@@ -2453,6 +2460,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 # the whole task: a hundred programs lost for one line. It becomes a TODO that
                 # says where, so it can be reported, and the conversion goes on.
                 self._rollback(checkpoint)
+                record_internal(exc, "statement", self.module.name, stmt.span.line)
                 where = traceback.extract_tb(exc.__traceback__)[-1]
                 self.todo(stmt, f"CrossArm internal error, please report it: {type(exc).__name__}: {exc} "
                                 f"(at {Path(where.filename).name}:{where.lineno})", Blocker.INTERNAL)  # fmt: skip

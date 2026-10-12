@@ -58,6 +58,7 @@ class Source:
     tasks: list[TaskSource]
     eio: Path | None = None
     location: Path | None = None  # where the user's input lives (output goes next to it)
+    root: Path | None = None  # a backup's own folder (BACKINFO, RAPID, SYSPAR): None for loose files
 
 
 def is_rapid_file(path: Path) -> bool:
@@ -98,7 +99,7 @@ def read_backup(root: Path) -> Source:
         if task.files:
             tasks.append(task)
     eio = root / "SYSPAR" / "EIO.cfg"
-    return Source(root.name, "backup", tasks, eio if eio.is_file() else None, root.parent)
+    return Source(root.name, "backup", tasks, eio if eio.is_file() else None, root.parent, root)
 
 
 def module_name(path: Path) -> str:

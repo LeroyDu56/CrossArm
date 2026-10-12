@@ -13,6 +13,11 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `Abs(Abs(x))` in a condition took twice as long per level; a confdata of 3 values was an internal error.
   UTF-16 modules (saved as "Unicode" by a text editor) are read. New exit code 3: a CrossArm internal error, its
   details saved in crossarm_error.txt. Programs converted from the local test corpus are the same.
+- New command `crossarm diagnose BACKUP`: writes crossarm_diag.json and crossarm_diag.md, an anonymous report of
+  what CrossArm understood and converted (counts only: RAPID instructions and functions used and converted, causes
+  of TODO, share converted per task, RobotWare version and options, signal types, CrossArm internal errors), to
+  send to the author. No name, comment, text, number or path of the backup is written, checked by a test; nothing
+  is sent anywhere. See [docs/diagnostic.md](docs/diagnostic.md). Conversions are unchanged.
 
 ## 1.10.1 — 2026-10-12
 

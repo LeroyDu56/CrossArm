@@ -141,8 +141,10 @@ def measure(
     not_converted: set[int],
     routines: set[str],
     move_routines: set[str],
+    statuses: dict[int, bool] | None = None,
 ) -> Coverage:
-    """`not_converted`: id() of every statement that ended up in a TODO (see _RoutineTranslator.todo)."""
+    """`not_converted`: id() of every statement that ended up in a TODO (see _RoutineTranslator.todo). `statuses`,
+    when given, receives id() of each instruction counted -> converted or not (crossarm diagnose)."""
     totals = dict.fromkeys(AREAS, 0)
     done = dict.fromkeys(AREAS, 0)
 
@@ -157,6 +159,8 @@ def measure(
             counted += size
             if written and id(stmt) not in not_converted:
                 done[name] += size
+            if statuses is not None:
+                statuses[id(stmt)] = written and id(stmt) not in not_converted
         return counted
 
     for routine in converted:

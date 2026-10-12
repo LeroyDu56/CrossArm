@@ -65,7 +65,7 @@ from crossarm.licence import LicenceStatus
 from crossarm.licence import current as current_licence
 from crossarm.rapid import ParseResult, parse_file
 from crossarm.rapid.eio import find_eio, read_eio
-from crossarm.support import internal_error, log_text
+from crossarm.support import internal_error, log_text, record_internal
 
 Log = Callable[[str], None]
 
@@ -232,6 +232,7 @@ def _parse_task(task: TaskSource) -> tuple[list[ParseResult], list[str]]:
             errors.append(f"{path.name}: cannot be read ({exc.strerror or exc})")
             continue
         except Exception as exc:  # noqa: BLE001 - one file must never cost the whole backup
+            record_internal(exc, "file")
             errors.append(f"{path.name}: not read: {internal_error(exc)}")
             continue
         if parsed_file.module is None:
@@ -367,6 +368,7 @@ def convert_isolating(modules: list, config: ConversionConfig, routines: list[st
             convert([module], config, None, {module.name: sources.get(module.name, "")}, signals, None,
                     ControllerScope.from_config(config))  # fmt: skip
         except Exception as exc:  # noqa: BLE001
+            record_internal(exc, "module", module.name)
             failing[id(module)] = internal_error(exc)
     kept = [m for m in modules if id(m) not in failing]
     if not failing or not kept:

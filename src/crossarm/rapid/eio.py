@@ -63,6 +63,31 @@ def parse_eio(text: str) -> dict[str, Signal]:
     return signals
 
 
+def eio_records(text: str) -> list[tuple[str, dict[str, str]]]:
+    """Every record of every section, as (section, attributes): ('EIO_SIGNAL', {'Name': 'doGrip', ...})."""
+    out: list[tuple[str, dict[str, str]]] = []
+    section = ""
+    record: list[str] = []
+
+    def flush() -> None:
+        if section and record:
+            out.append((section, {m[1]: m[2] if m[2] is not None else m[3] for m in _ATTRIBUTE.finditer(" ".join(record))}))
+        record.clear()
+
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        line = raw.strip()
+        header = _SECTION.match(line)
+        if header:
+            flush()
+            section = header[1]
+        elif not line:
+            flush()
+        elif not line.startswith("#"):
+            record.append(line.rstrip("\\"))
+    flush()
+    return out
+
+
 def read_eio(path: str | Path) -> dict[str, Signal]:
     return parse_eio(read_source(path).text)
 
