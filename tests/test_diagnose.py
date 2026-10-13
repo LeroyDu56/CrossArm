@@ -24,13 +24,14 @@ TOP_KEYS = {
     "schema_version", "crossarm", "environment", "input", "system", "conversion", "instructions", "functions",
     "user_calls", "data_types", "records", "aliases", "control", "signals", "internal_errors",
 }  # fmt: skip
-USE_KEYS = {"occurrences", "converted", "partial", "todo"}
+USE_KEYS = {"occurrences", "converted", "partial", "todo", "inside_todo", "not_converted", "not_converted_by"}
+STATES = ("converted", "partial", "todo", "inside_todo", "not_converted")
 
 
 def test_the_schema(tmp_path):
     diag = diagnose.diagnose([make_backup(tmp_path)])
     assert set(diag) == TOP_KEYS
-    assert diag["schema_version"] == diagnose.SCHEMA_VERSION == 1
+    assert diag["schema_version"] == diagnose.SCHEMA_VERSION == 2
     assert set(diag["environment"]) == {"os", "os_release", "python", "exe", "day"}
     assert len(diag["environment"]["day"]) == 10  # the day, never the time
     assert diag["input"]["kind"] == "backup" and diag["input"]["tasks"] == 1
@@ -41,8 +42,7 @@ def test_the_schema(tmp_path):
     assert [t["task"] for t in conversion["tasks"]] == ["task_1"]
     for table in ("instructions", "functions", "user_calls"):
         assert diag[table] and all(set(use) == USE_KEYS for use in diag[table].values())
-        for use in diag[table].values():
-            assert use["converted"] + use["partial"] + use["todo"] <= use["occurrences"]
+    assert_adds_up(diag)
     assert diag["instructions"]["MOVEL"]["occurrences"] == 1 and diag["functions"]["OFFS"]["occurrences"] == 2
     assert "user_proc(num,robtarget)" in diag["user_calls"]
     assert diag["records"] == {"record_1": ["num", "num", "string"]}
@@ -61,19 +61,102 @@ def test_the_conversion_counts_are_those_of_convert(tmp_path):
     out = pipeline.run([PICK], tmp_path / "out", log=lambda _line: None)
     assert diag["conversion"]["todo"] == out.todo and diag["conversion"]["programs"] == out.programs
     assert diag["conversion"]["converted_percent"] == out.coverage.percent
-    counted = sum(use["converted"] + use["partial"] + use["todo"]
-                  for table in ("instructions", "user_calls") for use in diag[table].values())  # fmt: skip
+    statements = [use for table in ("instructions", "user_calls") for use in diag[table].values()]
+    left_out = sum(use["not_converted_by"].get(diagnose.LEFT_OUT, 0) for use in statements)
+    counted = sum(use["converted"] + use["partial"] + use["todo"] + use["inside_todo"] for use in statements)
     result = out.tasks[0].result
-    assert counted == len(result.instructions)  # an error handler is one use, weighing one per statement in coverage
-    assert sum(use["todo"] for use in diag["instructions"].values()) == sum(1 for c in result.instructions.values()
-                                                                            if not c)  # fmt: skip
+    # an error handler is one use, weighing one per statement in coverage; a PROC left out is counted not converted
+    assert counted + left_out == len(result.instructions)
+    assert sum(use["todo"] + use["inside_todo"] for use in statements) + left_out == sum(
+        1 for c in result.instructions.values() if not c)  # fmt: skip
+    assert diag["conversion"]["todo_on_instructions"] == out.todo  # each TODO once, on its statement
+    assert diag["conversion"]["todo_not_on_an_instruction"] == 0
+
+
+def assert_adds_up(diag: dict) -> None:
+    """Every row: its uses are converted, partial, TODO, inside a TODO, or in no program (with a reason); each TODO is
+    counted once, on the statement carrying it."""
+    for table in ("instructions", "functions", "user_calls"):
+        for name, use in diag[table].items():
+            assert set(use) == USE_KEYS, name
+            assert sum(use[k] for k in STATES) == use["occurrences"], (table, name, use)
+            assert sum(use["not_converted_by"].values()) == use["not_converted"], (table, name, use)
+            assert set(use["not_converted_by"]) <= set(diagnose.REASONS)
+            assert diagnose.NOT_COUNTED not in use["not_converted_by"], (table, name, use)  # every use explained
+    assert all(use["todo"] == 0 for use in diag["functions"].values())  # the statement carries it
+    conv = diag["conversion"]
+    statements = [use for table in ("instructions", "user_calls") for use in diag[table].values()]
+    if conv["completed"]:
+        assert conv["todo_on_instructions"] == sum(use["todo"] for use in statements)
+        assert conv["todo_on_instructions"] + conv["todo_not_on_an_instruction"] == conv["todo"]
+        assert conv["todo_not_on_an_instruction"] >= 0
+    reasons = {}
+    for use in statements:
+        for reason, count in use["not_converted_by"].items():
+            reasons[reason] = reasons.get(reason, 0) + count
+    assert conv["not_converted_by"] == {r: reasons[r] for r in diagnose.REASONS if r in reasons}
+
+
+def _corpus(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith("_")
+                  and any(f.suffix.lower() in (".mod", ".modx", ".sys", ".prg") for f in p.rglob("*")))  # fmt: skip
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SYNTHETIC = _corpus(ROOT / "abb")
+REAL = _corpus(ROOT / "local" / "real_world")
+
+
+@pytest.mark.parametrize("path", [*sorted(FIXTURES.glob("rapid/*.mod")), "diag_backup"],
+                         ids=lambda p: getattr(p, "name", p))  # fmt: skip
+def test_every_row_adds_up_on_the_fixtures(path, tmp_path):
+    assert_adds_up(diagnose.diagnose([make_backup(tmp_path) if path == "diag_backup" else path]))
+
+
+@pytest.mark.skipif(not SYNTHETIC + REAL, reason="no local test corpus")
+@pytest.mark.parametrize("path", SYNTHETIC + REAL, ids=lambda p: p.name)
+def test_every_row_adds_up_on_the_local_corpus(path):
+    assert_adds_up(diagnose.diagnose([path]))
+
+
+def test_a_todo_is_counted_on_the_statement_carrying_it(tmp_path):
+    """A compact IF whose condition is TODO: the TODO is the IF's; its Stop (always converted) is inside it."""
+    source = tmp_path / "m.mod"
+    source.write_text('MODULE M\n  VAR string s := "a";\n  VAR num n := 1;\n  PROC main()\n'
+                      '    IF StrFind(s, 1, "b") > n Stop;\n    IF n > 2 Stop;\n'
+                      '    IF StrFind(s, 1, "b") > n THEN\n      Stop;\n      n := Offs(n, 1, 1, 1);\n    ENDIF\n'
+                      "  ENDPROC\nENDMODULE\n", encoding="utf-8")  # fmt: skip
+    diag = diagnose.diagnose([source])
+    assert_adds_up(diag)
+    pick = {k: diag["instructions"][k] for k in ("IF", "STOP", "assignment")}
+    assert [(u["converted"], u["todo"], u["inside_todo"]) for u in pick.values()] == [(1, 2, 0), (1, 0, 2), (0, 0, 1)]
+    assert diag["functions"]["STRFIND"]["inside_todo"] == 2 and diag["functions"]["OFFS"]["inside_todo"] == 1
+    assert diag["conversion"]["todo"] == diag["conversion"]["todo_on_instructions"] == 2
+    md = diagnose.markdown(diag)
+    assert "| Inside TODO | Not converted | Why not converted |" in md and "TODO on an instruction: 2" in md
+
+
+def test_the_code_in_no_program_says_why(tmp_path):
+    source = tmp_path / "m.mod"
+    source.write_text("MODULE M\n  VAR num n := 1;\n  PROC main()\n    n := 2;\n  ENDPROC\n"
+                      "  FUNC num Twice(num x)\n    RETURN x * 2;\n  ENDFUNC\n"
+                      "  TRAP lonely\n    n := 0;\n  ENDTRAP\nENDMODULE\n", encoding="utf-8")  # fmt: skip
+    (tmp_path / "s.sys").write_text("MODULE S(SYSMODULE)\n  PROC helper()\n    WaitTime 1;\n  ENDPROC\nENDMODULE\n",
+                                    encoding="utf-8")  # fmt: skip
+    diag = diagnose.diagnose([tmp_path])
+    assert_adds_up(diag)
+    assert diag["instructions"]["WAITTIME"]["not_converted_by"] == {diagnose.SYSTEM_MODULE: 1}
+    assert diag["instructions"]["RETURN"]["not_converted_by"] == {diagnose.FUNC: 1}
+    assert diag["instructions"]["assignment"]["not_converted_by"] == {diagnose.LEFT_OUT: 1}
 
 
 def test_the_command_writes_both_files(tmp_path, capsys):
     assert main(["diagnose", str(PICK), "-o", str(tmp_path / "d")]) == 0
     assert "Nothing was sent" in capsys.readouterr().out
     data = json.loads((tmp_path / "d" / diagnose.DIAG_JSON).read_text(encoding="utf-8"))
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     md = (tmp_path / "d" / diagnose.DIAG_MD).read_text(encoding="utf-8")
     assert md == diagnose.markdown(data) and md.startswith("# CrossArm diagnostic report")
     assert not list(PICK.parent.glob("crossarm_*"))  # nothing written next to the input

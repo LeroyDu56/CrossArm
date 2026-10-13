@@ -33,17 +33,30 @@ RAPID's own vocabulary (public, from ABB's manuals), ABB option names and CrossA
 | `crossarm`, `environment` | CrossArm version; operating system family and release; Python version; whether CrossArm.exe ran; the day (never the time) |
 | `input` | input kind (backup / files); counts of tasks, program and system modules, PROC / FUNC / TRAP, lines, files not read, syntax errors; which options were given (mapping file, EIO.cfg, FANUC programs, --karel), as yes / no |
 | `system` | RobotWare version, ABB options with their ABB code (`616-1 PC Interface`), robot models (`IRB 1600-10/1.45`), read from BACKINFO/backinfo.txt and system.xml; anything else in those files (system name, serial number, paths, an option without its ABB code) is only counted, in `other_product_lines` |
-| `conversion` | programs, TODO, warnings; instructions and the share converted, overall and by area; TODO and warnings by cause (the causes of the report; any other is `other (cause not listed)`); per task, named `task_1`, `task_2`... (never the task's name): modules, routines, programs, instructions, share converted, TODO, warnings, verdict |
-| `instructions`, `functions` | RAPID's own instructions and functions by name (`MOVEL`, `OFFS`), plus `assignment` and the blocks (`IF`, `FOR`...): uses, and of those uses how many were converted, converted with a warning on their line (`partial`), left TODO |
+| `conversion` | programs, TODO, warnings; instructions and the share converted, overall and by area; the TODO on an instruction and the TODO not on one (`todo_on_instructions`, `todo_not_on_an_instruction`); the instructions in no program, by reason (`not_converted_by`); TODO and warnings by cause (the causes of the report; any other is `other (cause not listed)`); per task, named `task_1`, `task_2`... (never the task's name): modules, routines, programs, instructions, share converted, TODO, warnings, verdict |
+| `instructions`, `functions` | RAPID's own instructions and functions by name (`MOVEL`, `OFFS`), plus `assignment` and the blocks (`IF`, `FOR`...): uses, and of those uses how many were converted, converted with a warning on their line (`partial`), left TODO, inside a statement left TODO (`inside_todo`), in no program (`not_converted`, and why: `not_converted_by`) |
 | `user_calls` | calls of the backup's own routines, never by name: `user_proc(num,robtarget,\switch)`, `user_func(num)->bool`, the parameters reduced to their types; calls of routines the backup does not hold: `missing_proc/2` (argument count only) |
 | `data_types`, `records`, `aliases` | declarations by type and storage (`robtarget`: CONST 4, VAR 1, arrays...): RAPID's types by name, the backup's records as `record_1`, `record_2`... with the types of their fields, any other type as `user_type`; the number of ALIAS types |
 | `control` | IF (and one-line IF), FOR, WHILE, TEST, RETURN, EXIT, GOTO, labels, RAISE, RETRY, TRYNEXT, CONNECT, late binding, ERROR / UNDO / BACKWARD handlers, TRAP routines; the deepest nesting of blocks |
 | `signals` | signals by type (DI, DO, GI, GO, AI, AO), and the sections of EIO.cfg with their record counts (`DEVICENET_DEVICE: 2`: the bus and device kinds as ABB names them); never a signal, device or network name, label or address |
 | `internal_errors` | CrossArm bugs met: the exception's type, where in CrossArm (`convert/translate.py:2400:stmt`), the stage (`statement` left TODO, `module` left out, `file` not read, `run` conversion stopped), how many places, and the RAPID around a statement as token categories: `<IDENT>`, `<NUM>`, `<STR>`, with RAPID's reserved words, its own instruction, function and type names and punctuation as written. Never the exception's message, which may quote the RAPID |
 
-`instructions`, `functions` and `user_calls` count every use in the task's modules; converted / partial / TODO count
-the uses the conversion counts in its coverage (routines converted or left out), so a FUNC's own body or the
-routines of a system module not converted are counted as uses only.
+`instructions`, `functions` and `user_calls` count every use in the task's modules, and every row adds up:
+
+    occurrences = converted + partial + todo + inside_todo + not_converted
+
+- `todo`: the statement carrying a TODO itself. A TODO is counted once, on the statement that carries it: in
+  `IF cond Stop;` whose condition is left TODO, the TODO is the `IF`'s, the `Stop` is `inside_todo` (as everything in
+  the blocks of a statement left TODO). A function's use is counted with its statement, so a function's `todo` is
+  always 0: in a statement left TODO, it is `inside_todo`. The `todo` of `instructions` and `user_calls` add up to
+  `conversion.todo_on_instructions`; `conversion.todo_not_on_an_instruction` is the rest of the report's TODO (a TODO
+  not tied to one RAPID statement, none in the inputs at hand).
+- `not_converted`: uses in code no program is written from, by reason (`not_converted_by`, a fixed list): `system
+  module` (a routine of a system module no program calls, converted only on request), `routine left out` (a TRAP no
+  interrupt connects, parameters not converted, a second routine of the same name), `wraps one move` (its calls are
+  written as its move), `FUNC computed or inlined` (a FUNC not written as a program: its value is computed at
+  conversion, or its body copied where it is called), `provided by the integrator` (`external_routines`), `conversion
+  did not complete`, `other` (none expected: the tests check every input at hand has none).
 
 **Checked by a test.** `tests/test_diagnose_privacy.py` makes the report of every input at hand (the test fixtures,
 and the author's local test corpus) and collects from each input every identifier, string, comment word, number of
@@ -53,7 +66,12 @@ of the backup by chance, so the test checks numbers in the report's text, not in
 
 ## Schema
 
-`schema_version` is 1. A later version adds keys, never removes or redefines one, as for `crossarm_summary.json`.
+`schema_version` is 2 (CrossArm 1.11.1). A later version adds keys, never removes one, as for `crossarm_summary.json`.
+
+- 2 adds `inside_todo`, `not_converted` and `not_converted_by` to each row of `instructions`, `functions` and
+  `user_calls`, and `todo_on_instructions`, `todo_not_on_an_instruction`, `not_converted_by` to `conversion`.
+  The rows now add up: in version 1, `todo` also counted the statements inside one left TODO, the functions it
+  calls and the routines left out, and the code in no program was in `occurrences` only.
 
 ## Example
 
@@ -65,8 +83,8 @@ same, as keys and numbers):
 
 Counts only: no name, comment, text, number or path of the backup is in this report or in crossarm_diag.json.
 
-- Schema version: 1
-- CrossArm 1.11.0, Python 3.14.6, Windows 11, 2026-10-12
+- Schema version: 2
+- CrossArm 1.11.1, Python 3.14.6, Windows 11, 2026-10-13
 - Input: files, 1 task(s), 1 program module(s), 0 system module(s), 76 lines
 - Routines: 3 PROC, 1 FUNC, 0 TRAP
 - Files not read: 0, syntax errors: 0
@@ -83,6 +101,8 @@ Counts only: no name, comment, text, number or path of the backup is in this rep
 
 - Programs: 3, TODO: 3, warnings: 5
 - Instructions: 27, converted: 85.1 %
+- TODO on an instruction: 3, not on an instruction: 0
+- Instructions in no program: FUNC computed or inlined 1
 
 | Area | Converted |
 |---|---|
@@ -120,36 +140,36 @@ Counts only: no name, comment, text, number or path of the backup is in this rep
 
 ## RAPID instructions
 
-| Name | Uses | Converted | Partial | TODO |
-|---|---|---|---|---|
-| assignment | 4 | 4 | 0 | 0 |
-| MOVEJ | 3 | 2 | 1 | 0 |
-| MOVEL | 3 | 3 | 0 | 0 |
-| IF | 2 | 1 | 1 | 0 |
-| WAITTIME | 2 | 1 | 1 | 0 |
-| ERROR_HANDLER | 1 | 0 | 0 | 1 |
-| FOR | 1 | 1 | 0 | 0 |
-| GOTO | 1 | 0 | 0 | 1 |
-| LABEL | 1 | 0 | 0 | 1 |
-| MOVEABSJ | 1 | 0 | 1 | 0 |
-| MOVEC | 1 | 1 | 0 | 0 |
-| RESET | 1 | 1 | 0 | 0 |
-| RETURN | 1 | 0 | 0 | 0 |
-| SET | 1 | 1 | 0 | 0 |
-| TPWRITE | 1 | 0 | 1 | 0 |
-| WHILE | 1 | 1 | 0 | 0 |
+| Name | Uses | Converted | Partial | TODO | Inside TODO | Not converted | Why not converted |
+|---|---|---|---|---|---|---|---|
+| assignment | 4 | 4 | 0 | 0 | 0 | 0 | - |
+| MOVEJ | 3 | 2 | 1 | 0 | 0 | 0 | - |
+| MOVEL | 3 | 3 | 0 | 0 | 0 | 0 | - |
+| IF | 2 | 1 | 1 | 0 | 0 | 0 | - |
+| WAITTIME | 2 | 1 | 1 | 0 | 0 | 0 | - |
+| ERROR_HANDLER | 1 | 0 | 0 | 1 | 0 | 0 | - |
+| FOR | 1 | 1 | 0 | 0 | 0 | 0 | - |
+| GOTO | 1 | 0 | 0 | 1 | 0 | 0 | - |
+| LABEL | 1 | 0 | 0 | 1 | 0 | 0 | - |
+| MOVEABSJ | 1 | 0 | 1 | 0 | 0 | 0 | - |
+| MOVEC | 1 | 1 | 0 | 0 | 0 | 0 | - |
+| RESET | 1 | 1 | 0 | 0 | 0 | 0 | - |
+| RETURN | 1 | 0 | 0 | 0 | 0 | 1 | FUNC computed or inlined 1 |
+| SET | 1 | 1 | 0 | 0 | 0 | 0 | - |
+| TPWRITE | 1 | 0 | 1 | 0 | 0 | 0 | - |
+| WHILE | 1 | 1 | 0 | 0 | 0 | 0 | - |
 
 ## RAPID functions
 
-| Name | Uses | Converted | Partial | TODO |
-|---|---|---|---|---|
-| OFFS | 3 | 3 | 0 | 0 |
+| Name | Uses | Converted | Partial | TODO | Inside TODO | Not converted | Why not converted |
+|---|---|---|---|---|---|---|---|
+| OFFS | 3 | 3 | 0 | 0 | 0 | 0 | - |
 
 ## Calls of the backup's routines (by parameter types)
 
-| Name | Uses | Converted | Partial | TODO |
-|---|---|---|---|---|
-| user_proc() | 2 | 1 | 1 | 0 |
+| Name | Uses | Converted | Partial | TODO | Inside TODO | Not converted | Why not converted |
+|---|---|---|---|---|---|---|---|
+| user_proc() | 2 | 1 | 1 | 0 | 0 | 0 | - |
 
 ## Data types
 
@@ -193,7 +213,7 @@ No EIO.cfg read.
 (none)
 ```
 
-`RETURN` counts 1 use and none converted or TODO: it is in a FUNC, whose body is not counted on its own (the FUNC is
+`RETURN` counts 1 use, not converted: it is in a FUNC, whose body is not written as a program (the FUNC is
 converted where it is called).
 
 # Anonymized backup (`crossarm anonymize`)

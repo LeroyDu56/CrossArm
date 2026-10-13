@@ -3,6 +3,15 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- `crossarm diagnose`: per-instruction counts now add up. Each row of the RAPID instructions, functions and calls
+  gains `inside_todo` (in a statement left TODO as a whole) and `not_converted` with its reason (`system module`,
+  `routine left out`, `wraps one move`, `FUNC computed or inlined`, `provided by the integrator`), so that uses =
+  converted + partial + TODO + inside TODO + not converted on every row. A TODO is counted once, on the statement
+  carrying it: in `IF cond Stop;` whose condition is TODO, the TODO is the IF's, no longer the Stop's; routines left
+  out are no longer counted TODO. `schema_version` 2 (keys added only). Conversions are unchanged.
+
 ## 1.11.0 — 2026-10-12
 
 Field feedback without sharing the backup: an anonymous diagnostic report and an anonymized copy of a backup, both made on the user's machine and sent by the user. The programs written are the same as 1.10.1.

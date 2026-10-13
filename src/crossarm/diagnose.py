@@ -13,7 +13,8 @@ diagnostic holds, and it holds what the ALLOW-LIST below names, nothing else:
     - the RobotWare version, the ABB options (with their ABB code) and robot models of the backup (system_info.py);
     - counts: tasks, modules (program / system), routines (PROC / FUNC / TRAP), lines, files not read, syntax errors;
     - RAPID's own instructions and functions by name (public ABB vocabulary): how often each is used, and how many of
-      those uses were converted, converted with a warning (partial), left TODO;
+      those uses were converted, converted with a warning (partial), left TODO, inside a statement left TODO, or in
+      no program (and why, from a fixed list: REASONS); the columns add up on every row;
     - calls of the backup's own routines, never by name: `user_proc(num,robtarget,\\switch)`, the parameters reduced
       to their types; calls of routines the backup does not hold: `missing_proc` (argument count only);
     - data types: RAPID's own by name; the backup's records as `record_1`, `record_2`... with their fields' types;
@@ -62,7 +63,7 @@ from crossarm.rapid.tokens import RESERVED_WORDS, TokenKind
 from crossarm.rapid.walk import split_params, walk_statements
 from crossarm.support import InternalError, crossarm_frame, recording_internal
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DIAG_JSON = "crossarm_diag.json"
 DIAG_MD = "crossarm_diag.md"
 WINDOW = 10  # tokens kept on each side of a statement CrossArm failed on
@@ -95,22 +96,40 @@ OTHER_CAUSE = "other (cause not listed)"
 # ---------------------------------------------------------------------------
 
 
+# Why a use is in no program: a fixed list (schema 2). Each use of the code CrossArm does not write gets one.
+SYSTEM_MODULE = "system module"  # a routine of a system module no program calls: converted only on request
+LEFT_OUT = "routine left out"  # a TRAP no interrupt connects, parameters not converted, a routine of the same name
+MOVE_ROUTINE = "wraps one move"  # its calls are written as its move: counted where it is called
+FUNC = "FUNC computed or inlined"  # a FUNC not written as a program: its value is computed, or its body copied
+PROVIDED = "provided by the integrator"  # external_routines
+NOT_COMPLETED = "conversion did not complete"
+NOT_COUNTED = "other"
+REASONS = (SYSTEM_MODULE, LEFT_OUT, MOVE_ROUTINE, FUNC, PROVIDED, NOT_COMPLETED, NOT_COUNTED)
+
+
 @dataclass
 class Use:
-    """How often one instruction, function or call is used, and what the conversion made of those uses."""
+    """How often one instruction, function or call is used, and what the conversion made of those uses:
+    occurrences == converted + partial + todo + inside_todo + not_converted, for every row."""
 
     occurrences: int = 0
     converted: int = 0
     partial: int = 0  # converted with a warning on its line
-    todo: int = 0
+    todo: int = 0  # the statement carrying a TODO itself
+    inside_todo: int = 0  # in a statement left TODO as a whole (an IF whose condition is TODO): counted there
+    not_converted: int = 0  # in code no program is written from, for the reasons below
+    not_converted_by: Counter = field(default_factory=Counter)
 
-    def add(self, status: str | None) -> None:
+    def add(self, status: str, reason: str | None = None) -> None:
         self.occurrences += 1
-        if status is not None:
-            setattr(self, status, getattr(self, status) + 1)
+        setattr(self, status, getattr(self, status) + 1)
+        if status == "not_converted":
+            self.not_converted_by[reason or NOT_COUNTED] += 1
 
-    def data(self) -> dict[str, int]:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
+    def data(self) -> dict[str, object]:
+        out: dict[str, object] = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "not_converted_by"}
+        out["not_converted_by"] = {r: self.not_converted_by[r] for r in REASONS if self.not_converted_by[r]}
+        return out
 
 
 @dataclass
@@ -122,8 +141,8 @@ class _Inventory:
     control: Counter = field(default_factory=Counter)
     depth: int = 0
 
-    def use(self, table: dict[str, Use], key: str, status: str | None) -> None:
-        table.setdefault(key, Use()).add(status)
+    def use(self, table: dict[str, Use], key: str, status: str, reason: str | None) -> None:
+        table.setdefault(key, Use()).add(status, reason)
 
 
 class _Names:
@@ -288,8 +307,39 @@ def _control(stmt: n.Stmt, control: Counter) -> None:
             control[stmt.kind] += 1
 
 
+def _blocks(stmt: n.Stmt) -> list[n.Stmt]:
+    """The statements of a statement's blocks (one level), as walk_statements visits them."""
+    match stmt:
+        case n.If():
+            return [s for branch in stmt.branches for s in branch.body] + list(stmt.else_body)
+        case n.For() | n.While():
+            return list(stmt.body)
+        case n.Test():
+            return [s for case in stmt.cases for s in case.body] + list(stmt.default or ())
+    return []
+
+
 def _count_module(module: n.Module, names: _Names, inv: _Inventory, status) -> None:
-    """Everything one module holds, each instruction's status asked of `status(module, routine, stmt)`."""
+    """Everything one module holds, each instruction's status asked of `status(module, routine, stmt)`:
+    (status, reason). A TODO is counted once, on the statement carrying it: what its blocks hold, and the functions
+    it calls, are inside_todo."""
+
+    def count(stmt: n.Stmt, routine: n.Routine, inside: bool) -> None:
+        if isinstance(stmt, n.DataDecl):
+            _declare(stmt, names, inv)
+        _control(stmt, inv.control)
+        what = _instruction(stmt, names)
+        if what is None:
+            return
+        state, reason = ("inside_todo", None) if inside else status(module, routine, stmt)
+        inv.use(getattr(inv, what[0]), what[1], state, reason)
+        if not isinstance(stmt, n.Unsupported):
+            for call in _calls(_expressions(stmt)):
+                table, key = _function(call, names)
+                inv.use(getattr(inv, table), key, "inside_todo" if state == "todo" else state, reason)
+        for child in _blocks(stmt):
+            count(child, routine, inside or state in ("todo", "inside_todo"))
+
     for item in module.body:
         if isinstance(item, n.DataDecl):
             _declare(item, names, inv)
@@ -297,20 +347,8 @@ def _count_module(module: n.Module, names: _Names, inv: _Inventory, status) -> N
         if routine.kind == "TRAP":
             inv.control["TRAP"] += 1
         inv.depth = max(inv.depth, _depth(routine.body))
-        for stmt in [*walk_statements(routine.body), *routine.handlers]:
-            if isinstance(stmt, n.DataDecl):
-                _declare(stmt, names, inv)
-            _control(stmt, inv.control)
-            what = _instruction(stmt, names)
-            if what is None:
-                continue
-            state = status(module, routine, stmt)
-            inv.use(getattr(inv, what[0]), what[1], state)
-            if isinstance(stmt, n.Unsupported):
-                continue
-            for call in _calls(_expressions(stmt)):
-                table, key = _function(call, names)
-                inv.use(getattr(inv, table), key, state)
+        for stmt in [*routine.body, *routine.handlers]:
+            count(stmt, routine, False)
 
 
 def _declare(decl: n.DataDecl, names: _Names, inv: _Inventory) -> None:
@@ -459,24 +497,34 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
             result = results.get(task.name)
             statuses, warned = _status_table(result) if result is not None else ({}, set())
 
-            def status(module: n.Module, routine: n.Routine, stmt: n.Stmt, statuses=statuses, warned=warned) -> str | None:
+            skipped = ({(m.upper(), r.upper()): why for m, r, why in result.skipped_routines}
+                       if result is not None else {})  # fmt: skip
+
+            def status(module: n.Module, routine: n.Routine, stmt: n.Stmt, system: bool, statuses=statuses,
+                       warned=warned, skipped=skipped, done=result is not None) -> tuple[str, str | None]:  # fmt: skip
+                why = skipped.get((module.name.upper(), routine.name.upper()))
+                if why is not None:  # no program, no TODO (coverage counts a PROC or TRAP left out not converted)
+                    if routine.kind == "FUNC":
+                        return "not_converted", FUNC
+                    return "not_converted", MOVE_ROUTINE if why.startswith("it wraps one move") else LEFT_OUT
                 key = (module.name.upper(), routine.name.upper(), stmt.span.line, stmt.span.col, type(stmt).__name__)
-                if key not in statuses:
-                    return None
-                if not statuses[key]:
-                    return "todo"
-                return "partial" if (module.name.upper(), stmt.span.line) in warned else "converted"
+                if key in statuses:
+                    if not statuses[key]:
+                        return "todo", None
+                    return ("partial" if (module.name.upper(), stmt.span.line) in warned else "converted"), None
+                return "not_converted", _not_converted(routine, system, done, config)
 
             task_routines = 0
             for parsed_file in parsed:
                 module = parsed_file.module
                 sources.setdefault(module.name.upper(), parsed_file.text)
                 lines += parsed_file.text.count("\n") + (1 if parsed_file.text and not parsed_file.text.endswith("\n") else 0)
-                modules_count["system" if _is_system(module, parsed_file, task) else "program"] += 1
+                is_sys = _is_system(module, parsed_file, task)
+                modules_count["system" if is_sys else "program"] += 1
                 for routine in module.routines:
                     routines_count[routine.kind] += 1
                     task_routines += 1
-                _count_module(module, names, inv, status)
+                _count_module(module, names, inv, lambda m, r, s, is_sys=is_sys, status=status: status(m, r, s, is_sys))
             entry: dict[str, object] = {"task": f"task_{number}", "modules": len(modules), "routines": task_routines}
             if result is not None:
                 entry.update({
@@ -498,6 +546,13 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
                 "converted_by_area": {share.area: share.percent for share in coverage.shares},
                 "todo_by_cause": _by_cause(notes, "TODO"), "warnings_by_cause": _by_cause(notes, "WARNING"),
             })  # fmt: skip
+        statements = [use for table in (inv.instructions, inv.user_calls) for use in table.values()]
+        on_statements = sum(use.todo for use in statements)
+        if out is not None:  # each TODO once: on the statement carrying it, or on none (a routine not found...)
+            conversion["todo_on_instructions"] = on_statements
+            conversion["todo_not_on_an_instruction"] = out.todo - on_statements
+        not_converted = sum((use.not_converted_by for use in statements), Counter())
+        conversion["not_converted_by"] = {r: not_converted[r] for r in REASONS if not_converted[r]}
         conversion["tasks"] = tasks
 
         return {
@@ -528,6 +583,19 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
             "signals": signals,
             "internal_errors": _internal_errors(recorded, sources),
         }
+
+
+def _not_converted(routine: n.Routine, system: bool, done: bool, config: ConversionConfig) -> str:
+    """Why a statement of a routine no program holds is not converted."""
+    if not done:
+        return NOT_COMPLETED
+    if routine.name.upper() in {k.upper() for k in config.external_routines}:
+        return PROVIDED
+    if routine.kind == "FUNC":
+        return FUNC
+    if system:
+        return SYSTEM_MODULE
+    return NOT_COUNTED
 
 
 def _is_system(module: n.Module, parsed: ParseResult, task) -> bool:
@@ -568,10 +636,16 @@ def _table(head: list[str], rows: Iterable[list[object]]) -> list[str]:
     return [*out, ""]
 
 
-def _uses_table(title: str, table: dict[str, dict[str, int]]) -> list[str]:
-    return [f"## {title}", "", *_table(["Name", "Uses", "Converted", "Partial", "TODO"],
-                                        ([k, v["occurrences"], v["converted"], v["partial"], v["todo"]]
-                                         for k, v in table.items()))]  # fmt: skip
+def _reasons(counts: dict[str, int]) -> str:
+    return ", ".join(f"{reason} {count}" for reason, count in counts.items()) or "-"
+
+
+def _uses_table(title: str, table: dict[str, dict]) -> list[str]:
+    """Uses = Converted + Partial + TODO + Inside TODO + Not converted, on every row."""
+    head = ["Name", "Uses", "Converted", "Partial", "TODO", "Inside TODO", "Not converted", "Why not converted"]
+    return [f"## {title}", "", *_table(head, ([k, v["occurrences"], v["converted"], v["partial"], v["todo"],
+                                               v["inside_todo"], v["not_converted"], _reasons(v["not_converted_by"])]
+                                              for k, v in table.items()))]  # fmt: skip
 
 
 def markdown(diag: dict) -> str:
@@ -605,6 +679,9 @@ def markdown(diag: dict) -> str:
         lines += [
             f"- Programs: {conv['programs']}, TODO: {conv['todo']}, warnings: {conv['warnings']}",
             f"- Instructions: {conv['instructions']}, converted: {_cell(conv['converted_percent'])}",
+            (f"- TODO on an instruction: {conv['todo_on_instructions']}, "
+             f"not on an instruction: {conv['todo_not_on_an_instruction']}"),
+            f"- Instructions in no program: {_reasons(conv['not_converted_by'])}",
             "",
             *_table(["Area", "Converted"], ([k, v] for k, v in conv["converted_by_area"].items())),
             "### TODO by cause", "",
