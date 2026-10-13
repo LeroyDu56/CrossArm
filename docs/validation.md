@@ -24,11 +24,11 @@ touched up on the robot at commissioning anyway.
 
 | What | Result |
 |---|---|
-| RAPID instructions converted, public open-source programs ([what that means](#public-programs)) | about 60 % |
+| RAPID instructions converted, public open-source programs ([what that means](#public-programs)) | about 65 % |
 | RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Programs of the three RobotWare backups, loaded on a FANUC controller | 130 of 130 |
 | Forms of instruction CrossArm writes, read back from the controller | 234, stored as written |
-| Controller probes, all run again for 1.10.0 | 40 of 40 give what was measured |
+| Controller probes, all run again for 1.10.0, the new one for 1.12.0 | 41 of 41 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE | within 0.004 mm and 0.001° |
 | Path through corners, approaches, retracts, reversals, zigzags | within 4 mm of the ABB's |
 
@@ -44,11 +44,11 @@ it give, for each, how it was measured and the tool that measures it again.
 
 | What | Result |
 |---|---|
-| RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)), without `--karel` and without provided routines | about 60 %, from about 15 % to all of it per project |
+| RAPID instructions converted, public open-source programs (indicative, [why not all](#public-programs)), without `--karel` and without provided routines | about 65 %, from about 15 % to all of it per project |
 | RAPID instructions converted, our test corpus, written for testing, without `--karel` and without provided routines | 87 % to 93 % |
 | Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1), all run again for 1.10.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 40 of 40 give what was measured |
+| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1), all run again for 1.10.0, the new one for 1.12.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 41 of 41 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -85,6 +85,7 @@ it give, for each, how it was measured and the tool that measures it again.
 | A TP program reading a system variable (what `GetSysData` and `OpMode()` read), on ROBOGUIDE | loads, stops on the line (VARS-034): left TODO, saying so |
 | FUNCs of the backup known only at run time, written as TP programs, run on ROBOGUIDE | the values RAPID works out, the positions within 0.0001 mm |
 | Errors the program raises itself (`RAISE`), converted with a register, run on ROBOGUIDE | the values RAPID works out; a `RETRY` past its limit, `ABORT` |
+| `IF`, `ELSEIF`, `WHILE`, `TEST` whose condition is left to the integrator, run on ROBOGUIDE | nothing of them runs while the jumps are in place; the jumps replaced, the branches RAPID takes |
 
 ## Sections
 
@@ -133,6 +134,7 @@ it give, for each, how it was measured and the tool that measures it again.
 43. [System variables read by TP, refused](#43-system-variables-read-by-tp-refused)
 44. [FUNCs of the backup as TP programs, run](#44-funcs-of-the-backup-as-tp-programs-run)
 45. [Errors the program raises itself, run](#45-errors-the-program-raises-itself-run)
+46. [Conditions left to the integrator, run](#46-conditions-left-to-the-integrator-run)
 
 ## 1. The test corpus
 
@@ -142,7 +144,7 @@ of a different integrator (a palletizing and machine-tending cell with a PLC tas
 that builds its tools and fixtures in RAPID, an assembly cell run as a state machine over three
 tasks), with as much of RAPID and of TP as the controllers offer; since 1.8, also a set of RAPID
 modules of calibration routines that compute tools and work objects while the robot runs (calibrated
-part by part, copied, built by FUNCs). Without `--karel` and without provided routines, CrossArm converts
+part by part, copied, built by FUNCs), and since 1.12 one testing the operating mode and operator dialogs. Without `--karel` and without provided routines, CrossArm converts
 87 %, 93 % and 90 % of the instructions of the three RobotWare backups, and 89 % of the calibration modules. It is checked on the controllers
 themselves: RobotStudio loads every RAPID task, every reference resolved (the World Zones
 instructions aside, an option the virtual controller lacks); the three FANUC backups are what three
@@ -162,7 +164,7 @@ loaded, exported from them.
 Because we wrote the test corpus, it says little about programs we did not write. So CrossArm is also
 run on a second local corpus: RAPID programs published on the Internet under permissive open-source
 licences, read and converted as they are, every program written loaded on ROBOGUIDE. CrossArm converts
-**about 60 %** of their instructions, from about 15 % to all of them depending on the project, where it
+**about 65 %** of their instructions, from about 15 % to all of them depending on the project, where it
 converts 87 % to 93 % of the test corpus. The projects that convert least are built around files,
 sockets, operator dialogs and error handlers, or are libraries using data declared in other projects.
 
@@ -370,6 +372,7 @@ the results are read from the virtual controller's `HOME:` folder:
 | system variables read by TP | each read stops the program (VARS-034); the selections from a register load ([section 43](#43-system-variables-read-by-tp-refused)) |
 | FUNCs of the backup as TP programs | 12 values as RAPID works them out, the positions within 0.0001 mm ([section 44](#44-funcs-of-the-backup-as-tp-programs-run)) |
 | errors the program raises itself | 8 values as RAPID works them out ([section 45](#45-errors-the-program-raises-itself-run)) |
+| conditions left to the integrator | as written, none of the 5 instructions runs; the jumps replaced, 6 values as RAPID works them out ([section 46](#46-conditions-left-to-the-integrator-run)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
 For 1.10.0, on 2026-10-12, every probe was run again, in groups of under ten minutes: the 39 on ROBOGUIDE
@@ -377,6 +380,9 @@ For 1.10.0, on 2026-10-12, every probe was run again, in groups of under ten min
 program raises itself), and the ABB probe modules on RobotStudio. Each gave what was measured. A first run of
 the search probe sampled the speeds differently and was run again alone, as measured; the KAREL probe now sets
 the position register it clears to a Cartesian position first, which another probe could leave as joints.
+For 1.12.0, on 2026-10-13, the new probe (conditions left to the integrator) and those whose forms it uses
+(conditions, flags, `SELECT`, FUNCs as TP programs, errors raised, system variables) were run and gave what was
+measured.
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -1203,3 +1209,26 @@ and read `ERRNO`. On ROBOGUIDE (R-1000iA/80F, V10.10):
 |---|---|
 | `R[e]=code` then `END`, `IF R[e]=0,JMP LBL[a]` after the `CALL`, `SELECT` on `ERRNO`, jumps back out of a block | loaded and run, 8 values as RAPID works them out |
 | a `RETRY` past its limit | `ABORT` after 5 calls |
+
+## 46. Conditions left to the integrator, run
+
+An `IF`, `ELSEIF`, `WHILE` or `TEST` whose condition TP cannot write keeps its blocks: the condition alone is left
+to the integrator in a flag CrossArm reserves (a register for a `TEST`), and a `JMP LBL[n]` before the instruction
+skips it until the integrator replaces the jump with the line setting the flag
+([user guide](guide.md#what-is-converted)). The safety rule: as written, nothing of the instruction runs, the
+`ELSE` and the other branches included, and a `WHILE` does not turn, as when the instruction was one TODO remark.
+
+[tools/make_condition_gate_probe.py](../tools/make_condition_gate_probe.py) converts a module of five such
+instructions (an `IF` / `ELSE` on `OpMode()`, an `ELSEIF` on it after a convertible `IF`, the same after a
+comparison of texts, a `WHILE` on it, a `TEST` on `StrLen()`), between two assignments, and writes the program
+twice: as converted, and with each jump replaced by what an integrator writes (`F[k]=(ON)`, `F[k]=(R[n]<3)` for
+the `WHILE`, `R[k]=1` for the `TEST`). On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| the program as converted, loaded and run | the assignments before and after run; none of the 5 instructions runs, no `ELSE` included |
+| the jumps replaced, loaded and run | the branches RAPID takes, the `WHILE` turning 3 times: 6 values as RAPID works them out |
+
+Tests also check, on 9 forms, that while the jumps are in place no line of the blocks can be reached from the
+start of the program, and that each becomes reachable once its jump is replaced.
+

@@ -1,32 +1,29 @@
-## CrossArm 1.11.1
+## CrossArm 1.12.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review before commissioning. **1.11.1 corrects the diagnostic report: the programs written are
-the same as 1.11.0.**
+everything left to review before commissioning.
 
-**What 1.11.1 changes:** in `crossarm diagnose`, per-instruction counts now add up. Each row of the RAPID
-instructions, functions and calls says how many uses were converted, converted with a warning, left TODO, inside a
-statement left TODO, or in no program and why (system module, routine left out, FUNC computed or inlined...). A
-TODO is counted once, on the statement carrying it: in `IF cond Stop;` whose condition is TODO, the TODO is the
-IF's. `schema_version` 2, keys added only
-([what the report contains](https://github.com/LeroyDu56/CrossArm/blob/main/docs/diagnostic.md)).
+**What 1.12 changes:** an `IF`, `ELSEIF`, `WHILE` or `TEST` whose condition TP cannot write (`OpMode()`, an
+operator dialog, a FUNC that does not convert...) is no longer one `!TODO` remark swallowing its blocks: the
+blocks are converted, and only the condition is left to you, in a flag CrossArm reserves (a register for a
+`TEST`).
 
-**What 1.11 brought** ([CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md)):
+- **The condition to replace:** above the instruction, `!TODO l.N <the RAPID line>`, `!Replace JMP by
+  F[k]=(...)`, then `JMP LBL[n]`. Replace the `JMP` with the test your cell makes (`F[k]=(DI[3]=ON)`); the
+  report lists each one under "Conditions to set".
+- **Nothing runs until the `JMP` is replaced:** the jump skips the whole instruction, no branch, not the `ELSE`,
+  and a `WHILE` does not turn, as when it was a remark. Measured on ROBOGUIDE.
+- **New mapping keys:** `CROSSARM.CONDITION.<ROUTINE>.L<line>` (in `flags`, in `registers` for a `TEST`); keys
+  are only added.
+- **The number of TODO can go up:** the blocks once lost in one TODO are converted and show their own.
+- `crossarm diagnose`: a FUNC with no program says why (computed at conversion, inlined, left TODO at its calls,
+  never called); `schema_version` 3.
 
-- `crossarm diagnose BACKUP` (**Create diagnostic report** in the window): `crossarm_diag.md` and
-  `crossarm_diag.json`, an anonymous report of what CrossArm understood and converted, counts only: no name,
-  comment, text, number or path of the backup, checked by a test;
-- `crossarm anonymize BACKUP`: a `.zip` of the backup that converts the same, every name renamed, texts
-  replaced, comments removed, positions moved by a random offset per frame (joint positions are not moved: use
-  `--keep-geometry` to check paths in ROBOGUIDE);
-- CrossArm sends nothing: the window opens GitHub's issue form on your click, you attach the files yourself
-  ([what the report contains](https://github.com/LeroyDu56/CrossArm/blob/main/docs/diagnostic.md));
-- robustness: a damaged or unusual backup no longer stops the conversion; a CrossArm internal error gives exit
-  code 3 and `crossarm_error.txt` to send.
+Full list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
 **The first 10 users who send a diagnostic report (or an anonymized backup) made from a real backup get a free one-year commercial licence, at the author's discretion: one per company, sent by e-mail.**
 
-Not 100 %, not plug-and-play: about 60 % of the instructions of public programs convert, 87 % to 93 % of our own
+Not 100 %, not plug-and-play: about 65 % of the instructions of public programs convert, 87 % to 93 % of our own
 test corpus, written for testing; the rest is marked `!TODO` with its cause
 ([why not 100 %](https://github.com/LeroyDu56/CrossArm#why-not-100-)).
 

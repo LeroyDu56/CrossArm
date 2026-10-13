@@ -15,7 +15,7 @@ to install, runs offline (or Python 3.11+ on any system, no dependencies).
   robot in place, whose numbers and program names are left alone.
 - **Out:** one TP program per routine, `SETUP_FRAMES.LS` for the frames, an HTML report that opens on a
   decision (ready, workable, not ready) with a commissioning checklist, and an editable numbering file.
-- **Not 100 %, not plug-and-play.** About 60 % of the instructions convert on public programs, 87 % to 93 %
+- **Not 100 %, not plug-and-play.** About 65 % of the instructions convert on public programs, 87 % to 93 %
   on our own test corpus; the rest is marked `!TODO` with its cause, never guessed. The output is a
   starting point for **commissioning**: check it in ROBOGUIDE, touch up the points on the robot.
 - **Licence:** free for evaluation and other non-production use; production use (programs run on a real
@@ -90,13 +90,14 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
 - **Motion, I/O, logic and data convert**: moves with their targets, configuration, speeds and zones, tool and
   user frames, payloads, signals typed by `EIO.cfg`, `IF` / `TEST` / `FOR` / `WHILE`, calls with arguments,
   records, strings, interrupts, the backup's own FUNCs and errors ([full table](docs/guide.md#what-is-converted)).
-- **About 60 % of the instructions on public open-source programs** (from about 15 % to all of them per
+- **About 65 % of the instructions on public open-source programs** (from about 15 % to all of them per
   project), **87 % to 93 % on our own test corpus**, written for testing. Converted means written in TP and
   loaded by the controller without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
 - **The points are the ABB's, to be touched up.** The path stays within 10 mm of the ABB's (measured: within
   4 mm); the FANUC robot is not where the ABB was, so every point is re-taught at commissioning.
 - **Measured, not assumed:** every form of instruction CrossArm writes was read back from a FANUC controller
-  in ROBOGUIDE, and its 40 controller probes on ROBOGUIDE and RobotStudio were all run again for 1.10.0
+  in ROBOGUIDE, and its 41 controller probes on ROBOGUIDE and RobotStudio give what was measured (all run again
+  for 1.10.0, the new one for 1.12.0)
   ([validation](docs/validation.md)).
 - **Check on your robot model:** reachability and posture in ROBOGUIDE; speeds and zones are measured for the
   M-20iD, R-2000iC and R-1000iA series ([speeds and zones](docs/guide.md#speeds-and-zones)).
@@ -189,7 +190,7 @@ CrossArm is published under the [Business Source License 1.1](LICENSE).
   delivered to a customer, or that are part of billed migration work. Its licence file replaces the mark with
   the licence number and company name. Where the line falls: [LICENSING.md](LICENSING.md); getting one:
   [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md); contact: **enzoleroy56@gmail.com**.
-- Each released version becomes Apache 2.0 four years after it is published (v1.11.1 on 2030-10-13; every
+- Each released version becomes Apache 2.0 four years after it is published (v1.12.0 on 2030-10-13; every
   date in [LICENSING.md](LICENSING.md)). Versions published before 1.0.0 keep the licence they were published
   under. Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 

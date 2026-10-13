@@ -7,6 +7,7 @@ reference below it is there to look things up, not to read in one go. What Cross
 **Start here**
 - [Quick start](#quick-start)
 - [What to expect](#what-to-expect)
+- [Upgrading to 1.12](#upgrading-to-112)
 - [Upgrading to 1.10](#upgrading-to-110)
 
 **Reference**
@@ -65,14 +66,17 @@ other non-production use; production use needs a commercial licence: enzoleroy56
 
 ## What to expect
 
-**About 60 % of the instructions, on real programs.** On public open-source RAPID programs of widely
-mixed quality, CrossArm converts about 60 % of the instructions, from about 15 % to all of them
+**About 65 % of the instructions, on real programs.** On public open-source RAPID programs of widely
+mixed quality, CrossArm converts about 65 % of the instructions, from about 15 % to all of them
 depending on the program; programs built around files, sockets, operator dialogs or error handlers
 convert least. On our own test corpus, written for testing, it converts 87 % to 93 %: that figure is
 higher because we wrote the programs. Both figures are without `--karel` and without programs you provide
 (`external_routines`), which convert a few TODO more in programs that write text files or compute poses at
 run time. Converted means written in TP and loaded by the controller
-without an error, not validated on a robot ([why not 100 %](#why-not-100-)).
+without an error, not validated on a robot ([why not 100 %](#why-not-100-)). A program converted again by a
+newer version can have more TODO than before: since 1.12, the blocks of an `IF`, `WHILE` or `TEST` whose
+condition TP cannot write are converted instead of lost in one TODO, and what they hold that TP cannot write
+shows as TODO of its own.
 
 **The output is a starting point for commissioning, not a program to run blind.** Load the `.LS`
 files in ROBOGUIDE or on the controller, set the payloads, check reachability, and work through
@@ -96,6 +100,22 @@ Measured, it stays within 4 mm.
   ([speeds and zones](#speeds-and-zones)).
 
 How each figure was measured: [validation.md](validation.md).
+
+## Upgrading to 1.12
+
+A mapping file written by an earlier version is read as before (keys are only added), and the command line keeps
+its options. One change makes a program converted again with 1.12 differ:
+
+- **An `IF`, `ELSEIF`, `WHILE` or `TEST` whose condition TP cannot write keeps its blocks.** Up to 1.11 the whole
+  instruction was one `!TODO` remark, its blocks with it: the moves, calls and waits inside were lost. 1.12 writes
+  the blocks and leaves only the condition to you, in a flag CrossArm reserves (a register for a `TEST`), named
+  `CROSSARM.CONDITION.<ROUTINE>.L<line>` in the mapping file. A `JMP LBL[n]` before the instruction skips all of
+  it: **nothing of it runs until you replace that jump** with the line setting the flag, as the remark above it
+  says (`!Replace JMP by F[1]=(...)`): no branch, not the `ELSE`, and a `WHILE` does not turn, as when it was a
+  remark. *What to do:* for each item of "Conditions to set" in the report, write the test your cell makes (an
+  input, a register: `F[1]=(DI[3]=ON)`) in place of the `JMP`.
+- **The number of TODO can go up.** The blocks once inside one TODO are converted now, and what they hold that TP
+  cannot write shows as TODO of its own: more instructions convert, and the report can list more TODO than before.
 
 ## Upgrading to 1.10
 
@@ -415,6 +435,7 @@ and a few ABB-specific instructions. The full table:
 | a string the programs change: `sState:="IDLE"`, `IF sState="RUN" THEN`, `WHILE i<=StrLen(sWord)`, `ch:=StrPart(sWord,i,1)`, `sNum:=NumToStr(nCount,0)`, `nAt:=StrMatch(sWord,1,"ROBOT")`, `Show sState` | `CALL CA_TEXT(3,'IDLE',0)`, `IF SR[3]<>SR[25],JMP LBL[2]`, `R[4:Calc1]=STRLEN SR[2]`, `SR[1]=SUBSTR SR[2],R[5:i],1`, `SR[4]=R[6:nCount]`, `R[7]=FINDSTR SR[2],SR[25]`, `CALL SHOW(SR[3])` | Each string a program changes is a string register (`SR`, 25 on a standard controller), named like the data in the mapping file (`Routine.name` for a routine's own, set where the routine starts, as RAPID does at each call); one no program changes is its value. A TP line can neither write a text in a string register nor compare one with a text (ROBOGUIDE refuses `SR[3]='IDLE'`, `IF SR[3]='A',JMP`, `IF (SR[3]=SR[4]) THEN`): a text written in the program is loaded by `CA_TEXT`, a program written with the others (`SR[AR[1]]=AR[2]`; 38 characters at a time, a longer text in pieces added at the end; an apostrophe written as a backquote, with a warning), into a scratch register taken from the top just before it is compared or passed on, never kept from one instruction to the next. What a TRAP runs has scratch registers of its own (a TRAP can stop a program between loading a text and reading it), a routine both a TRAP and the programs run loads no text. A comparison is a jump, `IF SR[a]=SR[b],JMP LBL[n]`, the one form TP has: `IF` / `ELSEIF` / `ELSE`, `WHILE`, `AND`, `OR`, `NOT` on texts are written with jumps. TP compares texts regardless of case ('A' = 'a') but not of spaces: a comparison where the texts compared could differ by case alone stays TODO (what each string can hold is worked out from what the programs give it). `StrLen` is `STRLEN`; `StrPart` is `SUBSTR` (past the end both stop the program); `StrMatch` from the first character is `FINDSTR`, its 0 for not found set to RAPID's length+1; `NumToStr(n,0)` and `ValToStr(n)` are `SR=R` when the programs only ever give n whole numbers (TP writes a number held as a real with six decimals, `'3.000000'`). A text worked out for a call is passed in a scratch register, which the CALL copies |
 | a bool set to a condition: `bOk:=nCount>2 AND NOT bBusy`, `bCopy:=bBusy`, `bOn:=sState="RUN"` | `F[2]=(R[1]>2 AND F[1]=OFF)`, `F[3]=(F[1])` | TP's mixed logic sets a flag to a condition (ROBOGUIDE: NOT, AND, OR, nested parentheses, outputs, registers and flags load and give the condition's value); a comparison of texts is the flag set OFF, then ON past the jump that skips it. Also a bool field of a record and a bool of a routine declared with a condition |
 | `TEST` / `CASE` / `DEFAULT` | `SELECT R[n]=1,JMP LBL[2]` / `=2,CALL PICK` / `ELSE,JMP LBL[3]` | One line per `CASE` value; a `CASE` that only calls a routine calls it on its line, the other branches are behind labels. A `TEST` on an argument or a group input selects a copy (`R[n:TestValue]`). On a string, or with a `CASE` value only known at run time: TODO |
+| an `IF` / `ELSEIF`, `WHILE` or `TEST` whose condition (a `TEST`'s value) TP cannot write: `IF OpMode()=OP_AUTO THEN`, `WHILE UIMessageBox(...)<>resYes DO`, `TEST StrLen(s)` | `!TODO l.15 IF OpMode()=OP_AUTO TH`, `!Replace JMP by F[1]=(...)`, `JMP LBL[1]`, then `IF (F[1]=ON) THEN` ... `ENDIF`, `LBL[1]`; a `TEST`: `SELECT R[200]=1,JMP LBL[10]` | The blocks are converted; the condition alone is left to the integrator, in a flag CrossArm reserves (a register for a `TEST`), `CROSSARM.CONDITION.<ROUTINE>.L<line>` in the mapping file. **Nothing of the instruction runs until the `JMP LBL[n]` before it is replaced** by the line setting the flag (`F[1]=(DI[3]=ON)`; for a `TEST`, `R[200]=...`): no branch, not the `ELSE`, and a `WHILE` does not turn (its jump is at the top of each turn, so the condition written there is tested at each turn). An `ELSEIF`'s condition is set before the `IF`. One TODO per condition, with the cause of the condition; the report lists each under "Conditions to set". A `TEST` on a string, or with a `CASE` value TP cannot write, is still TODO as a whole. Measured on ROBOGUIDE |
 | `CONNECT` + `ISignalDI` / `ISignalDO`, `IPers`; `ISleep`, `IDelete`, `IWatch` | a condition program `WHEN DI[3]=ON+,CALL TSTOP` armed with `MONITOR ISTOP`; `MONITOR END ISTOP`, `MONITOR ISTOP` | The FANUC Condition Monitor function: one condition program per interrupt, named after it, `ON+` for 1, `OFF-` for 0, both for `edge`; `IPers` compares the data's register with a copy of the value last seen. The `TRAP` is a program without a motion group (and so is every routine it calls: it runs as a task of its own while the program it interrupted holds the robot); it arms its condition program again as it ends, as the controller disarms one when it fires, unless `\Single`. A `TRAP` several interrupts share, or one reading `INTNO`, is called through a relay per interrupt, which notes the interrupt in `R[n:IntNo]` (what `INTNO` reads; an `intnum` reads as its interrupt's number), calls the `TRAP` and arms its condition again. The program stops while the `TRAP` runs, the move under way goes on, as in RAPID. The controller checks the condition periodically: a change within 0.05 s of `MONITOR`, or held less than 0.02 s, can be missed (a warning says so). Data a `TRAP` changes is never taken as known |
 | routine call, `Stop`, `RETURN`, `EXIT` | `CALL`, `PAUSE`, `END`, `ABORT` | A routine of a system module the programs call is written too: the robot needs it |
 | a routine called by its name worked out at run time: `%"Bay_" + NumToStr(n,0)%`, `CallByVar "Bay_", n`, `%sStep%` | `SELECT R[3:n]=1,CALL BAY_1` / `=2,CALL BAY_2` / `ELSE,JMP`; for a text, `IF SR[2]<>SR[25],JMP LBL[n]` then the `CALL` | TP calls a program by the name written in the line only: the call is one branch per routine of the backup the name can be (the texts the string is set to, or the routines named by the prefix and a number), its arguments passed as written. A name outside those ends the program (`ABORT`, where RAPID raises ERR_REFUNKPRC), with a warning |
@@ -724,6 +745,8 @@ A mapping file can also be written from scratch, with only the keys you care abo
   `CROSSARM.TRAPTEXT2` for what a TRAP runs, taken from the top. `limits.SR` (25) is written when strings
   are used. A register only the statements converted with texts use is numbered from the top down
   (`R[200]`...), so that the other programs keep the numbers earlier versions gave them.
+- `CROSSARM.CONDITION.<ROUTINE>.L<line>`, in `flags` (in `registers` for a `TEST`), is the flag of a condition
+  CrossArm could not write, left for you to set (since 1.12): pin it to a number your cell keeps free.
 - `limits` is what the controller actually holds; the report flags any resource the conversion
   allocates past it. The defaults above are those of a standard controller — options raise several
   of them, so check yours and adjust. A frame number in `utools` / `uframes` past `limits.UTOOL` /
@@ -988,6 +1011,11 @@ the `.LS` format as FANUC controllers and current ROBOGUIDE versions export it. 
 were measured against an IRB 6700 on an M-20iD/25, an R-2000iC/190S and an R-1000iA/80F; other
 models should be checked in ROBOGUIDE.
 
+### What changes when I upgrade to 1.12?
+An `IF`, `WHILE` or `TEST` whose condition TP cannot write is written with its blocks, skipped by a jump until you
+set its condition; the number of TODO can go up, as the blocks once lost show their own. Mapping files and the
+command line keep working. What to do: [upgrading to 1.12](#upgrading-to-112).
+
 ### What changes when I upgrade to 1.10?
 Mapping files and the command line keep working. Two changes can make a program converted again differ: data of
 a routine with the name of module data get their own register (a fix since 1.0), and the end of an ERROR handler
@@ -1008,7 +1036,7 @@ files back; other brands (KUKA KRL, Yaskawa INFORM) are on the [roadmap](#roadma
 Progress is measured as the share of RAPID instructions written as TP: on the three RobotWare
 backups of the test corpus, written for testing in three integrators' styles and checked on the
 controllers ([validation](validation.md#1-the-test-corpus)), 87 %, 93 % and 90 %; on public
-open-source programs, about 60 %. What is left gives the order of the next steps:
+open-source programs, about 65 %. What is left gives the order of the next steps:
 
 1. Values only known at run time, and the conditions on them: what is left of them is spread over
    many forms, each found in few programs.
@@ -1025,7 +1053,8 @@ work objects computed by calibration routines (written part by part, copied, bui
 the integrator provides). Done in 1.9: the report as a cockpit (decision and figures first, detail on demand,
 actions saying who acts), a one-page summary, the comparison with the previous conversion, CSV. Done in
 1.10: the backup's FUNCs as TP programs, the errors the program raises itself, `CrossArm.exe` on the command
-line. Sockets are not planned: a routine using them can be replaced by a program the integrator writes
+line. Done in 1.12: an `IF`, `WHILE` or `TEST` whose condition TP cannot write keeps its blocks, the condition
+left to the integrator. Sockets are not planned: a routine using them can be replaced by a program the integrator writes
 (`external_routines`). Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
 
 ## How it works inside

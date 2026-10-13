@@ -92,8 +92,8 @@ same, as keys and numbers):
 
 Counts only: no name, comment, text, number or path of the backup is in this report or in crossarm_diag.json.
 
-- Schema version: 2
-- CrossArm 1.11.1, Python 3.14.6, Windows 11, 2026-10-13
+- Schema version: 3
+- CrossArm 1.12.0, Python 3.14.6, Windows 11, 2026-10-13
 - Input: files, 1 task(s), 1 program module(s), 0 system module(s), 76 lines
 - Routines: 3 PROC, 1 FUNC, 0 TRAP
 - Files not read: 0, syntax errors: 0
@@ -111,7 +111,7 @@ Counts only: no name, comment, text, number or path of the backup is in this rep
 - Programs: 3, TODO: 3, warnings: 5
 - Instructions: 27, converted: 85.1 %
 - TODO on an instruction: 3, not on an instruction: 0
-- Instructions in no program: FUNC computed or inlined 1
+- Instructions in no program: FUNC never called 1
 
 | Area | Converted |
 |---|---|
@@ -163,7 +163,7 @@ Counts only: no name, comment, text, number or path of the backup is in this rep
 | MOVEABSJ | 1 | 0 | 1 | 0 | 0 | 0 | - |
 | MOVEC | 1 | 1 | 0 | 0 | 0 | 0 | - |
 | RESET | 1 | 1 | 0 | 0 | 0 | 0 | - |
-| RETURN | 1 | 0 | 0 | 0 | 0 | 1 | FUNC computed or inlined 1 |
+| RETURN | 1 | 0 | 0 | 0 | 0 | 1 | FUNC never called 1 |
 | SET | 1 | 1 | 0 | 0 | 0 | 0 | - |
 | TPWRITE | 1 | 0 | 1 | 0 | 0 | 0 | - |
 | WHILE | 1 | 1 | 0 | 0 | 0 | 0 | - |
