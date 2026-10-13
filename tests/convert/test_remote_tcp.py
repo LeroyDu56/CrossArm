@@ -234,3 +234,14 @@ def test_what_stays_todo(body, procs, words):
     found = todos(run(body, procs))
     assert found and all(cause == Blocker.STATIONARY for cause, _ in found), found
     assert any(words in message for _, message in found), found
+
+
+def test_the_analysis_asks_for_the_option_before_the_work_on_the_todo():
+    """A controller without J624 does not take the programs: the action comes with the programs to load first."""
+    from crossarm.convert.analysis import priority_actions
+
+    result = run(BEAD + "\nIF OpMode()=OP_AUTO THEN\nWaitTime 1;\nENDIF")
+    titles = [action.title for action in priority_actions(result)]
+    option = titles.index("Check that the robot has the Remote TCP option (J624)")
+    gated = next(i for i, title in enumerate(titles) if title.startswith("Set the 1 condition"))
+    assert option < gated, titles
