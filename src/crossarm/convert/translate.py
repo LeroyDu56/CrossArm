@@ -58,6 +58,7 @@ from crossarm.convert.compute import (
     path_of,
     to_pose,
 )
+from crossarm.convert.condition_gates import ConditionGates, GatedCondition
 from crossarm.convert.config import ConversionConfig, frame_key
 from crossarm.convert.configuration import (
     TOOL_PIN_DEFAULT,
@@ -447,6 +448,10 @@ class ConversionResult:
     # those ids valid): what `crossarm diagnose` counts per RAPID instruction. Never written in an output.
     instructions: dict[int, bool] = field(default_factory=dict)
     modules: list[n.Module] = field(default_factory=list)
+    # The conditions left to the integrator in instructions written whole (crossarm.convert.condition_gates), and
+    # id() of those instructions (their blocks are converted: diagnose counts them so).
+    gated: list[GatedCondition] = field(default_factory=list)
+    gated_ids: set[int] = field(default_factory=set)
 
     @property
     def todo_count(self) -> int:
@@ -1967,6 +1972,7 @@ class Converter:
         self.record_uses = {owner: ({numbers.get(k, k) for k in r}, {numbers.get(k, k) for k in f})
                             for owner, (r, f) in self.record_uses.items()}  # fmt: skip
         self.result.notes = [dataclasses.replace(note, message=number(note.message)) for note in self.result.notes]
+        self.result.gated = [dataclasses.replace(g, slot=number(g.slot)) for g in self.result.gated]
         if self.result.wait_clock:
             self.result.wait_clock = (number(self.result.wait_clock[0]), number(self.result.wait_clock[1]))
 
@@ -2194,7 +2200,7 @@ class Converter:
 
 
 class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline,
-                         FuncPrograms, LateCalls, SystemData, RaisedPaths):
+                         FuncPrograms, LateCalls, SystemData, RaisedPaths, ConditionGates):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2225,6 +2231,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         self.errno_live = False  # writing a handler's path for a raised error: ERRNO is CROSSARM.ERRNO
         self.raised_sites = 0  # lines where its handler was written for a raised error
         self.strict = 0  # >0: a statement that cannot be converted fails the enclosing one instead of a TODO
+        self.gates: list = []  # the conditions left to the integrator, by instruction being written (condition_gates)
+        self.gate_names: dict[int, str] = {}  # id() of the stand-in of such a condition -> its flag
+        self.gate_keys: set[str] = set()
+        self.gate_notes: list[int] = []  # where the notes of each such instruction start
         self.after: tuple[n.Stmt, ...] = ()  # what follows the statement being written, in its block
         self.last_tool: n.Expr | None = None  # the tool of the last move written, while it is still selected
         # The array element R[PointIndex] points to, while nothing has changed it: (array, index operands).
@@ -2438,23 +2448,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 self.stmt(stmt)
             except (Untranslatable, Unresolvable) as exc:
                 self._rollback(checkpoint)
-                # An Unresolvable that reaches here is always a value we could not work out.
-                measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
-                none = no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
-                                         self.c.symbols.type_of, KAREL_FILES if self.c.config.karel else (),
-                                         self.c.config.karel)
-                text = text_todo(stmt, self.c.procs.keys() | self.c.computer.functions.keys())
-                if none is not None:
-                    self.todo(stmt, none, Blocker.NO_TP_EQUIVALENT)
-                elif text is not None:
-                    self.todo(stmt, text, Blocker.VALUE)
-                elif (name := self.not_declared(exc)) is not None:
-                    self.todo(stmt, str(self.not_in_backup(name, "data")), Blocker.MISSING)
-                elif (getattr(exc, "category", measured) in (Blocker.VALUE, Blocker.CALIBRATION)
-                      and (through := self.c.routine_use.of(stmt)) is not None):  # fmt: skip
-                    self.todo(stmt, through, Blocker.NO_TP_EQUIVALENT)  # the value is a file's or a socket's
-                else:
-                    self.todo(stmt, str(exc), getattr(exc, "category", measured))
+                self.todo(stmt, *self.todo_cause(stmt, exc))
             except Exception as exc:  # noqa: BLE001 - one statement must never cost the whole backup
                 # A bug in CrossArm on an unusual statement. Without this, the exception would end
                 # the whole task: a hundred programs lost for one line. It becomes a TODO that
@@ -2469,6 +2463,25 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 self.current = outer
                 self.func_reset()
             self.tags.tag(self.lines, checkpoint[0], stmt.span.line)
+
+    def todo_cause(self, stmt: n.Stmt, exc: BaseException) -> tuple[str, str]:
+        """(why, cause) of a statement left TODO for `exc`."""
+        # An Unresolvable that reaches here is always a value we could not work out.
+        measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
+        none = no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
+                                 self.c.symbols.type_of, KAREL_FILES if self.c.config.karel else (),
+                                 self.c.config.karel)  # fmt: skip
+        text = text_todo(stmt, self.c.procs.keys() | self.c.computer.functions.keys())
+        if none is not None:
+            return none, Blocker.NO_TP_EQUIVALENT
+        if text is not None:
+            return text, Blocker.VALUE
+        if (name := self.not_declared(exc)) is not None:
+            return str(self.not_in_backup(name, "data")), Blocker.MISSING
+        if (getattr(exc, "category", measured) in (Blocker.VALUE, Blocker.CALIBRATION)
+                and (through := self.c.routine_use.of(stmt)) is not None):  # fmt: skip
+            return through, Blocker.NO_TP_EQUIVALENT  # the value is a file's or a socket's
+        return str(exc), getattr(exc, "category", measured)
 
     def not_declared(self, exc: BaseException) -> str | None:
         """The data a statement failed on because no module of the backup declares it, if that is why: the
@@ -4760,11 +4773,23 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
 
     def if_stmt(self, branches: tuple[n.IfBranch, ...], else_body: tuple[n.Stmt, ...]) -> None:
         """IF/ELSEIF/ELSE. A branch on a constant is code switched on or off by hand (`IF FALSE THEN`):
-        what never runs is left out with a remark, what always runs is converted without a test."""
+        what never runs is left out with a remark, what always runs is converted without a test. A condition
+        that cannot be written is left to the integrator, the blocks converted (crossarm.convert.condition_gates)."""
+        top, before = self.gate_open(), dict(self.known)
+        try:
+            self._if_branches(branches, else_body)
+        except BaseException:
+            self.gate_drop()
+            raise
+        if (end := self.gate_close(top)) is not None:
+            self.emit(f"LBL[{end}]")  # skipped until the integrator sets the conditions: nothing of it ran
+            self.merge(branches[0].condition.span.line, before, self.known)
+
+    def _if_branches(self, branches: tuple[n.IfBranch, ...], else_body: tuple[n.Stmt, ...]) -> None:
         live: list[n.IfBranch] = []
         for branch in branches:
             written = branch.condition
-            test = self.fold_texts(self.simplify(written))
+            test = self.gated(written, lambda e: e if self.is_gate(e) else self.fold_texts(self.simplify(e)))
             if not isinstance(test, n.Bool):
                 live.append(n.IfBranch(test, branch.body))
             elif test.value:  # IF TRUE: it always runs, the branches after it never do
@@ -4793,7 +4818,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         for i, branch in enumerate(branches):
             last = i == len(branches) - 1 and not else_body
             skip = end if last else self.label()
-            self.jump_if(branch.condition, skip, False)
+            self.gated(branch.condition, lambda e, skip=skip: self.jump_if(e, skip, False))
             self.block(branch.body)
             states.append(self.known)
             self.known = dict(known)
@@ -4812,7 +4837,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         first, rest = branches[0], branches[1:]
         start = (self.active_uf, self.active_ut)
         known = dict(self.known)
-        self.emit(f"IF ({self.condition(first.condition)}) THEN")
+        self.emit(f"IF ({self.gated(first.condition, self.condition)}) THEN")
         self.block(first.body)
         ends = [(self.active_uf, self.active_ut)]
         self.active_uf, self.active_ut = start
@@ -4867,12 +4892,18 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             return
         exit_label = self.label()
         self.emit(f"LBL[{top}]")
-        if self.has_text(loop.condition):  # texts are compared in IF ...,JMP only
-            self.jump_if(loop.condition, exit_label, False)
-        else:
-            self.emit(f"IF ({self.condition(loop.condition, negate=True)}) THEN")
-            self.emit(f"JMP LBL[{exit_label}]")
-            self.emit("ENDIF")
+        gates = self.gate_open()  # a condition that cannot be written: left to the integrator, the loop not turning
+        try:
+            if self.has_text(loop.condition):  # texts are compared in IF ...,JMP only
+                self.gated(loop.condition, lambda e: self.jump_if(e, exit_label, False), "WHILE")
+            else:
+                self.emit(f"IF ({self.gated(loop.condition, lambda e: self.condition(e, negate=True), 'WHILE')}) THEN")
+                self.emit(f"JMP LBL[{exit_label}]")
+                self.emit("ENDIF")
+        except BaseException:
+            self.gate_drop()
+            raise
+        self.gate_close(gates, exit_label)
         self.block(loop.body)
         self.emit(f"JMP LBL[{top}]")
         self.emit(f"LBL[{exit_label}]")
@@ -4885,12 +4916,26 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         with no ELSE and no value equal, the program goes on after the SELECT, and so does a CALL made on a
         SELECT line once it returns. A branch that is a single CALL is made on its SELECT line.
         """
-        line = test.span.line
         if not test.cases:  # nothing to compare: the DEFAULT always runs
             self.block(test.default or ())
             return
         values = [[self._case_value(v) for v in case.values] for case in test.cases]
-        subject = self.numeric(test.subject)
+        top = self.gate_open()
+        try:
+            self._test_select(test, values)
+        except BaseException:
+            self.gate_drop()
+            raise
+        if (end := self.gate_close(top)) is not None:
+            self.emit(f"LBL[{end}]")  # skipped until the integrator sets the value: no branch ran
+
+    def _test_select(self, test: n.Test, values: list[list[str]]) -> None:
+        line = test.span.line
+        start_known = dict(self.known)
+        try:
+            subject = self.numeric(test.subject)
+        except (Untranslatable, Unresolvable) as exc:  # left to the integrator (condition_gates), or TODO whole
+            subject = self.gate_register(test.subject, exc)
         try:  # a constant: the branch is known now
             self._constant_test(test, float(subject), values)
             return
@@ -4949,6 +4994,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         if used or behind:
             self.emit(f"LBL[{end}]")
         self.active_uf = self.active_ut = None  # a branch, or the CALL made on a SELECT line, may select others
+        if self.gates and self.gates[-1]:  # skipped until the value is set: nothing of the TEST ran
+            ends.append(start_known)
         self.merge(line, *ends, what="TEST")
 
     def _case_value(self, expr: n.Expr) -> str:
@@ -5001,6 +5048,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         Negation is pushed down (De Morgan, inverted comparisons) so the output
         never needs the '!' operator.
         """
+        if (gate := self.gate_condition(expr, negate)) is not None:  # left to the integrator (condition_gates)
+            return gate
         expr = unfold_abs(expr, self.constant_or_none)  # Abs(x) > c: x > c OR x < -c (convert.abs_tests)
         self.func_first(expr)  # the FUNCs it calls as programs, before any scratch register is worked out
         match expr:

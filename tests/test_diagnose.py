@@ -122,7 +122,8 @@ def test_every_row_adds_up_on_the_local_corpus(path):
 
 
 def test_a_todo_is_counted_on_the_statement_carrying_it(tmp_path):
-    """A compact IF whose condition is TODO: the TODO is the IF's; its Stop (always converted) is inside it."""
+    """An IF whose condition is TODO: the TODO is the IF's; its blocks are converted on their own (a Stop always,
+    an Offs of a number never: a TODO of its own)."""
     source = tmp_path / "m.mod"
     source.write_text('MODULE M\n  VAR string s := "a";\n  VAR num n := 1;\n  PROC main()\n'
                       '    IF StrFind(s, 1, "b") > n Stop;\n    IF n > 2 Stop;\n'
@@ -131,11 +132,18 @@ def test_a_todo_is_counted_on_the_statement_carrying_it(tmp_path):
     diag = diagnose.diagnose([source])
     assert_adds_up(diag)
     pick = {k: diag["instructions"][k] for k in ("IF", "STOP", "assignment")}
-    assert [(u["converted"], u["todo"], u["inside_todo"]) for u in pick.values()] == [(1, 2, 0), (1, 0, 2), (0, 0, 1)]
+    assert [(u["converted"], u["todo"], u["inside_todo"]) for u in pick.values()] == [(1, 2, 0), (3, 0, 0), (0, 1, 0)]
     assert diag["functions"]["STRFIND"]["inside_todo"] == 2 and diag["functions"]["OFFS"]["inside_todo"] == 1
-    assert diag["conversion"]["todo"] == diag["conversion"]["todo_on_instructions"] == 2
+    assert diag["conversion"]["todo"] == diag["conversion"]["todo_on_instructions"] == 3
     md = diagnose.markdown(diag)
-    assert "| Inside TODO | Not converted | Why not converted |" in md and "TODO on an instruction: 2" in md
+    assert "| Inside TODO | Not converted | Why not converted |" in md and "TODO on an instruction: 3" in md
+
+    whole = tmp_path / "w.mod"  # a TEST whose CASE value is unknown is still a TODO whole: its blocks inside it
+    whole.write_text("MODULE W\n  VAR num n := 1;\n  PROC main()\n    TEST n\n    CASE Unknown():\n      Stop;\n"
+                     "    ENDTEST\n  ENDPROC\nENDMODULE\n", encoding="utf-8")  # fmt: skip
+    diag = diagnose.diagnose([whole])
+    assert_adds_up(diag)
+    assert diag["instructions"]["STOP"]["inside_todo"] == 1
 
 
 def test_the_code_in_no_program_says_why(tmp_path):

@@ -339,6 +339,8 @@ _RESERVED = (
     ("CROSSARM.RAISED", ("reserved by CrossArm: the error a routine ends with (0: none), set by the routines that"
                          " raise the program's own errors and tested after each CALL of them")),
     ("CROSSARM.ERRNO", "reserved by CrossArm: ERRNO, the error an ERROR handler takes"),
+    ("CROSSARM.CONDITION.", ("reserved by CrossArm: a condition (a TEST's value) it could not convert, set by the"
+                             " line the integrator writes before the instruction (Conditions to set)")),
     ("CROSSARM.RETRY.", ("reserved by CrossArm: the RETRY count of this routine's ERROR handler (at most 4, then"
                          " the program stops)")),
 )  # fmt: skip
@@ -384,6 +386,25 @@ def _registers(result: ConversionResult, places: _Places) -> tuple[str, list[_It
     intro = ("Registers, flags and timers are shared by every program on a FANUC controller: check that no program"
              " already on the robot uses these numbers (pin others in crossarm_mapping.json), and set the initial"
              " value a note gives.")  # fmt: skip
+    return intro, items
+
+
+def _conditions(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
+    items = []
+    for gate in result.gated:
+        what = "value" if gate.slot.startswith("R[") else "condition"
+        items.append(_Item(
+            f"condition|{gate.program}|{gate.line}|{gate.slot}|{gate.rapid}",
+            f"{_e(gate.program)}.LS: set {_code(gate.slot)} to {_code(gate.rapid)}",
+            values=f"Replace {_code(f'JMP LBL[{gate.label}]')} by {_code(f'{gate.slot}=(...)')}",
+            note=_e(f"RAPID l.{gate.line}. Not converted: {gate.reason[:200]}. Until the line is written, the jump"
+                    f" skips the whole instruction (l.{gate.statement_line}): none of its blocks runs. The {what} is"
+                    " set where the instruction starts, each turn for a WHILE."),
+            links=places.links([(gate.program, gate.line)], "at"),
+        ))  # fmt: skip
+    intro = ("Conditions CrossArm could not write in TP: the IF, WHILE or TEST is converted with its blocks and tests a"
+             " reserved flag (a register for a TEST). Write the line setting it, from what the robot can read (an"
+             " input, a register), in place of the jump the remark before it names.")  # fmt: skip
     return intro, items
 
 
@@ -608,6 +629,7 @@ _GROUPS = (
     ("payloads", "Payloads"),
     ("io", "I/O to map"),
     ("registers", "Registers, flags and timers"),
+    ("conditions", "Conditions to set"),
     ("todo", "TODO lines to finish by hand"),
     ("points", "Points to touch up"),
     ("motion", "Motion to check"),
@@ -629,6 +651,7 @@ def checklist_section(result: ConversionResult, config: ConversionConfig, anchor
         "payloads": _payloads(result, config, places),
         "io": _io(result, places),
         "registers": _registers(result, places),
+        "conditions": _conditions(result, places),
         "todo": _todo(result, places),
         "points": _points(result, places),
         "motion": _motion(result, config, places),

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 from crossarm.convert import triage
 from crossarm.convert.blockers import Blocker
+from crossarm.convert.condition_gates import MARK
 from crossarm.convert.config import ConversionConfig
 from crossarm.convert.coverage import fmt_percent
 from crossarm.convert.taught import AGAIN, KEPT
@@ -406,6 +407,17 @@ def priority_actions(result: ConversionResult, config: ConversionConfig | None =
             " the .LS (compile the .kl with ktrans first where there is no .pc); a real robot needs the KAREL option"
             " (R632).", "#ck-karel", "Checklist: KAREL programs", who=(integrator, triage.OPTION),
             option="R632"))  # fmt: skip
+
+    if result.gated:  # crossarm.convert.condition_gates
+        marked = [note for note in result.notes if note.kind == "TODO" and MARK in note.message]
+        slots = [f"`{g.slot}`" for g in result.gated]
+        actions.append(Action(
+            f"Set the {_plural(len(result.gated), 'condition')} CrossArm could not convert",
+            f"{_names(slots, 4)}: each IF, WHILE or TEST is written with its blocks, and skipped until the line before"
+            " it sets its flag (a register for a TEST) in place of the `JMP` the remark names; "
+            f"{_todo(len(marked))}{_programs(marked)}.", "#ck-conditions", "Checklist: Conditions to set",
+            todo=len(marked), programs=tuple(sorted({note.program for note in marked if note.program})),
+            who=(integrator,)))  # fmt: skip
 
     design = []
     for causes, title, how in _DESIGN:

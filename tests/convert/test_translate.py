@@ -296,10 +296,12 @@ def test_a_routine_or_data_the_backup_does_not_declare_says_what_to_add():
 
 def test_a_condition_on_data_the_backup_does_not_declare_says_what_to_add():
     result = run("IF bReady Grip;\nIF NOT bGone nCount:=1;", data="VAR num nCount;")
-    assert [note.category for note in result.notes if note.kind == "TODO"] == [Blocker.MISSING] * 2
-    assert [message.split(" — ")[0] for message in todos(result)] == [
-        f"data '{name}' is not in the backup: add the module that declares it (system module, option, other task),"
-        " or EIO.cfg if it is a signal" for name in ("bReady", "bGone")]  # fmt: skip
+    assert [note.category for note in result.notes if note.kind == "TODO"] == [Blocker.MISSING] * 3
+    data, routine, other = [message.split(" — ")[0] for message in todos(result)]
+    for message, name in ((data, "bReady"), (other, "bGone")):
+        assert message.startswith(f"data '{name}' is not in the backup: add the module that declares it (system"
+                                  " module, option, other task), or EIO.cfg if it is a signal; the IF is written")  # fmt: skip
+    assert routine.startswith("routine 'Grip' is not in the backup")  # the IF's block, converted on its own
 
 
 def test_a_math_function_of_data_no_program_changes_is_worked_out():

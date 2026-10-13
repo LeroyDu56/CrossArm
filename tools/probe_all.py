@@ -80,6 +80,10 @@ probe, everything else in local/logs/probe_all.log):
     sysvars      load and run only: a TP program reads no system variable (the active UTOOL / UFRAME / payload,
                  the mode select key: VARS-034), so GetSysData and OpMode() stay TODO; UTOOL_NUM=R[n] loads
 
+    condgate     conditions CrossArm cannot convert, left to the integrator in a reserved flag (a register for a
+                 TEST), the blocks written: as converted, nothing of the instructions runs (the JMP skips them);
+                 with each JMP replaced by the line setting the flag, what RAPID runs
+
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool frames 1 to 10, user frames 1 to 9, and
 position registers: use a test cell. The virtual pendant must be OFF.
@@ -107,6 +111,7 @@ import make_array_probe
 import make_array_write_probe
 import make_bank_probe
 import make_compute_probe
+import make_condition_gate_probe
 import make_condition_probe
 import make_external_probe
 import make_flag_array_probe
@@ -495,6 +500,12 @@ def probe_raise() -> str:
     return f"FAIL {problem}" if problem else make_raise_probe.summary(make_raise_probe.stored())
 
 
+def probe_condgate() -> str:
+    problem = make_condition_gate_probe.run(PROBES / "condgate")
+    return (f"FAIL {problem}" if problem else
+            "as converted nothing of the gated instructions runs; with the conditions set, what they select")
+
+
 def probe_sysvars() -> str:
     problem = make_sysvar_probe.run()
     return f"FAIL {problem}" if problem else "reads stop on VARS-034, selections from registers load, as measured"
@@ -594,7 +605,7 @@ GROUPS: dict[str, dict[str, float]] = {
     "motion": {"pose": 85, "pin": 79, "banks": 86, "compute": 54, "points": 54, "pallet": 32},
     "data": {"negative": 8, "args": 15, "conditions": 11, "waits": 18, "setup": 16, "select": 13, "arrays": 13,
              "interrupts": 27, "params": 14, "records": 70, "strings": 15, "arraywrite": 13, "flags": 12,
-             "flagarrays": 13, "pointref": 22, "joints": 20},
+             "flagarrays": 13, "pointref": 22, "joints": 20, "condgate": 63},
     "timing": {"movedo": 72, "timeflag": 12, "speedargs": 132, "search": 250, "io": 20},
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
               "sysvars": 60},
@@ -630,7 +641,7 @@ def main() -> int:
               "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel, "karelpose": probe_karelpose,
               "karelfile": probe_karelfile, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
-              "sysvars": probe_sysvars,
+              "sysvars": probe_sysvars, "condgate": probe_condgate,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     grouped = [probe for group in GROUPS.values() for probe in group]

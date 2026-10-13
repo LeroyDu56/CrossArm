@@ -3,6 +3,16 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- An IF, ELSEIF, WHILE or TEST whose condition (a TEST's value) cannot be written in TP no longer becomes one TODO
+  remark with all its blocks: the blocks are converted, and the condition alone is left to the integrator in a flag
+  CrossArm reserves (a register for a TEST; mapping key `CROSSARM.CONDITION.<ROUTINE>.L<line>`, added). Until the
+  integrator replaces the `JMP LBL[n]` before the instruction with the line setting it, the jump skips the whole
+  instruction: no branch runs, the ELSE neither, and a WHILE does not turn, as before. Measured on ROBOGUIDE
+  (`condgate` probe). The report lists each condition to set (analysis, checklist "Conditions to set").
+- `crossarm diagnose`: such an instruction is the TODO; its blocks count as converted, no longer inside a TODO.
+
 ## 1.11.1 — 2026-10-13
 
 The diagnostic report corrected. The programs written are the same as 1.11.0.

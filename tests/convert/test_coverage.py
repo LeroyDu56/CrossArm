@@ -44,15 +44,16 @@ def test_every_instruction_counts_once_by_area():
     assert (result.converted, result.total, result.percent) == (8, 8, 100.0)
 
 
-def test_a_block_that_became_a_todo_counts_all_its_instructions():
-    # The condition cannot be converted: the IF is one TODO, and the three instructions in it are lost with it.
+def test_a_condition_left_todo_counts_the_if_alone():
+    # The condition cannot be converted: the IF is one TODO, the instructions in it are converted
+    # (crossarm.convert.condition_gates).
     result = coverage("""  IF Unknown() THEN
     MoveJ p1,v1000,z50,tool0;
     Set do1;
   ENDIF
   Set do2;""")
-    assert shares(result) == {MOTION: (0, 1), IO: (1, 2), FLOW: (0, 1)}
-    assert (result.converted, result.total, result.percent) == (1, 4, 25.0)
+    assert shares(result) == {MOTION: (1, 1), IO: (2, 2), FLOW: (0, 1)}
+    assert (result.converted, result.total, result.percent) == (3, 4, 75.0)
 
 
 def test_error_handlers_count_their_statements_and_left_out_routines_count_as_not_converted():

@@ -104,6 +104,7 @@ FUNC = "FUNC computed or inlined"  # a FUNC not written as a program: its value 
 PROVIDED = "provided by the integrator"  # external_routines
 NOT_COMPLETED = "conversion did not complete"
 NOT_COUNTED = "other"
+CONDITION_ONLY = "condition only"  # status() of an instruction whose condition alone is TODO (never in the output)
 REASONS = (SYSTEM_MODULE, LEFT_OUT, MOVE_ROUTINE, FUNC, PROVIDED, NOT_COMPLETED, NOT_COUNTED)
 
 
@@ -332,13 +333,15 @@ def _count_module(module: n.Module, names: _Names, inv: _Inventory, status) -> N
         if what is None:
             return
         state, reason = ("inside_todo", None) if inside else status(module, routine, stmt)
+        whole = state == "todo" and reason != CONDITION_ONLY  # else only its condition is TODO: its blocks converted
+        reason = None if state == "todo" else reason
         inv.use(getattr(inv, what[0]), what[1], state, reason)
         if not isinstance(stmt, n.Unsupported):
             for call in _calls(_expressions(stmt)):
                 table, key = _function(call, names)
                 inv.use(getattr(inv, table), key, "inside_todo" if state == "todo" else state, reason)
         for child in _blocks(stmt):
-            count(child, routine, inside or state in ("todo", "inside_todo"))
+            count(child, routine, inside or whole or state == "inside_todo")
 
     for item in module.body:
         if isinstance(item, n.DataDecl):
@@ -445,16 +448,16 @@ def _signals(eio: Path | None) -> dict[str, object]:
             "eio_sections": dict(sorted(sections.items()))}  # fmt: skip
 
 
-def _status_table(result) -> tuple[dict[tuple, bool], set[tuple[str, int]]]:
-    """(module, routine, line, col, node) -> converted, for each instruction coverage counted; (module, line) of
-    the warnings."""
-    statuses: dict[tuple, bool] = {}
+def _status_table(result) -> tuple[dict[tuple, bool | str], set[tuple[str, int]]]:
+    """(module, routine, line, col, node) -> converted (CONDITION_ONLY: an instruction whose condition alone is TODO,
+    its blocks converted), for each instruction coverage counted; (module, line) of the warnings."""
+    statuses: dict[tuple, bool | str] = {}
     for module in result.modules:
         for routine in module.routines:
             for stmt in [*walk_statements(routine.body), *routine.handlers]:
                 if id(stmt) in result.instructions:
                     key = (module.name.upper(), routine.name.upper(), stmt.span.line, stmt.span.col, type(stmt).__name__)
-                    statuses[key] = result.instructions[id(stmt)]
+                    statuses[key] = CONDITION_ONLY if id(stmt) in result.gated_ids else result.instructions[id(stmt)]
     module_of = {info.program.name: info.module.upper() for info in result.programs}
     warned = {(module_of[note.program], note.rapid_line) for note in result.notes
               if note.kind == "WARNING" and note.program in module_of and note.rapid_line is not None}  # fmt: skip
@@ -509,6 +512,8 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
                     return "not_converted", MOVE_ROUTINE if why.startswith("it wraps one move") else LEFT_OUT
                 key = (module.name.upper(), routine.name.upper(), stmt.span.line, stmt.span.col, type(stmt).__name__)
                 if key in statuses:
+                    if statuses[key] == CONDITION_ONLY:
+                        return "todo", CONDITION_ONLY
                     if not statuses[key]:
                         return "todo", None
                     return ("partial" if (module.name.upper(), stmt.span.line) in warned else "converted"), None
