@@ -103,6 +103,7 @@ from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.raised import RaisedErrors, RaisedPaths
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
+from crossarm.convert.remote_tcp import RTCP, RemoteTcp, remote_pair, remote_point
 from crossarm.convert.runtime_points import RuntimePoints, expr_nodes, find_runtime_points
 from crossarm.convert.source_map import SourceTags
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
@@ -413,6 +414,8 @@ class ConversionResult:
     skipped_routines: list[tuple[str, str, str]] = field(default_factory=list)  # module, routine, reason
     capacity: list[Capacity] = field(default_factory=list)
     shared_with: list[str] = field(default_factory=list)  # other tasks numbered from the same R/F/I/O tables
+    # Remote TCP moves (crossarm.convert.remote_tcp): (stationary tool, robot-held work object, UFRAME, UTOOL)
+    remote_tcp: list[tuple[str, str, int, int]] = field(default_factory=list)
     move_routines: list[MoveRoutineUse] = field(default_factory=list)  # the called ones, most called first
     inlined: Counter[str] = field(default_factory=Counter)  # bool FUNC -> conditions written as its test
     from_system: list[str] = field(default_factory=list)  # Module.Routine of system modules written: called
@@ -1203,7 +1206,10 @@ class Converter:
                     continue
                 wobj = move.wobj if move.wobj is not None else n.Name(move.span, "wobj0")
                 layout = self.signatures.get(routine.name.upper())
-                for kind, expr in (("UF", wobj), ("UT", move.tool)):
+                pairs = (("UF", wobj), ("UT", move.tool))
+                if remote_pair(self, move.tool, wobj):
+                    pairs = (("UF", move.tool), ("UT", wobj))  # remote TCP (convert.remote_tcp)
+                for kind, expr in pairs:
                     if isinstance(layout, Signature) and isinstance(expr, n.Name) and layout.frame(expr.name):
                         continue  # a frame the routine is given: numbered where it is called
                     if isinstance(expr, n.Name):
@@ -2104,8 +2110,9 @@ class Converter:
             self._warned.add(key)
             self.note(program, line, "WARNING", message, category)
 
-    def frame_number(self, kind: str, expr: n.Expr | None, program: str, line: int) -> int:
-        """UFRAME (kind "UF") or UTOOL ("UT") number for a wobj/tool argument."""
+    def frame_number(self, kind: str, expr: n.Expr | None, program: str, line: int, remote: bool = False) -> int:
+        """UFRAME (kind "UF") or UTOOL ("UT") number for a wobj/tool argument. `remote`: a remote TCP move
+        (convert.remote_tcp), the stationary tool as the UFRAME, the robot-held work object as the UTOOL."""
         if expr is None:
             expr = n.Name(n.Span(line, 0), "wobj0")
         if not isinstance(expr, n.Name):
@@ -2115,12 +2122,16 @@ class Converter:
         key = (kind, number)
         if key not in self.frames:
             try:
-                frame = self.declared_frame(kind, expr)
+                frame = self.declared_frame(("UT" if kind == "UF" else "UF") if remote else kind, expr)
                 problem = ""
-                if kind == "UF" and frame.robhold:
-                    problem = "robot-held work object (stationary tool): not supported, frame values not usable"
+                if remote:
+                    frame = tool_on_flange(frame, self.config.tool_pin) if kind == "UT" else frame
+                elif kind == "UF" and frame.robhold:
+                    problem = ("robot-held work object: converted only as a remote TCP move, with a stationary tool and"
+                               " a fixed user frame (ufprog TRUE, no ufmec)")
                 elif kind == "UT" and not frame.robhold:
-                    problem = "stationary tool (robhold FALSE): not supported, frame values not usable"
+                    problem = ("stationary tool (robhold FALSE): converted only as a remote TCP move, with a work object"
+                               " the robot holds")
                 elif kind == "UT":
                     frame = tool_on_flange(frame, self.config.tool_pin)
             except Unresolvable as exc:
@@ -2135,7 +2146,7 @@ class Converter:
                 bank, slot = self._banks.pop(0), self.slots[kind]
             self.frames[key] = FrameInfo(number, expr.name, frame, problem, bank, slot)
             if frame is not None and frame.saved and not problem:
-                what = "work object" if kind == "UF" else "tool"
+                what = "work object" if (kind == "UF") != remote else "tool"
                 self.note(
                     program, line, "WARNING",
                     f"{what} {expr.name}: value as saved in the backup ({', '.join(frame.saved)} changed by the "
@@ -2237,6 +2248,7 @@ class Converter:
 
 
 class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline,
+                         RemoteTcp,
                          FuncPrograms, LateCalls, SystemData, ModuleLoads, RaisedPaths, ConditionGates):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
@@ -2692,7 +2704,11 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
     def move(self, m: n.Move) -> None:
         line = m.span.line
         # Resolve everything first: a failure must not leave a half-created point behind.
-        if m.kind is n.MoveKind.ABSJ:
+        remote = self.remote_frames(m)  # a stationary tool and a robot-held work object (convert.remote_tcp)
+        if remote is not None:
+            uf, ut = remote
+            self.last_tool = None  # the robot carries the part, not a tool of the backup
+        elif m.kind is n.MoveKind.ABSJ:
             held = m.wobj is not None and self._stationary("UF", m.wobj)
             # Numbered as before this move was converted: the work object, then the tool unless the work object stopped it.
             uf, ut = self.joint_frame("UF", m.wobj, line), self.joint_frame("UT", m.tool, line, number=not held)
@@ -2711,6 +2727,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             to_point, options = offset
         passed = self.passed_point(to_point, "CROSSARM.POINT") if m.kind is not n.MoveKind.ABSJ else self.joints_kept(to_point)
         passed_via = self.passed_point(m.via_point, "CROSSARM.VIA") if m.via_point is not None else None
+        if remote is not None and m.kind is not n.MoveKind.ABSJ and (
+                options or ((passed or passed_via) and not self.remote_passed(m))):
+            raise self.remote_refused(m)
         if passed and passed_via and passed.startswith("PR[R[") and passed_via.startswith("PR[R["):
             raise Untranslatable("MoveC through two elements of arrays indexed at run time: one index register"
                                  " holds one of them at a time", Blocker.RUNTIME_POSITION)  # fmt: skip
@@ -2719,6 +2738,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         else:
             to_value = evaluator.jointtarget(m.to_point) if m.kind is n.MoveKind.ABSJ else evaluator.robtarget(m.to_point)
         via_value = evaluator.robtarget(m.via_point) if m.via_point is not None and passed_via is None else None
+        if remote is not None and m.kind is not n.MoveKind.ABSJ:  # the part seen from the tool; J refuses RTCP
+            to_value = remote_point(to_value) if to_value is not None else None  # type: ignore[arg-type]
+            via_value = remote_point(via_value) if via_value is not None else None
+            options = RTCP if motion != "J" else ""
         if isinstance(to_value, JointTarget) and len(to_value.joints) < 6:
             raise Untranslatable(f"jointtarget with {len(to_value.joints)} axes", Blocker.MOTION)
         self.both_ways = None
@@ -2739,6 +2762,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         else:
             via = passed_via or (self.point(m.via_point, via_value, uf, ut, line) if via_value is not None else None)
             target = passed or self.point(m.to_point, to_value, uf, ut, line)  # type: ignore[arg-type]
+        if remote is not None:
+            self.remote_written(line)
         for selected, active, kind in ((uf, self.active_uf, "UFRAME"), (ut, self.active_ut, "UTOOL")):
             if selected != active:
                 number, bank = selected
@@ -4647,11 +4672,15 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             if kind == "UT":
                 robhold, tframe, _load = new.value
                 if not robhold:
-                    raise Untranslatable(f"{target}: stationary tool (robhold FALSE): not supported", Blocker.STATIONARY)
+                    raise Untranslatable(f"{target}: stationary tool (robhold FALSE) computed at run time: not loaded"
+                                         " into the UFRAME of its remote TCP moves (SETUP_FRAMES sets its declared"
+                                         " value)", Blocker.STATIONARY)  # fmt: skip
                 return tool_on_flange(Frame(to_pose(tframe), True, target), self.c.config.tool_pin).pose
             robhold, _ufprog, _ufmec, uframe, oframe = new.value
             if robhold:
-                raise Untranslatable(f"{target}: robot-held work object: not supported", Blocker.STATIONARY)
+                raise Untranslatable(f"{target}: robot-held work object computed at run time: not loaded into the"
+                                     " UTOOL of its remote TCP moves (SETUP_FRAMES sets its declared value)",
+                                     Blocker.STATIONARY)  # fmt: skip
             return to_pose(uframe).compose(to_pose(oframe))
         except (TypeError, ValueError, Unresolvable) as exc:
             raise Untranslatable(f"{target}: not a valid frame ({exc})", Blocker.VALUE) from exc

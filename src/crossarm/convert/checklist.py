@@ -285,6 +285,15 @@ def _frames(result: ConversionResult, config: ConversionConfig, places: _Places)
             note = "; ".join(n for n in notes if n)
             items.append(_Item(f"{kind}|{f.number}|{f.rapid_name}|{_pose(f)}", title, values=_pose(f),
                                note=note[:1].upper() + note[1:] + ".", links=links))  # fmt: skip
+    for tool, wobj, uf, ut in result.remote_tcp:  # crossarm.convert.remote_tcp
+        items.append(_Item(
+            f"remote_tcp|{tool}|{wobj}|{uf}|{ut}",
+            f"Remote TCP: {_code(tool)} (UFRAME[{uf}]) with {_code(wobj)} (UTOOL[{ut}])",
+            note="The moves with this stationary tool and this work object the robot holds are written with RTCP: the"
+                 " controller needs the Remote TCP option (J624). The user frame selected is the remote TCP: teach"
+                 f" UFRAME[{uf}] on the stationary tool's TCP, UTOOL[{ut}] on the part the robot holds.",
+            links=places.of("UFRAME_NUM", uf),
+        ))  # fmt: skip
     for c in result.computed_frames:
         x, y, z, w, p, r = c.values
         into = ", ".join(sorted({f"{kind} {name}" for kind, name, _, _ in c.uses}))

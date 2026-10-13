@@ -17,6 +17,7 @@ from crossarm.convert.external import (
     undeclared_layout,
 )
 from crossarm.convert.records import nodes
+from crossarm.convert.remote_tcp import remote_pair
 from crossarm.convert.tp_numbers import NUMBER_TYPES as _NUMBERS
 from crossarm.convert.tp_numbers import ascii_text, decimal
 from crossarm.convert.values import Unresolvable
@@ -400,6 +401,11 @@ class RoutineCalls:
         if expr is None:
             raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
         register = self.c.point_register(f"{layout.routine}.{slot.name}")
+        tool, wobj = self.c.point_frames(layout.routine, slot.name)
+        if tool is None and frames:  # moved to with the frames the routine is given: those of this call
+            tool, wobj = frames.get("UT"), wobj or frames.get("UF")
+        if remote_pair(self.c, tool, wobj):  # a remote TCP move (convert.remote_tcp): the point known now, inverted
+            return f"{register}={self.remote_argument(expr, slot.name, layout.routine, tool, wobj, line)}"
         if self.passed_point(expr, "CROSSARM.POINT", into=register):  # a parameter, an array element, Offs() of one
             return ""
         try:
@@ -407,9 +413,6 @@ class RoutineCalls:
         except Unresolvable as exc:
             raise Untranslatable(f"argument {slot.name}: '{format_expr(expr)}' is only known at run time ({exc})",
                                  Blocker.RUNTIME_POSITION) from exc  # fmt: skip
-        tool, wobj = self.c.point_frames(layout.routine, slot.name)
-        if tool is None and frames:  # moved to with the frames the routine is given: those of this call
-            tool, wobj = frames.get("UT"), wobj or frames.get("UF")
         if tool is None and self.active_uf is not None and self.active_ut is not None:
             uf, ut = self.active_uf, self.active_ut  # no routine moves to it: recorded in the frames selected here
         else:

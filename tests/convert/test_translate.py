@@ -95,19 +95,20 @@ HELD = 'PERS wobjdata wHeld:=[TRUE,TRUE,"",[[0,0,0],[1,0,0,0]],[[0,0,0],[1,0,0,0
 PARK = "CONST jointtarget jPark:=[[0,-30,30,0,90,0],[9E9,9E9,9E9,9E9,9E9,9E9]];"
 
 
-def test_moveabsj_with_a_stationary_tool_is_made_with_the_tool_already_selected():
-    """A joint target does not depend on the tool: only a Cartesian move needs the stationary tool."""
+def test_moveabsj_with_a_stationary_tool_and_a_robot_held_work_object_selects_the_remote_tcp_frames():
+    """A joint target does not depend on the frames; the controller wants the point's numbers to be the selected ones
+    (INTP-253): those of the remote TCP (convert.remote_tcp), the tool as the UFRAME, the work object as the UTOOL."""
     result = run("MoveL pHome,v100,fine,tGrip;\nMoveAbsJ jPark,v500,fine,tFixed\\WObj:=wHeld;",
                  HOME + TOOL + STATIONARY + HELD + PARK)  # fmt: skip
-    assert tp_lines(result) == ["UFRAME_NUM=0", "UTOOL_NUM=1", "L P[1] 100mm/sec FINE", "J P[2] 11% FINE"]
+    assert tp_lines(result) == ["UFRAME_NUM=0", "UTOOL_NUM=1", "L P[1] 100mm/sec FINE", "UFRAME_NUM=1", "UTOOL_NUM=2",
+                                "J P[2] 11% FINE"]  # fmt: skip
     point = result.programs[0].program.positions[1]
-    assert (point.uf, point.ut) == (0, 1)  # the selected numbers: the controller checks them (INTP-253)
+    assert (point.uf, point.ut) == (1, 2)
     assert todos(result) == []
     warnings = [n for n in result.notes if n.category == Blocker.STATIONARY]
-    assert len(warnings) == 2 and all(n.kind == "WARNING" for n in warnings)
-    # Numbered as when the move stayed TODO: the work object was, the tool it stopped was not.
-    assert [a.rapid_name for a in result.uframes] == ["wobj0", "wHeld"]
-    assert [a.rapid_name for a in result.utools] == ["tGrip"]
+    assert len(warnings) == 1 and warnings[0].kind == "WARNING" and "remote TCP" in warnings[0].message
+    assert [a.rapid_name for a in result.uframes] == ["wobj0", "tFixed"]
+    assert [a.rapid_name for a in result.utools] == ["tGrip", "wHeld"]
 
 
 def test_moveabsj_with_a_stationary_tool_first_selects_tool0():

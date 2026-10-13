@@ -269,8 +269,9 @@ class KarelPoses:
             raise Untranslatable(f"{what}: computed at run time when its other fields are known now ({exc})",
                                  Blocker.RUNTIME_FRAME) from exc  # fmt: skip
         if bool(holder) != (kind == "UT") or not fixed:
-            raise Untranslatable(f"{what}: {'stationary tool' if kind == 'UT' else 'robot-held or moving work object'}:"
-                                 " not supported", Blocker.STATIONARY)  # fmt: skip
+            raise Untranslatable(f"{what}: {'stationary tool' if kind == 'UT' else 'robot-held or moving work object'}"
+                                 " computed at run time: not loaded on the FANUC (a remote TCP frame is set by"
+                                 " SETUP_FRAMES from its declared value)", Blocker.STATIONARY)  # fmt: skip
         if kind == "UT" and self.c.config.tool_pin != TOOL_PIN_DEFAULT:
             raise Untranslatable(f"{what}: tframe computed at run time by KAREL with the tool's pin as it is"
                                  " (tool_pin -x), not turned for another hole", Blocker.RUNTIME_FRAME)  # fmt: skip

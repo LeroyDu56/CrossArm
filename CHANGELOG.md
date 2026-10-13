@@ -53,6 +53,16 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   by a computed name), it is as before.
 - A tool copied from one whose payload changes at run time: a warning (select the same PAYLOAD schedule with it),
   not a TODO; its frame is converted.
+- A stationary tool (tooldata robhold FALSE) with a work object the robot holds (wobjdata robhold TRUE, a fixed user
+  frame) is converted to the FANUC Remote TCP option (J624): the stationary tool is a UFRAME (its tframe, in the
+  world), the work object a UTOOL (uframe x oframe, on the faceplate), each point the part seen from the tool (the
+  inverse pose), MoveL and MoveC written with `RTCP` (`L P[2] 100mm/sec CNT20 RTCP`), MoveJ and MoveAbsJ without it
+  (J refuses RTCP). A point passed to a routine is passed that way by the callers. It was a TODO. The mapping file
+  lists the stationary tool under `uframes` and the work object under `utools`; no key is added or redefined. A
+  point only known at run time (CRobT, Offs() or RelTool() of a parameter, an array indexed at run time) and a work
+  object moved by a mechanical unit stay TODO and say why. The analysis and the checklist say the option is needed.
+  Measured on ROBOGUIDE (`rtcp` probe: the flange where RAPID puts it within 0.01 mm, the stationary TCP on RAPID's
+  line and circle in the part; RobotStudio puts the flange there too).
 
 ## 1.12.0 — 2026-10-13
 

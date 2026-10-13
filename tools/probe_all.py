@@ -88,6 +88,9 @@ probe, everything else in local/logs/probe_all.log):
                  CrossArm cannot write left to the integrator in a reserved register, the FOR skipped until set
     optargs      optional num, bool and string parameters: 1 / 0 whether given, then the value; Present() reads the
                  first, a \\INOUT num comes back only when given, \\Speed?Speed passes it on, a FUNC program too
+    rtcp         a stationary tool and a robot-held work object as the Remote TCP option (J624): the tool a UFRAME,
+                 the work object a UTOOL, each point inverted, L / C with RTCP: the flange where RAPID puts it, the
+                 stationary TCP on RAPID's line and circle in the part (sampled while it moves), J RTCP refused
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool frames 1 to 10, user frames 1 to 9, and
@@ -141,6 +144,7 @@ import make_point_probe
 import make_point_ref_probe
 import make_raise_probe
 import make_record_probe
+import make_rtcp_probe
 import make_search_probe
 import make_select_probe
 import make_setup_probe
@@ -514,6 +518,14 @@ def probe_optargs() -> str:
             " in a FUNC program: as RAPID")
 
 
+def probe_rtcp() -> str:
+    try:
+        problem = make_rtcp_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_rtcp_probe.summary(make_rtcp_probe.stored())
+
+
 def probe_forbound() -> str:
     problem = make_for_bound_probe.run(PROBES / "forbound")
     return (f"FAIL {problem}" if problem else
@@ -632,7 +644,7 @@ GROUPS: dict[str, dict[str, float]] = {
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
               "sysvars": 60, "optargs": 45},
     "library": {"karel": 140, "karelpose": 136, "karelfile": 120},
-    "frames": {"framefield": 100, "funcinline": 100},
+    "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150},
     "robotstudio": {"abb": 74},
 }  # fmt: skip
 GROUP_LIMIT_S = 600
@@ -664,7 +676,7 @@ def main() -> int:
               "karelfile": probe_karelfile, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
-              "optargs": probe_optargs,
+              "optargs": probe_optargs, "rtcp": probe_rtcp,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     grouped = [probe for group in GROUPS.values() for probe in group]

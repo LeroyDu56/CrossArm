@@ -29,6 +29,7 @@ from crossarm.convert.arguments import Signature
 from crossarm.convert.blockers import Blocker, Untranslatable
 from crossarm.convert.compute import MeasuredAtRunTime, Typed, Unknown, path_of
 from crossarm.convert.configuration import TOOL_PIN_DEFAULT
+from crossarm.convert.remote_tcp import remote_pair
 from crossarm.convert.tp_numbers import fmt_number, operand
 from crossarm.convert.values import RobTarget, Unresolvable
 from crossarm.convert.wrappers import parameters
@@ -428,6 +429,11 @@ class RuntimePoints:
         of the last move made, whatever the program: the frames that move selected on the FANUC, and still
         selected when LPOS reads (a selection lasts until another one)."""
         wanted = {"UF": self.active_uf, "UT": self.active_ut}
+        named = {(a.name or "").upper(): a.value for a in call.args}
+        if remote_pair(self.c, named.get("TOOL"), named.get("WOBJ")):  # convert.remote_tcp
+            raise Untranslatable("CRobT with a stationary tool and a robot-held work object: RAPID reads the tool in"
+                                 " the part, LPOS in the remote TCP frames its inverse (the part seen from the"
+                                 " tool): not converted", Blocker.STATIONARY)  # fmt: skip
         for arg in call.args:
             kind = {"TOOL": "UT", "WOBJ": "UF"}.get((arg.name or "").upper())
             if kind is None:

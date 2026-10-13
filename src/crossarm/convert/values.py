@@ -98,6 +98,8 @@ class Frame:
     load: Load | None = None  # tools only: their loaddata
     # PERS the programs change at run time (calibration...), read at the value saved in the backup.
     saved: tuple[str, ...] = ()
+    # Work objects only: moved by a mechanical unit (ufprog FALSE, or a ufmec named), not a fixed user frame.
+    moving: bool = False
 
 
 # RAPID predefined speeddata (v_tcp in mm/s) and zonedata (pzone_tcp in mm).
@@ -384,10 +386,11 @@ class Evaluator:
             return Frame(_IDENTITY, False, "wobj0")
         data, saved = self._frame_value(expr)
         try:  # [robhold, ufprog, ufmec, uframe, oframe]
-            robhold, _ufprog, _ufmec, ((ux, uy, uz), uq), ((ox, oy, oz), oq) = data
+            robhold, ufprog, ufmec, ((ux, uy, uz), uq), ((ox, oy, oz), oq) = data
             uq, oq = unit_quaternion(uq, f"{_short(expr)}.uframe"), unit_quaternion(oq, f"{_short(expr)}.oframe")
             pose = Pose((ux, uy, uz), uq).compose(Pose((ox, oy, oz), oq))  # type: ignore[arg-type]
-            return Frame(pose, bool(robhold), _short(expr), saved=saved)
+            moving = not ufprog or bool(str(ufmec or "").strip())
+            return Frame(pose, bool(robhold), _short(expr), saved=saved, moving=moving)
         except (TypeError, ValueError) as exc:
             raise Unresolvable(f"malformed wobjdata: {_short(expr)}") from exc
 

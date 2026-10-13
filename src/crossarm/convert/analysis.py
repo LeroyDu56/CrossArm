@@ -477,6 +477,14 @@ def priority_actions(result: ConversionResult, config: ConversionConfig | None =
             "#review", "Items to review", todo=len(notes),
             programs=tuple(sorted({note.program for note in notes if note.program})),
             who=_who((note.category for note in notes), integrator)))  # fmt: skip
+    if result.remote_tcp:  # crossarm.convert.remote_tcp
+        pairs = [f"`{tool}` UFRAME[{uf}] + `{wobj}` UTOOL[{ut}]" for tool, wobj, uf, ut in result.remote_tcp]
+        actions.append(Action(
+            "Check that the robot has the Remote TCP option (J624)",
+            f"{_names(pairs, 3)}: the moves with a stationary tool and a work object the robot holds are written with"
+            " RTCP (the user frame selected is the stationary tool, the tool frame the work object, each point the"
+            " part seen from the tool); a controller without the option does not take them.",
+            "#ck-frames", "Checklist: Frames and tools", who=(integrator, triage.OPTION), option="J624"))  # fmt: skip
     banked = [f for f in (*result.utools, *result.uframes) if f.bank is not None]
     if banked:
         slots = sorted({f"{'UTOOL' if f in result.utools else 'UFRAME'}[{f.slot}]" for f in banked})
