@@ -31,7 +31,7 @@ STATES = ("converted", "partial", "todo", "inside_todo", "not_converted")
 def test_the_schema(tmp_path):
     diag = diagnose.diagnose([make_backup(tmp_path)])
     assert set(diag) == TOP_KEYS
-    assert diag["schema_version"] == diagnose.SCHEMA_VERSION == 2
+    assert diag["schema_version"] == diagnose.SCHEMA_VERSION == 3
     assert set(diag["environment"]) == {"os", "os_release", "python", "exe", "day"}
     assert len(diag["environment"]["day"]) == 10  # the day, never the time
     assert diag["input"]["kind"] == "backup" and diag["input"]["tasks"] == 1
@@ -156,15 +156,54 @@ def test_the_code_in_no_program_says_why(tmp_path):
     diag = diagnose.diagnose([tmp_path])
     assert_adds_up(diag)
     assert diag["instructions"]["WAITTIME"]["not_converted_by"] == {diagnose.SYSTEM_MODULE: 1}
-    assert diag["instructions"]["RETURN"]["not_converted_by"] == {diagnose.FUNC: 1}
+    assert diag["instructions"]["RETURN"]["not_converted_by"] == {diagnose.FUNC_NEVER_CALLED: 1}
     assert diag["instructions"]["assignment"]["not_converted_by"] == {diagnose.LEFT_OUT: 1}
+
+
+def test_a_func_with_no_program_says_why(tmp_path):
+    """Schema 3: computed at conversion, inlined (here written as its test), left TODO at its calls, never called."""
+    source = tmp_path / "m.mod"
+    source.write_text("""MODULE M
+  VAR num n := 1;
+  PERS tooldata tGrip := [TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,1],[1,0,0,0],0,0,0]];
+  PERS tooldata tLong := [TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,1],[1,0,0,0],0,0,0]];
+  VAR string s := "a";
+  CONST robtarget p10 := [[500,0,400],[0,0,1,0],[0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]];
+  PROC main()
+    tLong := Longer(tGrip);
+    MoveL p10, v100, fine, tLong;
+    IF Ready() Stop;
+    n := Find(s);
+  ENDPROC
+  FUNC tooldata Longer(tooldata t)
+    VAR tooldata r;
+    r := t;
+    r.tframe.trans.z := r.tframe.trans.z + 50;
+    RETURN r;
+  ENDFUNC
+  FUNC bool Ready()
+    RETURN DInput(di1) = 1;
+  ENDFUNC
+  FUNC num Find(string t)
+    RETURN StrFind(t, 1, "b");
+  ENDFUNC
+  FUNC num Lonely()
+    RETURN Find(s);
+  ENDFUNC
+ENDMODULE
+""", encoding="utf-8")
+    diag = diagnose.diagnose([source])
+    assert_adds_up(diag)
+    assert diag["instructions"]["RETURN"]["not_converted_by"] == {
+        diagnose.FUNC_COMPUTED: 1, diagnose.FUNC_INLINED: 1, diagnose.FUNC_TODO: 1, diagnose.FUNC_NEVER_CALLED: 1}
+    assert "computed or inlined" not in json.dumps(diag)  # the schema 2 reason is gone
 
 
 def test_the_command_writes_both_files(tmp_path, capsys):
     assert main(["diagnose", str(PICK), "-o", str(tmp_path / "d")]) == 0
     assert "Nothing was sent" in capsys.readouterr().out
     data = json.loads((tmp_path / "d" / diagnose.DIAG_JSON).read_text(encoding="utf-8"))
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     md = (tmp_path / "d" / diagnose.DIAG_MD).read_text(encoding="utf-8")
     assert md == diagnose.markdown(data) and md.startswith("# CrossArm diagnostic report")
     assert not list(PICK.parent.glob("crossarm_*"))  # nothing written next to the input

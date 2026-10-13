@@ -12,6 +12,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   instruction: no branch runs, the ELSE neither, and a WHILE does not turn, as before. Measured on ROBOGUIDE
   (`condgate` probe). The report lists each condition to set (analysis, checklist "Conditions to set").
 - `crossarm diagnose`: such an instruction is the TODO; its blocks count as converted, no longer inside a TODO.
+- `crossarm diagnose`: the code of a FUNC not written as a program says why, in four reasons instead of
+  `FUNC computed or inlined`: `FUNC computed at conversion`, `FUNC inlined`, `FUNC left TODO at its calls`,
+  `FUNC never called`. `schema_version` 3 (no key removed).
 
 ## 1.11.1 — 2026-10-13
 

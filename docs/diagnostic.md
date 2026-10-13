@@ -45,17 +45,22 @@ RAPID's own vocabulary (public, from ABB's manuals), ABB option names and CrossA
 
     occurrences = converted + partial + todo + inside_todo + not_converted
 
-- `todo`: the statement carrying a TODO itself. A TODO is counted once, on the statement that carries it: in
-  `IF cond Stop;` whose condition is left TODO, the TODO is the `IF`'s, the `Stop` is `inside_todo` (as everything in
-  the blocks of a statement left TODO). A function's use is counted with its statement, so a function's `todo` is
+- `todo`: the statement carrying a TODO itself. A TODO is counted once, on the statement that carries it: in a
+  `TEST` whose `CASE` value is left TODO, the TODO is the `TEST`'s, a `Stop` in its blocks is `inside_todo` (as
+  everything in the blocks of a statement left TODO as a whole). An `IF`, `WHILE` or `TEST` whose condition alone is
+  left TODO (its blocks written, the condition left to the integrator, since 1.12) is the TODO; its blocks are
+  counted as they were converted. A function's use is counted with its statement, so a function's `todo` is
   always 0: in a statement left TODO, it is `inside_todo`. The `todo` of `instructions` and `user_calls` add up to
   `conversion.todo_on_instructions`; `conversion.todo_not_on_an_instruction` is the rest of the report's TODO (a TODO
   not tied to one RAPID statement, none in the inputs at hand).
 - `not_converted`: uses in code no program is written from, by reason (`not_converted_by`, a fixed list): `system
   module` (a routine of a system module no program calls, converted only on request), `routine left out` (a TRAP no
   interrupt connects, parameters not converted, a second routine of the same name), `wraps one move` (its calls are
-  written as its move), `FUNC computed or inlined` (a FUNC not written as a program: its value is computed at
-  conversion, or its body copied where it is called), `provided by the integrator` (`external_routines`), `conversion
+  written as its move); for a FUNC not written as a program, `FUNC computed at conversion` (every call of it in the
+  code converted is converted: its value worked out when converting), `FUNC inlined` (its body copied into its
+  calls, or a bool FUNC written as its test in the conditions calling it), `FUNC left TODO at its calls` (a call of
+  it in the code converted is left TODO), `FUNC never called` (no call of it in the code converted); a call made by
+  a FUNC with no program counts as that FUNC's own calls do; `provided by the integrator` (`external_routines`), `conversion
   did not complete`, `other` (none expected: the tests check every input at hand has none).
 
 **Checked by a test.** `tests/test_diagnose_privacy.py` makes the report of every input at hand (the test fixtures,
@@ -66,7 +71,11 @@ of the backup by chance, so the test checks numbers in the report's text, not in
 
 ## Schema
 
-`schema_version` is 2 (CrossArm 1.11.1). A later version adds keys, never removes one, as for `crossarm_summary.json`.
+`schema_version` is 3 (CrossArm 1.12.0). A later version adds keys, never removes one, as for `crossarm_summary.json`.
+
+- 3 tells apart the FUNCs not written as a program: the reason `FUNC computed or inlined` of version 2 is now one of
+  `FUNC computed at conversion`, `FUNC inlined`, `FUNC left TODO at its calls`, `FUNC never called`. Nothing else
+  changes; a tool reading version 2 reads version 3 as is, the four reasons being values of `not_converted_by`.
 
 - 2 adds `inside_todo`, `not_converted` and `not_converted_by` to each row of `instructions`, `functions` and
   `user_calls`, and `todo_on_instructions`, `todo_not_on_an_instruction`, `not_converted_by` to `conversion`.

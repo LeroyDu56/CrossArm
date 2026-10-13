@@ -63,7 +63,7 @@ from crossarm.rapid.tokens import RESERVED_WORDS, TokenKind
 from crossarm.rapid.walk import split_params, walk_statements
 from crossarm.support import InternalError, crossarm_frame, recording_internal
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DIAG_JSON = "crossarm_diag.json"
 DIAG_MD = "crossarm_diag.md"
 WINDOW = 10  # tokens kept on each side of a statement CrossArm failed on
@@ -96,16 +96,22 @@ OTHER_CAUSE = "other (cause not listed)"
 # ---------------------------------------------------------------------------
 
 
-# Why a use is in no program: a fixed list (schema 2). Each use of the code CrossArm does not write gets one.
+# Why a use is in no program: a fixed list (schema 2; schema 3 tells the FUNCs apart). Each use of the code CrossArm
+# does not write gets one.
 SYSTEM_MODULE = "system module"  # a routine of a system module no program calls: converted only on request
 LEFT_OUT = "routine left out"  # a TRAP no interrupt connects, parameters not converted, a routine of the same name
 MOVE_ROUTINE = "wraps one move"  # its calls are written as its move: counted where it is called
-FUNC = "FUNC computed or inlined"  # a FUNC not written as a program: its value is computed, or its body copied
+# A FUNC not written as a program (schema 3; schema 2 had them all as "FUNC computed or inlined"):
+FUNC_COMPUTED = "FUNC computed at conversion"  # each call converted: its value worked out when converting
+FUNC_INLINED = "FUNC inlined"  # its body copied into its calls, or a bool FUNC written as its test in the conditions
+FUNC_TODO = "FUNC left TODO at its calls"  # called by converted code, a call left TODO
+FUNC_NEVER_CALLED = "FUNC never called"  # no call in the code converted
 PROVIDED = "provided by the integrator"  # external_routines
 NOT_COMPLETED = "conversion did not complete"
 NOT_COUNTED = "other"
 CONDITION_ONLY = "condition only"  # status() of an instruction whose condition alone is TODO (never in the output)
-REASONS = (SYSTEM_MODULE, LEFT_OUT, MOVE_ROUTINE, FUNC, PROVIDED, NOT_COMPLETED, NOT_COUNTED)
+REASONS = (SYSTEM_MODULE, LEFT_OUT, MOVE_ROUTINE, FUNC_COMPUTED, FUNC_INLINED, FUNC_TODO, FUNC_NEVER_CALLED, PROVIDED,
+           NOT_COMPLETED, NOT_COUNTED)
 
 
 @dataclass
@@ -502,13 +508,15 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
 
             skipped = ({(m.upper(), r.upper()): why for m, r, why in result.skipped_routines}
                        if result is not None else {})  # fmt: skip
+            funcs = _func_reasons(modules, statuses, result) if result is not None else {}
 
             def status(module: n.Module, routine: n.Routine, stmt: n.Stmt, system: bool, statuses=statuses,
-                       warned=warned, skipped=skipped, done=result is not None) -> tuple[str, str | None]:  # fmt: skip
+                       warned=warned, skipped=skipped, funcs=funcs,
+                       done=result is not None) -> tuple[str, str | None]:  # fmt: skip
                 why = skipped.get((module.name.upper(), routine.name.upper()))
                 if why is not None:  # no program, no TODO (coverage counts a PROC or TRAP left out not converted)
                     if routine.kind == "FUNC":
-                        return "not_converted", FUNC
+                        return "not_converted", funcs.get(routine.name.upper(), FUNC_NEVER_CALLED)
                     return "not_converted", MOVE_ROUTINE if why.startswith("it wraps one move") else LEFT_OUT
                 key = (module.name.upper(), routine.name.upper(), stmt.span.line, stmt.span.col, type(stmt).__name__)
                 if key in statuses:
@@ -517,7 +525,7 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
                     if not statuses[key]:
                         return "todo", None
                     return ("partial" if (module.name.upper(), stmt.span.line) in warned else "converted"), None
-                return "not_converted", _not_converted(routine, system, done, config)
+                return "not_converted", _not_converted(routine, system, done, config, funcs)
 
             task_routines = 0
             for parsed_file in parsed:
@@ -590,17 +598,71 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
         }
 
 
-def _not_converted(routine: n.Routine, system: bool, done: bool, config: ConversionConfig) -> str:
+def _not_converted(routine: n.Routine, system: bool, done: bool, config: ConversionConfig,
+                   funcs: dict[str, str]) -> str:  # fmt: skip
     """Why a statement of a routine no program holds is not converted."""
     if not done:
         return NOT_COMPLETED
     if routine.name.upper() in {k.upper() for k in config.external_routines}:
         return PROVIDED
     if routine.kind == "FUNC":
-        return FUNC
+        return funcs.get(routine.name.upper(), FUNC_NEVER_CALLED)
     if system:
         return SYSTEM_MODULE
     return NOT_COUNTED
+
+
+def _func_reasons(modules: list[n.Module], statuses: dict[tuple, bool | str], result) -> dict[str, str]:
+    """Why each FUNC of the task has no program, by upper-case name (schema 3): inlined (its body copied into its
+    calls, or written as its test), left TODO at its calls (a call in converted code left TODO), computed at
+    conversion (every such call converted), never called (no call in the code converted). The calls made by a FUNC
+    with no program count as its own calls do: computed or inlined, they are converted; left TODO, TODO."""
+    inlined = {k.upper() for k, v in result.inlined.items() if v} | {k.upper() for k, v in result.inlined_sites.items()
+                                                                       if v}  # fmt: skip
+    funcs = {r.name.upper(): (m, r) for m in reversed(modules) for r in m.routines if r.kind == "FUNC"}
+    seen: dict[str, set[str]] = {}
+
+    def key(module: n.Module, routine: n.Routine, stmt: n.Stmt) -> tuple:
+        return (module.name.upper(), routine.name.upper(), stmt.span.line, stmt.span.col, type(stmt).__name__)
+
+    def visit(module: n.Module, routine: n.Routine, stmts: Iterable[n.Stmt], forced: str | None) -> None:
+        for stmt in stmts:
+            state, whole = forced, forced == "todo"
+            if forced is None:
+                value = statuses.get(key(module, routine, stmt))
+                if value is not None:
+                    state = "todo" if value is False or value == CONDITION_ONLY else "converted"
+                    whole = value is False
+            if state is not None and not isinstance(stmt, n.Unsupported):
+                for call in _calls(_expressions(stmt)):
+                    seen.setdefault(call.name.upper(), set()).add(state)
+            visit(module, routine, _blocks(stmt), "todo" if whole else forced)
+
+    programmed = set()
+    for module in modules:
+        for routine in module.routines:
+            statements = [*walk_statements(routine.body), *routine.handlers]
+            if any(key(module, routine, stmt) in statuses for stmt in statements):
+                programmed.add(routine.name.upper())
+                visit(module, routine, [*routine.body, *routine.handlers], None)
+
+    def reason(name: str) -> str:
+        if name in inlined:
+            return FUNC_INLINED
+        states = seen.get(name, set())
+        return FUNC_TODO if "todo" in states else FUNC_COMPUTED if "converted" in states else FUNC_NEVER_CALLED
+
+    reasons: dict[str, str] = {}
+    for _ in range(len(funcs) + 1):  # a FUNC called by a FUNC with no program: until nothing changes
+        now = {name: reason(name) for name in funcs if name not in programmed}
+        if now == reasons:
+            break
+        reasons = now
+        for name, why in now.items():
+            if why != FUNC_NEVER_CALLED:
+                module, routine = funcs[name]
+                visit(module, routine, [*routine.body, *routine.handlers], "todo" if why == FUNC_TODO else "converted")
+    return reasons
 
 
 def _is_system(module: n.Module, parsed: ParseResult, task) -> bool:
