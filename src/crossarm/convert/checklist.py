@@ -339,8 +339,11 @@ _RESERVED = (
     ("CROSSARM.RAISED", ("reserved by CrossArm: the error a routine ends with (0: none), set by the routines that"
                          " raise the program's own errors and tested after each CALL of them")),
     ("CROSSARM.ERRNO", "reserved by CrossArm: ERRNO, the error an ERROR handler takes"),
-    ("CROSSARM.CONDITION.", ("reserved by CrossArm: a condition (a TEST's value) it could not convert, set by the"
-                             " line the integrator writes before the instruction (Conditions to set)")),
+    ("CROSSARM.CONDITION.", ("reserved by CrossArm: a condition (a TEST's value, a FOR's bound) it could not"
+                             " convert, set by the line the integrator writes before the instruction (Conditions to"
+                             " set)")),
+    ("CROSSARM.FOR.", ("reserved by CrossArm: a FOR's bound, worked out before the loop (TP reads the end register"
+                       " again at each turn, RAPID once)")),
     ("CROSSARM.RETRY.", ("reserved by CrossArm: the RETRY count of this routine's ERROR handler (at most 4, then"
                          " the program stops)")),
 )  # fmt: skip
@@ -392,7 +395,7 @@ def _registers(result: ConversionResult, places: _Places) -> tuple[str, list[_It
 def _conditions(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
     items = []
     for gate in result.gated:
-        what = "value" if gate.slot.startswith("R[") else "condition"
+        what = "bound" if gate.what == "FOR" else "value" if gate.slot.startswith("R[") else "condition"
         items.append(_Item(
             f"condition|{gate.program}|{gate.line}|{gate.slot}|{gate.rapid}",
             f"{_e(gate.program)}.LS: set {_code(gate.slot)} to {_code(gate.rapid)}",
@@ -402,9 +405,9 @@ def _conditions(result: ConversionResult, places: _Places) -> tuple[str, list[_I
                     " set where the instruction starts, each turn for a WHILE."),
             links=places.links([(gate.program, gate.line)], "at"),
         ))  # fmt: skip
-    intro = ("Conditions CrossArm could not write in TP: the IF, WHILE or TEST is converted with its blocks and tests a"
-             " reserved flag (a register for a TEST). Write the line setting it, from what the robot can read (an"
-             " input, a register), in place of the jump the remark before it names.")  # fmt: skip
+    intro = ("Conditions CrossArm could not write in TP: the IF, WHILE, TEST or FOR is converted with its blocks and"
+             " tests a reserved flag (a register for a TEST's value or a FOR's bound). Write the line setting it, from"
+             " what the robot can read (an input, a register), in place of the jump the remark before it names.")  # fmt: skip
     return intro, items
 
 

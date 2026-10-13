@@ -3,6 +3,19 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- A FOR whose bound is a calculation (`nRows*2-1`, `StrLen(s)`, a group input) is converted: the bound is worked
+  out before the loop in a register of its own (mapping key `CROSSARM.FOR.<ROUTINE>.L<line>.FROM|TO`, added). A bound
+  TP cannot work out is left to the integrator in a reserved register (`CROSSARM.CONDITION.<ROUTINE>.L<line>`), the
+  loop written with its body behind a `JMP LBL[n]` that skips it until the line setting the register replaces the
+  jump: the loop does not turn before. Listed in the checklist "Conditions to set".
+- A FOR with a constant STEP other than 1 or -1 (`STEP 2`, `STEP -0.5`) is converted to a loop of labels, the
+  counter tested before each turn and stepped after it (it was a TODO).
+- Fixed: TP reads the end register of a FOR again at each turn, RAPID works it out once: a loop whose body (or a
+  routine it calls) changes the data of its end turned a different number of times. The end is now copied into its
+  own register before the loop. Measured on ROBOGUIDE (`forbound` probe).
+
 ## 1.12.0 — 2026-10-13
 
 An instruction whose condition TP cannot write keeps its blocks. Share of instructions converted: the test corpus

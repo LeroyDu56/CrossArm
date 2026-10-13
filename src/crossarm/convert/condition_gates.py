@@ -7,7 +7,8 @@ An IF, ELSEIF, WHILE or TEST whose test cannot be written in TP (the operating m
 operator, a FUNC that does not convert...) is written whole, its blocks converted, with the test alone left to the
 integrator: it reads a flag (a register for a TEST) CrossArm reserves for it, set by a line the integrator writes in
 place of a jump. Until then, the jump skips the whole instruction: no block of it runs, the ELSE and the other
-branches neither, as when the whole instruction was a TODO remark; a WHILE does not turn.
+branches neither, as when the whole instruction was a TODO remark; a WHILE does not turn. A FOR whose bound cannot
+be written counts to a reserved register the same way (translate.for_bound): skipped, it does not turn.
 
     IF OpMode() = OP_AUTO THEN                  !TODO l.12 IF OpMode() = OP_AUTO THEN
         MoveL pPick, v500, z10, tGrip;          !Replace JMP by F[3]=(...)
@@ -53,7 +54,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 KEY = "CROSSARM.CONDITION."  # the mapping key of a reserved flag or register: CROSSARM.CONDITION.MAIN.L12
 GATE = "CrossArmCondition"  # the name the stand-in of a condition carries in the tree (never written)
-CONDITION = {"IF": "condition", "WHILE": "condition", "TEST": "value"}
+CONDITION = {"IF": "condition", "WHILE": "condition", "TEST": "value", "FOR": "bound"}
 # The words a TODO left this way carries: what the reports tell it by (crossarm.convert.analysis, checklist).
 MARK = " is written with its blocks, its "
 
@@ -70,6 +71,7 @@ class GatedCondition:
     label: int  # the JMP LBL[label] line to replace
     reason: str  # why it is not converted
     category: str  # its cause (crossarm.convert.blockers.Blocker)
+    what: str = "IF"  # the instruction: IF, WHILE, TEST, FOR (whose bound it is)
 
 
 @dataclass(slots=True)
@@ -129,8 +131,9 @@ class ConditionGates:
         self.gate_names[id(stand_in)] = f"F[{number}:{_comment(text)}]"
         return stand_in
 
-    def gate_register(self, expr: n.Expr, exc: BaseException) -> str:
-        """The register a TEST selects on when its value cannot be written: R[n], set by the integrator."""
+    def gate_register(self, expr: n.Expr, exc: BaseException, what: str = "TEST") -> str:
+        """The register a TEST selects on (a FOR counts to) when its value cannot be written: R[n], set by the
+        integrator."""
         from crossarm.convert.translate import _comment
 
         if self.strict or not self.gates:
@@ -138,7 +141,7 @@ class ConditionGates:
         text = " ".join(_text(expr).split())
         key = self._gate_key(expr.span.line)
         number = self.c.registers.number(text, key, "")
-        self._pending(expr, exc, f"R[{number}]", text, "TEST")
+        self._pending(expr, exc, f"R[{number}]", text, what)
         return f"R[{number}:{_comment(text)}]"
 
     def is_gate(self, expr: n.Expr) -> bool:
@@ -168,7 +171,7 @@ class ConditionGates:
             self.tags.tag(written, 0, gate.line)  # type: ignore[attr-defined]
             lines += written
             self.c.result.gated.append(GatedCondition(self.name, gate.line, statement.span.line, gate.slot, gate.rapid,
-                                                      end, gate.reason, gate.category))  # fmt: skip
+                                                      end, gate.reason, gate.category, gate.what))  # fmt: skip
         self.lines[top:top] = lines  # type: ignore[attr-defined]
         first = pending[0]
         source = self._source_line(first.line) or f"{first.what} {first.rapid}"
@@ -190,6 +193,8 @@ class ConditionGates:
             probe = n.Test(expr.span, expr, ())
         elif what == "WHILE":
             probe = n.While(expr.span, expr, ())
+        elif what == "FOR":
+            probe = n.For(expr.span, "i", expr, expr, None, ())
         else:
             probe = n.If(expr.span, (n.IfBranch(expr, ()),), ())
         reason, category = self.todo_cause(probe, exc)  # type: ignore[attr-defined]

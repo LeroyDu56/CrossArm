@@ -58,6 +58,9 @@ from crossarm.convert.compute import (
     path_of,
     to_pose,
 )
+from crossarm.convert.compute import (
+    _names as read_names,
+)
 from crossarm.convert.condition_gates import ConditionGates, GatedCondition
 from crossarm.convert.config import ConversionConfig, frame_key
 from crossarm.convert.configuration import (
@@ -163,6 +166,7 @@ REGISTER_COMMENT_MAX = 16
 # and its companions); \UIActiveSignal, which sets an output while the message is shown, is not one of them.
 VISUALIZE_OPTIONS = frozenset({"VISUALIZE", "HEADER", "MESSAGE", "MSGARRAY", "ICON", "IMAGE", "VISUALIZETIME"})
 WAIT_CLOCK = "WaitTimer"  # the register a wait with a MaxTime reads its TIMER into
+_CONSTANT = r"\(?-?\.?\d[\d.]*\)?"  # a number as a TP line writes it: 3, (-2), .5
 TEST_VALUE = "TestValue"  # the register a TEST on anything but a register is selected on
 SELECT_INDENT = " " * len("SELECT ")  # a SELECT's next lines, as the controller stores them (ROBOGUIDE)
 NO_LOAD_KG = 0.001  # RAPID's load0 / tool0 placeholder mass: no real payload declared
@@ -4856,14 +4860,37 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         self.active_ut = ut1 if ut1 == ut2 else None
 
     def for_stmt(self, loop: n.For) -> None:
+        """FOR -> FOR R[i]=a TO|DOWNTO b. With a STEP other than 1 or -1 (TP FOR only counts by 1): a loop of labels,
+        the counter tested before each turn and stepped after it (ROBOGUIDE, `forbound` probe):
+
+            FOR i FROM 0 TO 20 STEP 2 DO        R[1:i]=0
+                ...                             LBL[1]
+            ENDFOR                              IF R[1:i]>20,JMP LBL[2]
+                                                ...
+                                                R[1:i]=R[1:i]+2
+                                                JMP LBL[1]
+                                                LBL[2]
+        """
         step = 1.0 if loop.step is None else self.c.evaluator.constant_number(loop.step)
-        if step not in (1.0, -1.0):
-            raise Untranslatable("FOR with a STEP other than 1 or -1 (TP FOR only counts by 1)", Blocker.LOOP)
+        if step == 0:
+            raise Untranslatable("FOR with a STEP of 0 (never ends)", Blocker.LOOP)
         key = loop.var.upper()
         register = self.c.written_register(loop.var, key=f"{self.name}.{loop.var}")
-        # A negative bound in parentheses: ROBOGUIDE refuses FOR R[1]=-2 TO 2 (ASBN-092).
-        start, end = operand(self.numeric(loop.start)), operand(self.numeric(loop.end))
-        self.emit(f"FOR {register}={start} {'TO' if step > 0 else 'DOWNTO'} {end}")
+        top = self.gate_open()  # a bound that cannot be written: left to the integrator, the loop not turning
+        try:
+            start, end = self.for_bound(loop, loop.start, "FROM"), self.for_bound(loop, loop.end, "TO")
+        except BaseException:
+            self.gate_drop()
+            raise
+        skip = self.gate_close(top)
+        stepped = step not in (1.0, -1.0)
+        if stepped:
+            head, out = self.label(), self.label()
+            self.emit(f"{register}={start}")
+            self.emit(f"LBL[{head}]")
+            self.emit(f"IF {register}{'>' if step > 0 else '<'}{end},JMP LBL[{out}]")
+        else:
+            self.emit(f"FOR {register}={start} {'TO' if step > 0 else 'DOWNTO'} {end}")
         self.loop_vars[key] = register
         self.active_uf = self.active_ut = None  # the second turn starts where the first one ended
         changes = Unknown(f"changes in the loop at l.{loop.span.line}")
@@ -4872,9 +4899,58 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.block(loop.body)
         finally:
             del self.loop_vars[key]
-        self.emit("ENDFOR")
+        if stepped:
+            self.emit(f"{register}={register}{'+' if step > 0 else '-'}{decimal(register_value(abs(step)))}")
+            self.emit(f"JMP LBL[{head}]")
+            self.emit(f"LBL[{out}]")
+        else:
+            self.emit("ENDFOR")
+        if skip is not None:
+            self.emit(f"LBL[{skip}]")  # skipped until the integrator sets the bound: the loop did not turn
         self.active_uf = self.active_ut = None  # zero turns, or several
         self.forget(loop.body, changes)
+
+    def for_bound(self, loop: n.For, expr: n.Expr, which: str) -> str:
+        """A FOR bound as TP reads it: a constant or a register. A calculation is worked out before the FOR in a
+        register of its own (`CROSSARM.FOR.<ROUTINE>.L<line>.TO`); a bound TP cannot work out is left to the
+        integrator in a reserved register (condition_gates), the FOR skipped until the line setting it is written.
+
+        TP reads the end register again at each turn (ROBOGUIDE, `forbound` probe: a loop to R[n] whose body takes 1
+        from R[n] turns 2 times out of 4), as the test of a loop with a STEP does; RAPID works the bounds out once: an
+        end the loop may change is copied."""
+        try:  # a negative bound in parentheses: ROBOGUIDE refuses FOR R[1]=-2 TO 2 (ASBN-092)
+            value = operand(self.numeric(expr))
+            if which == "FROM" or not self._bound_changes(loop, expr, value):
+                return value
+        except (Untranslatable, Unresolvable) as exc:
+            mark = len(self.lines)
+            try:
+                value = self.arithmetic(expr)
+            except (Untranslatable, Unresolvable):
+                del self.lines[mark:]
+                return self.gate_register(expr, exc, "FOR")
+            if re.fullmatch(_CONSTANT, value):  # StrLen of a text known now
+                return value
+        line = loop.span.line
+        bound = self.c.written_register(f"FOR {which} l.{line}", key=f"CROSSARM.FOR.{self.routine.name.upper()}.L{line}.{which}")
+        self.emit(f"{bound}={value}")
+        return bound
+
+    def _bound_changes(self, loop: n.For, expr: n.Expr, value: str) -> bool:
+        """Whether the end of a FOR, written `value`, may be other at a later turn than before the first one."""
+        if re.fullmatch(_CONSTANT, value) or value.startswith("AR["):  # a constant, an argument
+            return False
+        if not re.fullmatch(r"R\[[^\]]*\]", value):  # an input: read again at each turn
+            return True
+        names, _ = self.c.effects.of(loop.body)  # what the loop's own lines change, and RAPID's instructions
+        roots = {name.upper() for name in read_names(expr)}
+        if roots & names:
+            return True
+        routines = self.c.effects.calls.routines  # a routine of the backup may change module data
+        called = any(isinstance(s, n.Unsupported) or isinstance(s, n.ProcCall)
+                     and (s.name.upper() in routines or s.name.startswith("%") or s.name.upper() == "CALLBYVAR")
+                     for s in walk_statements(loop.body))  # fmt: skip
+        return called and bool(roots - self.local_names)
 
     def while_stmt(self, loop: n.While) -> None:
         loop = n.While(loop.span, self.fold_texts(self.simplify(loop.condition)), loop.body)

@@ -413,8 +413,9 @@ def priority_actions(result: ConversionResult, config: ConversionConfig | None =
         slots = [f"`{g.slot}`" for g in result.gated]
         actions.append(Action(
             f"Set the {_plural(len(result.gated), 'condition')} CrossArm could not convert",
-            f"{_names(slots, 4)}: each IF, WHILE or TEST is written with its blocks, and skipped until the line before"
-            " it sets its flag (a register for a TEST) in place of the `JMP` the remark names; "
+            f"{_names(slots, 4)}: each IF, WHILE, TEST or FOR is written with its blocks, and skipped until the line"
+            " before it sets its flag (a register for a TEST's value or a FOR's bound) in place of the `JMP` the remark"
+            " names; "
             f"{_todo(len(marked))}{_programs(marked)}.", "#ck-conditions", "Checklist: Conditions to set",
             todo=len(marked), programs=tuple(sorted({note.program for note in marked if note.program})),
             who=(integrator,)))  # fmt: skip

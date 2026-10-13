@@ -629,8 +629,12 @@ def test_for_loops():
     ]  # fmt: skip
 
 
-def test_for_with_other_step_is_a_todo():
-    assert "STEP" in todos(run("FOR i FROM 0 TO 10 STEP 2 DO\nENDFOR"))[0]
+def test_for_with_other_step_is_a_loop_of_labels():
+    assert tp_lines(run("FOR i FROM 0 TO 10 STEP 2 DO\nWaitTime 1;\nENDFOR")) == [
+        "R[1:i]=0", "LBL[1]", "IF R[1:i]>10,JMP LBL[2]", "WAIT   1.00(sec)", "R[1:i]=R[1:i]+2", "JMP LBL[1]", "LBL[2]"]
+    lines = tp_lines(run("FOR i FROM 3 TO -3 STEP -1.5 DO\nWaitTime 1;\nENDFOR"))
+    assert lines[2] == "IF R[1:i]<(-3),JMP LBL[2]" and lines[4] == "R[1:i]=R[1:i]-1.5"
+    assert "STEP of 0" in todos(run("FOR i FROM 0 TO 10 STEP 0 DO\nENDFOR"))[0]
 
 
 def test_while_loops_use_labels():
