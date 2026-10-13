@@ -1,10 +1,17 @@
-## CrossArm 1.11.0
+## CrossArm 1.11.1
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
-everything left to review before commissioning. **1.11.0 is about field feedback: the programs written are the
-same as 1.10.1.**
+everything left to review before commissioning. **1.11.1 corrects the diagnostic report: the programs written are
+the same as 1.11.0.**
 
-**What 1.11 brings** ([CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md)):
+**What 1.11.1 changes:** in `crossarm diagnose`, per-instruction counts now add up. Each row of the RAPID
+instructions, functions and calls says how many uses were converted, converted with a warning, left TODO, inside a
+statement left TODO, or in no program and why (system module, routine left out, FUNC computed or inlined...). A
+TODO is counted once, on the statement carrying it: in `IF cond Stop;` whose condition is TODO, the TODO is the
+IF's. `schema_version` 2, keys added only
+([what the report contains](https://github.com/LeroyDu56/CrossArm/blob/main/docs/diagnostic.md)).
+
+**What 1.11 brought** ([CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md)):
 
 - `crossarm diagnose BACKUP` (**Create diagnostic report** in the window): `crossarm_diag.md` and
   `crossarm_diag.json`, an anonymous report of what CrossArm understood and converted, counts only: no name,
@@ -25,7 +32,7 @@ test corpus, written for testing; the rest is marked `!TODO` with its cause
 
 **Licence:** free for evaluation and other non-production use; production use needs a commercial licence:
 **enzoleroy56@gmail.com** ([LICENSING.md](https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md)).
-Business Source License 1.1; this version becomes Apache 2.0 on 2030-10-12. `python_license.txt` covers the
+Business Source License 1.1; this version becomes Apache 2.0 on 2030-10-13. `python_license.txt` covers the
 Python runtime bundled in the executable.
 
 **Download `CrossArm.exe`**: Windows 10/11, nothing to install, runs offline. Drop a backup on its icon,

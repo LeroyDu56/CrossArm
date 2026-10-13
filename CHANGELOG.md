@@ -3,7 +3,9 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.11.1 — 2026-10-13
+
+The diagnostic report corrected. The programs written are the same as 1.11.0.
 
 - `crossarm diagnose`: per-instruction counts now add up. Each row of the RAPID instructions, functions and calls
   gains `inside_todo` (in a statement left TODO as a whole) and `not_converted` with its reason (`system module`,
