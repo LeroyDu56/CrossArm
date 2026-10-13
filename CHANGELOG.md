@@ -15,6 +15,18 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - Fixed: TP reads the end register of a FOR again at each turn, RAPID works it out once: a loop whose body (or a
   routine it calls) changes the data of its end turned a different number of times. The end is now copied into its
   own register before the loop. Measured on ROBOGUIDE (`forbound` probe).
+- `Load`, `StartLoad`, `WaitLoad`, `UnLoad` and `EraseModule` of a module the backup holds are converted to a remark
+  with a warning: a FANUC controller has no modules, the module's programs are converted with the others and are on
+  the controller before the line runs (they stay there after an UnLoad). A module the backup does not hold, or a file
+  named at run time, stays TODO and says so: load its programs on the controller (it was a TODO saying TP has no
+  such instruction). `Save` stays TODO.
+- `GetSysData` of a tool or work object selected earlier in the same routine (by a move or SetSysData) is converted
+  as the copy of that frame (`tSaved := tGrip`, written as such an assignment is). Where only the caller knows the
+  active frame (at the start of a routine, after a call), it stays TODO as before (a TP program reads no system
+  variable). `GetSysData` of a load is a remark with a warning: the payload carried is the PAYLOAD schedule
+  selected.
+- `crossarm anonymize`: a text naming the file of a module of the backup (`"HOME:/dir/Name.mod"`) becomes the
+  module's new name with its extension, so that the anonymized copy loads the same modules.
 
 ## 1.12.0 — 2026-10-13
 

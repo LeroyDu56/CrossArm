@@ -39,12 +39,15 @@ NO_TP_FAMILIES = {
     ),
     "a screen or an application of the ABB pendant: TP has none": ("TPSHOW", "UISHOW"),
     "the ABB event log and its error numbers: TP has none": ("ERRLOG", "BOOKERRNO", "ERRRAISE", "ERRWRITE"),
+    # Load / StartLoad / WaitLoad / UnLoad / EraseModule of a module the backup holds are a remark, of another one a
+    # TODO saying so (convert.module_loads); Save stays here.
     "ABB system instruction (program modules, mechanical units): TP has none": (
         "SAVE", "LOAD", "UNLOAD", "STARTLOAD", "WAITLOAD", "ERASEMODULE",
         "ACTUNIT", "DEACTUNIT",
     ),
     # Measured: a TP program reads no system variable on the controller CrossArm was measured on (R[n]=$MNUTOOLNUM[1],
-    # $MSKKEY... load, then stop it: VARS-034); SetSysData is converted (convert.system_data).
+    # $MSKKEY... load, then stop it: VARS-034); SetSysData is converted (convert.system_data), and GetSysData of a
+    # frame selected before it in the routine.
     "the active tool, work object or load read from the controller: a TP program reads no system variable (VARS-034"
     " Variable cannot be accessed, measured); select the frames by number where the RAPID selects them": ("GETSYSDATA",),
     "the operating mode (AUTO, T1, T2): a TP program reads no system variable (VARS-034, measured) and FANUC's"

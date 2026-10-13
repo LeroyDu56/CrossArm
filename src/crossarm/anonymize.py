@@ -55,6 +55,7 @@ from crossarm.backup import open_source, task_names
 from crossarm.convert.compute import PREDEFINED
 from crossarm.convert.config import ConversionConfig
 from crossarm.convert.karel_files import PREDEFINED_DIRECTORIES
+from crossarm.convert.module_loads import module_of
 from crossarm.convert.translate import tp_program_name
 from crossarm.convert.unsupported import RAPID_DATA, RAPID_INSTRUCTIONS
 from crossarm.diagnose import NATIVE_FUNCTIONS, NATIVE_TYPES, SIGNAL_TYPES
@@ -433,6 +434,8 @@ class _Texts:
             out = self.suffixes[upper]
         elif upper in self.names.new:
             out = self.names.new[upper]
+        elif (stem := module_of(value)) != upper and self.names.category.get(stem) == "MOD" and stem in self.names.new:
+            out = self.names.new[stem] + value[value.upper().rindex(stem) + len(stem):]  # Load "HOME:/X.mod": its module
         else:
             out = self._code(value)
         self.new[value] = out

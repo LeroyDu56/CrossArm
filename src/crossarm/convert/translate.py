@@ -97,6 +97,8 @@ from crossarm.convert.karel_files import KarelFiles
 from crossarm.convert.karel_poses import KarelPoses, karel_candidates, karel_would
 from crossarm.convert.karel_poses import place_frames as place_karel_frames
 from crossarm.convert.late_calls import LateCalls
+from crossarm.convert.module_loads import INSTRUCTIONS as MODULE_LOADS
+from crossarm.convert.module_loads import ModuleLoads
 from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.raised import RaisedErrors, RaisedPaths
@@ -2204,7 +2206,7 @@ class Converter:
 
 
 class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline,
-                         FuncPrograms, LateCalls, SystemData, RaisedPaths, ConditionGates):
+                         FuncPrograms, LateCalls, SystemData, ModuleLoads, RaisedPaths, ConditionGates):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2473,7 +2475,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         # An Unresolvable that reaches here is always a value we could not work out.
         measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
         none = no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
-                                 self.c.symbols.type_of, KAREL_FILES if self.c.config.karel else (),
+                                 self.c.symbols.type_of, MODULE_LOADS | (KAREL_FILES if self.c.config.karel else set()),
                                  self.c.config.karel)  # fmt: skip
         text = text_todo(stmt, self.c.procs.keys() | self.c.computer.functions.keys())
         if none is not None:
@@ -3316,6 +3318,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.late_call(call)  # convert.late_calls
         elif name == "SETSYSDATA" and name not in self.c.procs:
             self.set_sys_data(call)  # convert.system_data
+        elif name == "GETSYSDATA" and name not in self.c.procs:
+            self.get_sys_data(call)  # convert.system_data
+        elif name in MODULE_LOADS and name not in self.c.procs:
+            self.module_load(call, name)  # convert.module_loads
         elif name == "BOOKERRNO" and name not in self.c.procs and self.book_error(call):
             pass  # convert.raised: the number of an error the program raises
         elif self.c.config.karel and name in FILE_INSTRUCTIONS and name not in self.c.procs:

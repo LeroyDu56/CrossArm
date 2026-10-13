@@ -363,6 +363,22 @@ def test_the_late_bound_names_and_rapid_vocabulary(tmp_path):
     assert "!;" in text  # a comment's semicolons are kept, as the coverage counts them in an error handler
 
 
+def test_a_loaded_module_keeps_its_new_name(tmp_path):
+    folder = tmp_path / "in"
+    folder.mkdir()
+    (folder / "PressCell.mod").write_text(
+        'MODULE PressCell\n  PROC main()\n    Load \\Dynamic, "HOME:/hinge/HingeJobs.mod";\n    hingeJob;\n'
+        '    UnLoad "HOME:" \\File:="HingeJobs.mod";\n  ENDPROC\nENDMODULE\n', encoding="utf-8")  # fmt: skip
+    (folder / "HingeJobs.mod").write_text("MODULE HingeJobs\n  PROC hingeJob()\n  ENDPROC\nENDMODULE\n", encoding="utf-8")
+    result = anonymize.anonymize([folder], seed=1)
+    texts = {k: v.decode("utf-8") for k, v in result.files.items() if k.endswith(".mod")}
+    [jobs] = [k for k, v in texts.items() if "Load" not in v]
+    [main_text] = [v for v in texts.values() if "Load" in v]
+    module = Path(jobs).stem
+    assert f'Load \\Dynamic, "{module}.mod";' in main_text and f'\\File:="{module}.mod"' in main_text
+    assert "hinge" not in main_text.lower()
+
+
 def test_write_mapping_is_outside_the_zip(tmp_path, capsys):
     source = make_backup(tmp_path / "in")
     archive, table = tmp_path / "a.zip", tmp_path / "table.json"
