@@ -1,23 +1,22 @@
-## CrossArm 1.12.0
+## CrossArm 1.13.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
 everything left to review before commissioning.
 
-**What 1.12 changes:** an `IF`, `ELSEIF`, `WHILE` or `TEST` whose condition TP cannot write (`OpMode()`, an
-operator dialog, a FUNC that does not convert...) is no longer one `!TODO` remark swallowing its blocks: the
-blocks are converted, and only the condition is left to you, in a flag CrossArm reserves (a register for a
-`TEST`).
+**What 1.13 changes:** more of what large industrial cells write is converted.
 
-- **The condition to replace:** above the instruction, `!TODO l.N <the RAPID line>`, `!Replace JMP by
-  F[k]=(...)`, then `JMP LBL[n]`. Replace the `JMP` with the test your cell makes (`F[k]=(DI[3]=ON)`); the
-  report lists each one under "Conditions to set".
-- **Nothing runs until the `JMP` is replaced:** the jump skips the whole instruction, no branch, not the `ELSE`,
-  and a `WHILE` does not turn, as when it was a remark. Measured on ROBOGUIDE.
-- **New mapping keys:** `CROSSARM.CONDITION.<ROUTINE>.L<line>` (in `flags`, in `registers` for a `TEST`); keys
-  are only added.
-- **The number of TODO can go up:** the blocks once lost in one TODO are converted and show their own.
-- `crossarm diagnose`: a FUNC with no program says why (computed at conversion, inlined, left TODO at its calls,
-  never called); `schema_version` 3.
+- **Stationary tool, part held by the robot:** written for the FANUC Remote TCP (option J624): `L` and `C` with
+  `RTCP`, the user frame the stationary tool, the tool frame the held part. The analysis and the checklist say the
+  option is needed. Measured on ROBOGUIDE.
+- **`FOR` loops:** a bound worked out at run time is computed before the loop (mapping keys
+  `CROSSARM.FOR.<ROUTINE>.L<line>.FROM|TO`); one TP cannot compute is left to you, the loop skipped until you set
+  it; a constant `STEP` is converted.
+- **Optional arguments:** an optional `num`, `bool` or `string` is passed as two arguments, 1 / 0 then the value;
+  `Present()` reads the first. A program of your own calling such a routine passes both.
+- **Calibration:** tools built by a FUNC from a base tool and a record of offsets and angles; `GetSysData` of a
+  frame the routine selected; a tool or work object set but never used is a remark with a warning.
+- **Module loads** (`Load`, `StartLoad`, `WaitLoad`, `UnLoad`) of a module of the backup: a remark with a warning.
+- **The number of TODO can go up:** routines and loops once left TODO whole are converted and show their own.
 
 Full list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 

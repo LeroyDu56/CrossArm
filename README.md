@@ -96,8 +96,8 @@ And the [report](tests/fixtures/fanuc/pick_and_place/crossarm_report.md) that go
 - **The points are the ABB's, to be touched up.** The path stays within 10 mm of the ABB's (measured: within
   4 mm); the FANUC robot is not where the ABB was, so every point is re-taught at commissioning.
 - **Measured, not assumed:** every form of instruction CrossArm writes was read back from a FANUC controller
-  in ROBOGUIDE, and its 41 controller probes on ROBOGUIDE and RobotStudio give what was measured (all run again
-  for 1.10.0, the new one for 1.12.0)
+  in ROBOGUIDE, and its 44 controller probes on ROBOGUIDE and RobotStudio give what was measured (all run again
+  for 1.10.0, the new ones for 1.12.0 and 1.13.0)
   ([validation](docs/validation.md)).
 - **Check on your robot model:** reachability and posture in ROBOGUIDE; speeds and zones are measured for the
   M-20iD, R-2000iC and R-1000iA series ([speeds and zones](docs/guide.md#speeds-and-zones)).
@@ -190,7 +190,7 @@ CrossArm is published under the [Business Source License 1.1](LICENSE).
   delivered to a customer, or that are part of billed migration work. Its licence file replaces the mark with
   the licence number and company name. Where the line falls: [LICENSING.md](LICENSING.md); getting one:
   [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md); contact: **enzoleroy56@gmail.com**.
-- Each released version becomes Apache 2.0 four years after it is published (v1.12.0 on 2030-10-13; every
+- Each released version becomes Apache 2.0 four years after it is published (v1.13.0 on 2030-10-13; every
   date in [LICENSING.md](LICENSING.md)). Versions published before 1.0.0 keep the licence they were published
   under. Third-party components bundled in `CrossArm.exe`: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 

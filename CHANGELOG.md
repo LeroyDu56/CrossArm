@@ -3,7 +3,21 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.13.0 — 2026-10-13
+
+Patterns typical of large industrial cells: loops whose bounds are worked out at run time, optional arguments,
+module loads, tools built by FUNCs from records, a stationary tool with the part held by the robot. Share of
+instructions converted: the test corpus at 87 %, 93 % and 91 % (88 % for the calibration modules, which gained
+new modules); public open-source programs, about 65 %.
+
+**Upgrading:** an optional `num`, `bool` or `string` parameter is passed as two arguments (1 / 0 whether given,
+then the value): a program of your own calling such a routine passes both. A stationary tool with a work object
+the robot holds needs the Remote TCP option (J624): the mapping file lists the stationary tool under `uframes`
+and the work object under `utools`; a file written by 1.12 that numbered them the other way keeps those numbers
+reserved, unused. The mapping file gains the keys `CROSSARM.FOR.<ROUTINE>.L<line>.FROM|TO` (in `registers`); no
+key is removed or redefined. A module loaded, and a tool or work object set at run time that no move selects and
+no program reads, are remarks with a warning, no longer TODO. **The number of TODO of a program can go up**:
+routines and loops once left TODO as a whole are converted and show their own TODO.
 
 - A FOR whose bound is a calculation (`nRows*2-1`, `StrLen(s)`, a group input) is converted: the bound is worked
   out before the loop in a register of its own (mapping key `CROSSARM.FOR.<ROUTINE>.L<line>.FROM|TO`, added). A bound
@@ -26,7 +40,7 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   variable). `GetSysData` of a load is a remark with a warning: the payload carried is the PAYLOAD schedule
   selected.
 - `crossarm anonymize`: a text naming the file of a module of the backup (`"HOME:/dir/Name.mod"`) becomes the
-  module's new name with its extension, so that the anonymized copy loads the same modules.
+  module's new name with its extension, so that the anonymized backup loads the same modules.
 - A routine (or a FUNC written as a program) with optional `num`, `bool` or `string` parameters is converted: each
   is passed as two arguments, 1 / 0 whether the call gives it, then its value (0, or '' for a text, when it does
   not): `Station 3\Speed:=200;` -> `CALL STATION(3,1,200)`, `Station 4;` -> `CALL STATION(4,0,0)`; `Present(Speed)`

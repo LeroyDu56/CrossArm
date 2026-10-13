@@ -28,7 +28,7 @@ touched up on the robot at commissioning anyway.
 | RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Programs of the three RobotWare backups, loaded on a FANUC controller | 130 of 130 |
 | Forms of instruction CrossArm writes, read back from the controller | 234, stored as written |
-| Controller probes, all run again for 1.10.0, the new one for 1.12.0 | 41 of 41 give what was measured |
+| Controller probes, all run again for 1.10.0, the new ones for 1.12.0 and 1.13.0 | 44 of 44 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE | within 0.004 mm and 0.001° |
 | Path through corners, approaches, retracts, reversals, zigzags | within 4 mm of the ABB's |
 
@@ -48,7 +48,7 @@ it give, for each, how it was measured and the tool that measures it again.
 | RAPID instructions converted, our test corpus, written for testing, without `--karel` and without provided routines | 87 % to 93 % |
 | Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1), all run again for 1.10.0, the new one for 1.12.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 41 of 41 give what was measured |
+| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1), all run again for 1.10.0, the new ones for 1.12.0 and 1.13.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 44 of 44 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -86,6 +86,9 @@ it give, for each, how it was measured and the tool that measures it again.
 | FUNCs of the backup known only at run time, written as TP programs, run on ROBOGUIDE | the values RAPID works out, the positions within 0.0001 mm |
 | Errors the program raises itself (`RAISE`), converted with a register, run on ROBOGUIDE | the values RAPID works out; a `RETRY` past its limit, `ABORT` |
 | `IF`, `ELSEIF`, `WHILE`, `TEST` whose condition is left to the integrator, run on ROBOGUIDE | nothing of them runs while the jumps are in place; the jumps replaced, the branches RAPID takes |
+| `FOR` loops whose bounds are worked out at run time, with a `STEP`, or left to the integrator, run on ROBOGUIDE | the turns RAPID makes; a bound left to set, no turn until its jump is replaced |
+| Routines with optional arguments, given or not, passed on, read back, run on ROBOGUIDE | the values RAPID works out |
+| A stationary tool with a work object the robot holds, as the FANUC Remote TCP, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm; the stationary TCP on RAPID's line and circle in the part, within 0.03 mm |
 
 ## Sections
 
@@ -135,6 +138,9 @@ it give, for each, how it was measured and the tool that measures it again.
 44. [FUNCs of the backup as TP programs, run](#44-funcs-of-the-backup-as-tp-programs-run)
 45. [Errors the program raises itself, run](#45-errors-the-program-raises-itself-run)
 46. [Conditions left to the integrator, run](#46-conditions-left-to-the-integrator-run)
+47. [FOR loops and their bounds, run](#47-for-loops-and-their-bounds-run)
+48. [Optional arguments, run](#48-optional-arguments-run)
+49. [Stationary tool and held work object (Remote TCP), run](#49-stationary-tool-and-held-work-object-remote-tcp-run)
 
 ## 1. The test corpus
 
@@ -144,8 +150,10 @@ of a different integrator (a palletizing and machine-tending cell with a PLC tas
 that builds its tools and fixtures in RAPID, an assembly cell run as a state machine over three
 tasks), with as much of RAPID and of TP as the controllers offer; since 1.8, also a set of RAPID
 modules of calibration routines that compute tools and work objects while the robot runs (calibrated
-part by part, copied, built by FUNCs), and since 1.12 one testing the operating mode and operator dialogs. Without `--karel` and without provided routines, CrossArm converts
-87 %, 93 % and 90 % of the instructions of the three RobotWare backups, and 89 % of the calibration modules. It is checked on the controllers
+part by part, copied, built by FUNCs), since 1.12 one testing the operating mode and operator dialogs, and since
+1.13 modules of loops with computed bounds, module loads, optional arguments, tools built from records and a
+stationary tool with held parts. Without `--karel` and without provided routines, CrossArm converts
+87 %, 93 % and 91 % of the instructions of the three RobotWare backups, and 88 % of the calibration modules. It is checked on the controllers
 themselves: RobotStudio loads every RAPID task, every reference resolved (the World Zones
 instructions aside, an option the virtual controller lacks); the three FANUC backups are what three
 ROBOGUIDE controllers (R-2000iC/190S, ARC Mate 120iD, R-1000iA/80F) hold once their programs are
@@ -373,6 +381,9 @@ the results are read from the virtual controller's `HOME:` folder:
 | FUNCs of the backup as TP programs | 12 values as RAPID works them out, the positions within 0.0001 mm ([section 44](#44-funcs-of-the-backup-as-tp-programs-run)) |
 | errors the program raises itself | 8 values as RAPID works them out ([section 45](#45-errors-the-program-raises-itself-run)) |
 | conditions left to the integrator | as written, none of the 5 instructions runs; the jumps replaced, 6 values as RAPID works them out ([section 46](#46-conditions-left-to-the-integrator-run)) |
+| `FOR` bounds | the turns RAPID makes, the end copied when the body changes it; a bound left to set, no turn ([section 47](#47-for-loops-and-their-bounds-run)) |
+| optional arguments | the values RAPID works out, given, absent and passed on ([section 48](#48-optional-arguments-run)) |
+| Remote TCP | the flange within 0.001 mm of RAPID; the stationary TCP on the line and the circle; `J ... RTCP` refused ([section 49](#49-stationary-tool-and-held-work-object-remote-tcp-run)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
 For 1.10.0, on 2026-10-12, every probe was run again, in groups of under ten minutes: the 39 on ROBOGUIDE
@@ -382,7 +393,10 @@ the search probe sampled the speeds differently and was run again alone, as meas
 the position register it clears to a Cartesian position first, which another probe could leave as joints.
 For 1.12.0, on 2026-10-13, the new probe (conditions left to the integrator) and those whose forms it uses
 (conditions, flags, `SELECT`, FUNCs as TP programs, errors raised, system variables) were run and gave what was
-measured.
+measured. For 1.13.0, on 2026-10-13, the three new probes (`FOR` bounds, optional arguments, Remote TCP, on the
+R-1000iA/80F with the Remote TCP option added) and those whose forms they use (calls with arguments, conditions,
+frames written part by part, FUNCs copied into their calls and as TP programs, functions the integrator provides,
+poses computed by KAREL, system variables) were run and gave what was measured.
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -1232,3 +1246,58 @@ the `WHILE`, `R[k]=1` for the `TEST`). On ROBOGUIDE (R-1000iA/80F, V10.10):
 Tests also check, on 9 forms, that while the jumps are in place no line of the blocks can be reached from the
 start of the program, and that each becomes reachable once its jump is replaced.
 
+## 47. FOR loops and their bounds, run
+
+A `FOR` whose bound is a calculation, an input or a function is converted: the bound is worked out before the loop
+in a register of its own; one TP cannot work out is left to the integrator in a register CrossArm reserves, the
+loop skipped by a jump until the line setting it replaces the jump, as a condition is
+([section 46](#46-conditions-left-to-the-integrator-run)); a constant `STEP` other than ±1 is a loop of labels
+([user guide](guide.md#what-is-converted)).
+
+[tools/make_for_bound_probe.py](../tools/make_for_bound_probe.py) converts loops counting up to a register and down
+from one, a bound worked out before the loop, nested loops of computed bounds, a start past the end, steps of 4, -3
+and 0.25, and a bound left to set. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| `FOR R[i]=1 TO R[n]`, `DOWNTO`, computed bounds, nested, a start past the end | the turns RAPID makes |
+| a body changing the data of the end | TP reads the end register again at each turn (2 turns where RAPID makes 4): CrossArm copies the end first, the turns RAPID makes |
+| `STEP` 4, -3, 0.25 as a loop of labels | the turns and values RAPID makes |
+| a bound left to set | no turn while the jump is in place; replaced by `R[k]=3`, 3 turns |
+
+## 48. Optional arguments, run
+
+A routine with optional `num`, `bool` or `string` parameters takes two arguments for each: 1 / 0 whether the call
+gives it, then its value ([user guide](guide.md#what-is-converted)). A flag, rather than a value standing for "absent",
+which a real value could equal.
+
+[tools/make_optional_arg_probe.py](../tools/make_optional_arg_probe.py) converts calls giving and leaving out
+optional numbers, bools and texts, `Present()` tested alone and in an `AND`, an optional passed on (`\X?X`), an
+optional `\INOUT num` read back, and a FUNC written as a program with an optional parameter. On ROBOGUIDE
+(R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| `CALL X(9,1,200)`, `CALL X(9,0,0)`, `CALL X(...,'',...)`, `IF (AR[k]=1 AND AR[k+1]=1)`, an optional passed on | loaded and run, the values RAPID works out |
+| an optional `\INOUT num` read back only when given | the values RAPID works out |
+
+The probe also found a fault present since 1.0, fixed: a condition with a calculation on each side of an `AND` or
+`OR` worked both out in the same scratch register.
+
+## 49. Stationary tool and held work object (Remote TCP), run
+
+A stationary tool (`robhold` FALSE) with a work object the robot holds (`robhold` TRUE) is converted to the FANUC
+Remote TCP option (J624): the user frame selected is the stationary tool, the tool frame the work object, each
+point the inverse pose, `L` and `C` with `RTCP`, `J` without ([user guide](guide.md#what-is-converted)). On the
+controller, the user frame selected is the remote TCP: nothing else to set.
+
+[tools/make_rtcp_probe.py](../tools/make_rtcp_probe.py) converts linear, circular and joint moves with a stationary
+nozzle and a held panel, and reads the robot's position while it moves. On ROBOGUIDE (R-1000iA/80F, V10.10, with the
+Remote TCP option), and on RobotStudio for RAPID's side:
+
+| Check | ROBOGUIDE |
+|---|---|
+| the flange at each point (user frame x point x inverse of the tool frame) | where RAPID puts it, within 0.001 mm (RobotStudio: RAPID's own formula, within 0.3 mm) |
+| `L ... RTCP` | the stationary TCP on RAPID's line in the part, within 0.03 mm (without `RTCP`, 18 mm off it) |
+| `C ... RTCP` | the stationary TCP on RAPID's circle in the part |
+| `L`, `C`, `A` with `RTCP`, CNT, offsets, `TB` | loaded; `J ... RTCP` refused (ASBN-092) |
