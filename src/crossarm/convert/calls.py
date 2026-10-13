@@ -250,7 +250,9 @@ class RoutineCalls:
                     back.append(f"{self.returned_to(a.value, slot)}={copy}")
         for slot in layout.slots[len(required):]:
             arg = given.get(slot.key)
-            if arg is None:
+            if slot.given_flag:  # whether the call gives it, then its value
+                values += self.optional_value(arg, slot, name, back, returned)
+            elif arg is None:
                 values.append("0")  # a switch not given; a work object not given: wobj0, UFRAME 0
             elif slot.kind == "wobjdata":
                 values.append(self.frame_argument(arg.value, slot, points))
@@ -268,6 +270,29 @@ class RoutineCalls:
         self.emit(f"CALL {name}({','.join(values)})" if values else f"CALL {name}")
         for text in back:
             self.emit(text)
+
+    def optional_value(self, arg: n.Arg | None, slot, program: str, back: list[str], returned: set[str]) -> list[str]:
+        """The two arguments of an optional num, bool or string: 1 and its value when the call gives it, 0 and 0
+        (or '') when not; `\\Speed?Speed` passes on what this routine was given. Passed by reference and changed,
+        it is read back after the CALL only when given."""
+        if arg is None:
+            return ["0", "''" if slot.kind == "string" else "0"]
+        if arg.conditional:
+            name = arg.value.name if isinstance(arg.value, n.Name) else ""
+            flag = self.args.present(name) if self.args and name else None
+            if flag is None or self.args.kind(name) != slot.kind:  # type: ignore[union-attr]
+                raise Untranslatable(f"\\{arg.name}?{name}: not an optional {slot.kind} of this routine", Blocker.CALL_ARGS)
+            if slot.key in returned:
+                raise Untranslatable(f"\\{arg.name}?{name}: passed on by reference and changed, it would come back"
+                                     " to this routine only when it was given", Blocker.CALL_ARGS)  # fmt: skip
+            return [flag, self.copies.get(name.upper()) or self.args.register(name)]  # type: ignore[union-attr, list-item]
+        if arg.value is None:
+            raise Untranslatable(f"\\{arg.name} given without a value", Blocker.CALL_ARGS)
+        value = self.argument(arg.value, slot)
+        if slot.key in returned:  # INOUT, VAR, PERS the routine changes: read back after the CALL
+            copy = self.c.written_register(slot.name, key=f"{program}.{slot.name}")
+            back.append(f"{self.returned_to(arg.value, slot)}={copy}")
+        return ["1", value]
 
     def fine_zone(self, expr: n.Expr) -> bool:
         try:

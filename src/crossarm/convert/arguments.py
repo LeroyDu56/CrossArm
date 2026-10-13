@@ -24,7 +24,8 @@ written: when every call passes `fine` for a zone, the routine's moves through i
 for them; when only some do, each such move is written twice, CNT and FINE, and the call passes 101 for fine
 (`IF R[m]>100,JMP LBL[a]`): a CALL takes no negative number (ASBN-092), a CNT is at most 100.
 A routine with any other parameter — a record passed whole to another routine, a frame used other
-than to move with, an optional num — is not converted, and its calls stay TODO with the reason.
+than to move with, an optional point or pose, a frame the routine changes when it is passed by reference — is
+not converted, and its calls stay TODO with the reason.
 
 A `robtarget` has no place in AR[n]: it goes in a position register of its own, which the caller
 sets before the CALL (PR[k]=P[j]) and the routine moves to (L PR[k]). A move to a position register
@@ -36,7 +37,12 @@ MESSAGE takes fixed text. So a TPWrite of a string parameter stays TODO in the r
 the routine and its calls are converted.
 
 Every argument is passed on every call, switches included: on a FANUC controller reading an
-AR[n] the caller did not pass stops the program, where RAPID's Present() just says FALSE.
+AR[n] the caller did not pass stops the program, where RAPID's Present() just says FALSE. An optional
+num, bool or string is passed as two arguments: 1 / 0 whether the call gives it, then its value (0, or ''
+when not given): `Station 3\\Speed:=200;` -> `CALL STATION(3,1,200)`, `Station 4;` -> `CALL STATION(4,0,0)`,
+and Present(Speed) in the routine reads the first (`IF AR[2]=1`). Passed by reference (`\\INOUT num`), the
+caller reads it back only when it gave it. A tooldata or wobjdata passed by reference (INOUT, VAR) is passed
+by its number when the routine does not change it: the frame is the caller's own.
 
 A RAPID parameter passed by value is a local copy the routine may change (`Angle:=0;`). AR[n]
 cannot be written, so such a num parameter is copied into a register when the program starts,
@@ -91,6 +97,30 @@ class Slot:
     def key(self) -> str:
         return self.name.upper()
 
+    @property
+    def given_flag(self) -> bool:
+        """An optional num, bool or string: passed as two arguments, 1 / 0 whether the call gives it, then its
+        value (0, or '' for a text, when it does not). Present() reads the first."""
+        return self.optional and self.kind in ("num", "bool", "string")
+
+
+def presence(name: str) -> str:
+    """The key of the argument saying whether an optional value is given: 'PRESENT(SPEED)'."""
+    return f"PRESENT({name})".upper()
+
+
+# Why an optional parameter of another type is not passed: a TP argument is a number or a text.
+_OPTIONAL_REFUSED = {
+    "robtarget": "a point travels in a position register, which only the calls giving it would set",
+    "pose": "a pose is six numbers, a TP argument one",
+    "pos": "a position is three numbers, a TP argument one",
+    "orient": "an orientation is four numbers, a TP argument one",
+    "tooldata": "a tool is passed by its number, and a call not giving it would leave the routine none to select",
+    "speeddata": "a speed is passed as the numbers the routine's moves take, and a call not giving it has none",
+    "zonedata": "a zone is passed as the CNT of the routine's corners, and a call not giving it has none",
+}
+_OPTIONAL_OTHER = "only optional num, bool, string, switch and work object parameters are passed as TP arguments"
+
 
 @dataclass(frozen=True, slots=True)
 class Signature:
@@ -108,9 +138,20 @@ class Signature:
 
     @property
     def arguments(self) -> tuple[Slot, ...]:
-        """The slots passed as AR[n], in order: every one but the points, a record as its components."""
+        """The slots passed as AR[n], in order: every one but the points, a record as its components, an optional
+        value after the argument saying whether the call gives it."""
         return tuple(f for s in self.slots if s.kind != "robtarget"
-                     for f in (s.fields if s.kind in ("record", "speeddata", "zonedata") else (s,)))  # fmt: skip
+                     for f in (s.fields if s.kind in ("record", "speeddata", "zonedata") else
+                               (Slot(f"Present({s.name})", "present", optional=True), s) if s.given_flag else
+                               (s,)))  # fmt: skip
+
+    def present(self, name: str) -> str | None:
+        """'AR[3]' that Present(name) reads: an optional switch itself, or the argument saying whether an optional
+        value is given; None when `name` is neither."""
+        kind = self.kind(name)
+        if kind == "switch":
+            return self.register(name)
+        return self.register(presence(name)) if kind in ("num", "bool", "string") else None
 
     def frames_of(self, name: str) -> tuple[n.Expr | None, n.Expr | None]:
         """(tool, work object) the routine moves to its point `name` with; (None, None) if it only passes it on."""
@@ -177,22 +218,23 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
             mode = words[0].upper() if words[0].upper() in ("VAR", "PERS", "INOUT") else ""
             type_name = words[-2] if not dims else words[-2].split("{")[0]
             frame = type_name.lower() in ("tooldata", "wobjdata")
-            if mode in ("VAR", "INOUT") and frame:
-                return f"{type_name} parameter {name} is passed by reference ({mode}): a frame is passed by its number"
+            if mode in ("VAR", "INOUT") and frame and (changed := _frame_changed(routine, name)):
+                return (f"it changes its {type_name} parameter {name} passed by reference ({mode}), `{changed}`: a"
+                        " frame is passed by its number, what the routine writes in it would not come back")  # fmt: skip
             if dims:
                 return f"parameter {name} is an array: TP arguments are single values"
             record = type_name.lower() in records
-            if mode and not frame and not optional and not record and type_name.lower() not in ("num", "robtarget"):
+            if mode and not frame and not record and type_name.lower() not in ("num", "bool", "string", "robtarget"):
                 return f"{type_name} parameter {name} is passed by reference ({mode}): only a num or a point is read back"
             if frame and (reason := _frame_uses(routine, name)):
                 return reason
             if optional:
-                if type_name.lower() == "wobjdata":
-                    switches.append(Slot(name, "wobjdata", optional=True))
+                kind = type_name.lower()
+                if kind in ("wobjdata", "switch", "num", "bool", "string"):
+                    # an optional value: an argument saying whether the call gives it, then the value (Present())
+                    switches.append(Slot(name, kind, optional=True, by_reference=bool(mode) and kind != "wobjdata"))
                     continue
-                if type_name.lower() != "switch":
-                    return f"optional {type_name} parameter {name}: only optional switches and work objects are converted"
-                switches.append(Slot(name, "switch", optional=True))
+                return f"optional {type_name} parameter {name}: {_OPTIONAL_REFUSED.get(kind, _OPTIONAL_OTHER)}"
             elif frame:
                 required.append(Slot(name, type_name.lower()))
             elif type_name.lower() in ("num", "bool", "string", "robtarget", "speeddata", "zonedata"):
@@ -212,6 +254,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
         required = [replace(s, fields=found[s.key]) if s.key in motion else s for s in required]
     slots = tuple(required + switches)
     arguments = [f for s in slots if s.kind != "robtarget" for f in (s.fields if s.kind in ("speeddata", "zonedata") else (s,))]
+    arguments += [s for s in slots if s.given_flag]  # whether each optional value is given
     if len(arguments) > MAX_ARGS:
         return f"{len(arguments)} parameters: a TP CALL takes at most {MAX_ARGS} arguments"
     kinds = {s.key: s.kind for s in slots}
@@ -232,6 +275,9 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
             for arg in stmt.args:
                 if isinstance(arg.value, n.Name) and arg.value.name.upper() in by_reference:
                     key = arg.value.name.upper()
+                    if kinds[key] in ("bool", "string"):
+                        return (f"it passes its {kinds[key]} parameter {arg.value.name}, passed by reference, on to"
+                                f" {stmt.name}, which may change it: only a num is read back")  # fmt: skip
                     (points_changed if kinds[key] == "robtarget" else copied).add(key)
         if changed and changed.upper() in kinds:
             if kinds[changed.upper()] != "num":
@@ -280,6 +326,15 @@ def fine_given(calls: list[tuple[Signature, n.ProcCall]], is_fine) -> dict[str, 
 
 
 _CHANGING = frozenset({"INCR", "DECR", "ADD", "CLEAR"})  # instructions that change their first argument
+
+
+def _frame_changed(routine: n.Routine, name: str) -> str:
+    """The first statement assigning a tooldata or wobjdata parameter, or one of its components, as written ("" when
+    none does)."""
+    for stmt in walk_statements(routine.body):
+        if isinstance(stmt, n.Assign) and (base_name(stmt.target) or "").upper() == name.upper():
+            return f"{format_expr(stmt.target)} := {format_expr(stmt.value)}"
+    return ""
 
 
 def _frame_uses(routine: n.Routine, name: str) -> str:
@@ -449,4 +504,4 @@ def _record_fields(routine: n.Routine, name: str, type_name: str,
     return tuple(fields)
 
 
-__all__ = ["MAX_ARGS", "MOTION_ARGUMENTS", "CallCorner", "Signature", "Slot", "fine_given", "signature"]
+__all__ = ["MAX_ARGS", "MOTION_ARGUMENTS", "CallCorner", "Signature", "Slot", "fine_given", "presence", "signature"]

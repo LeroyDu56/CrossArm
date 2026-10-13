@@ -58,14 +58,14 @@ def test_parameters_map_to_ar_in_order_switches_last():
 
 
 @pytest.mark.parametrize(("params", "reason"), [
-    ("INOUT bool on", "bool parameter on is passed by reference (INOUT): only a num or a point is read back"),
+    ("INOUT pose on", "pose parameter on is passed by reference (INOUT): only a num or a point is read back"),
     ("dnum d", "dnum parameter d"),
-    ("INOUT tooldata t", "tooldata parameter t is passed by reference (INOUT)"),
-    ("\\num speed", "optional num parameter speed"),
+    ("\\tooldata t", "optional tooldata parameter t: a tool is passed by its number"),
+    ("\\pose speed", "optional pose parameter speed: a pose is six numbers"),
     ("num list{*}", "parameter list is an array"),
     ("INOUT num list{*}", "parameter list is an array"),
     ("\\INOUT num list{*}", "parameter list is an array"),
-    ("\\INOUT num count", "optional num parameter count"),
+    ("\\robtarget count", "optional robtarget parameter count: a point travels in a position register"),
     (",".join(f"num a{i}" for i in range(11)), "11 parameters: a TP CALL takes at most 10 arguments"),
 ])  # fmt: skip
 def test_what_tp_cannot_pass_is_said(params, reason):

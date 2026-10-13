@@ -2237,6 +2237,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         self.errno_live = False  # writing a handler's path for a raised error: ERRNO is CROSSARM.ERRNO
         self.raised_sites = 0  # lines where its handler was written for a raised error
         self.strict = 0  # >0: a statement that cannot be converted fails the enclosing one instead of a TODO
+        # Scratch registers of a condition: the sides of an AND / OR after the first are worked out in Calc slots
+        # above every one the sides before them used (all are worked out before the IF line reads them).
+        self.calc_floor = 0
+        self.calc_top = 0  # the highest Calc slot worked out in the condition being written
         self.gates: list = []  # the conditions left to the integrator, by instruction being written (condition_gates)
         self.gate_names: dict[int, str] = {}  # id() of the stand-in of such a condition -> its flag
         self.gate_keys: set[str] = set()
@@ -4652,6 +4656,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         calculation going on after parentheses. The left side is worked out in the slot, the right one in
         the next slots, which never overwrite it. `bare`: a negative constant without its parentheses, as
         WaitTime and SUBSTR take it."""
+        slot += self.calc_floor  # past the slots the sides of the condition before this one use
         if (joint := self.joint_axis(expr, slot)) is not None:  # an axis of a jointtarget kept in PR, in Calc<slot>
             return joint
         if (isinstance(expr, n.FuncCall) and expr.name.upper() in ("STRLEN", "STRMATCH")
@@ -4672,6 +4677,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             if isinstance(expr, n.UnaryOp) and expr.op != "-" or isinstance(expr, n.BinaryOp) and expr.op not in _ARITHMETIC:
                 raise
         register = self.c.written_register(f"Calc{slot}", key=f"CROSSARM.CALC{slot}")
+        self.calc_top = max(self.calc_top, slot)
+        slot -= self.calc_floor  # the slots of its operands: single() adds the floor again
         if isinstance(expr, n.UnaryOp):  # -(a*b)
             self.emit(f"{register}={self.single(expr.operand, slot)}*(-1)")
             return register
@@ -5140,14 +5147,21 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             case n.BinaryOp(op="AND" | "OR", left=left, right=right):
                 op = expr.op if not negate else ("OR" if expr.op == "AND" else "AND")
                 parts = []
-                for side in (left, right):
-                    text = self.condition(side, negate)
-                    inner = side
-                    while isinstance(inner, n.UnaryOp) and inner.op == "NOT":  # NOT (b OR c) is still an OR
-                        inner = inner.operand
-                    if isinstance(inner, n.BinaryOp) and inner.op in ("AND", "OR"):
-                        text = f"({text})"
-                    parts.append(text)
+                floor = self.calc_floor
+                if floor == 0:  # the outermost AND / OR: its slots from Calc1 on
+                    self.calc_top = 0
+                try:
+                    for side in (left, right):
+                        text = self.condition(side, negate)
+                        self.calc_floor = max(self.calc_floor, self.calc_top)  # the next side above these
+                        inner = side
+                        while isinstance(inner, n.UnaryOp) and inner.op == "NOT":  # NOT (b OR c) is still an OR
+                            inner = inner.operand
+                        if isinstance(inner, n.BinaryOp) and inner.op in ("AND", "OR"):
+                            text = f"({text})"
+                        parts.append(text)
+                finally:
+                    self.calc_floor = floor
                 return f"{parts[0]} {op} {parts[1]}"
             case n.BinaryOp(op=op, left=left, right=right) if op in _NEGATED:
                 op = _NEGATED[op] if negate else op
@@ -5169,9 +5183,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             case n.Component() if (field := self.component(expr)) and self.args.kind(field) == "bool":  # type: ignore[union-attr]
                 return f"{self.args.register(field)}={0 if negate else 1}"  # type: ignore[union-attr]
             case n.FuncCall(name=fn, args=(n.Arg(value=n.Name(name=name), name=None),)) if (
-                fn.upper() == "PRESENT" and self.args and self.args.kind(name) == "switch"
+                fn.upper() == "PRESENT" and self.args and self.args.present(name)
             ):
-                return f"{self.args.register(name)}={0 if negate else 1}"
+                return f"{self.args.present(name)}={0 if negate else 1}"  # a switch, or whether a value is given
             case n.Name(name=name) if self.c.symbols.type_of(name) == "bool":
                 return f"{self.c.flag(name)}={'OFF' if negate else 'ON'}"
             case n.Index() if (element := self.flag_element(expr)) is not None:

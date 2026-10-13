@@ -27,6 +27,19 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   selected.
 - `crossarm anonymize`: a text naming the file of a module of the backup (`"HOME:/dir/Name.mod"`) becomes the
   module's new name with its extension, so that the anonymized copy loads the same modules.
+- A routine (or a FUNC written as a program) with optional `num`, `bool` or `string` parameters is converted: each
+  is passed as two arguments, 1 / 0 whether the call gives it, then its value (0, or '' for a text, when it does
+  not): `Station 3\Speed:=200;` -> `CALL STATION(3,1,200)`, `Station 4;` -> `CALL STATION(4,0,0)`; `Present(Speed)`
+  reads the first (`IF AR[2]=1`). An optional `\INOUT num` the routine changes is read back after the CALL only
+  when the call gives it; `\Speed?Speed` passes on what the caller was given. The arguments saying whether a value
+  is given count in the ten a TP CALL takes. Measured on ROBOGUIDE (`optargs` probe). An optional point, pose, tool,
+  speed or zone stays TODO and says why.
+- A tooldata or wobjdata passed by reference (INOUT, VAR) that the routine only moves with or passes on is passed by
+  its number, as one passed by value; one the routine changes stays TODO and names the line changing it. A `bool` or
+  `string` passed by reference that the routine does not change is passed as one passed by value.
+- Fixed: a condition with a calculation on each side of an AND or OR (`v>=r-t AND v<=r+t`) worked both out in the
+  same scratch register, the second overwriting the first before the test read them. Each side now has registers of
+  its own.
 
 ## 1.12.0 — 2026-10-13
 

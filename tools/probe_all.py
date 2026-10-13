@@ -86,6 +86,8 @@ probe, everything else in local/logs/probe_all.log):
     forbound     FOR loops to a register (TP reads it again at each turn: an end the loop changes is copied
                  first), to a bound worked out before the FOR, nested, with no turn, with a STEP (labels); a bound
                  CrossArm cannot write left to the integrator in a reserved register, the FOR skipped until set
+    optargs      optional num, bool and string parameters: 1 / 0 whether given, then the value; Present() reads the
+                 first, a \\INOUT num comes back only when given, \\Speed?Speed passes it on, a FUNC program too
 
 Every register a probe reads is set to 0 first, so that no result can be left over from an earlier run.
 The programs loaded are deleted at the end. The probes overwrite tool frames 1 to 10, user frames 1 to 9, and
@@ -132,6 +134,7 @@ import make_karel_pose_probe
 import make_karel_probe
 import make_maketp_probe
 import make_move_do_probe
+import make_optional_arg_probe
 import make_pallet_probe
 import make_param_probe
 import make_point_probe
@@ -504,6 +507,13 @@ def probe_raise() -> str:
     return f"FAIL {problem}" if problem else make_raise_probe.summary(make_raise_probe.stored())
 
 
+def probe_optargs() -> str:
+    problem = make_optional_arg_probe.run(PROBES / "optargs")
+    return (f"FAIL {problem}" if problem else
+            "optional num / bool / string given or not, Present(), \\INOUT num read back when given, passed on,"
+            " in a FUNC program: as RAPID")
+
+
 def probe_forbound() -> str:
     problem = make_for_bound_probe.run(PROBES / "forbound")
     return (f"FAIL {problem}" if problem else
@@ -620,7 +630,7 @@ GROUPS: dict[str, dict[str, float]] = {
              "forbound": 50},
     "timing": {"movedo": 72, "timeflag": 12, "speedargs": 132, "search": 250, "io": 20},
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
-              "sysvars": 60},
+              "sysvars": 60, "optargs": 45},
     "library": {"karel": 140, "karelpose": 136, "karelfile": 120},
     "frames": {"framefield": 100, "funcinline": 100},
     "robotstudio": {"abb": 74},
@@ -654,6 +664,7 @@ def main() -> int:
               "karelfile": probe_karelfile, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
+              "optargs": probe_optargs,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     grouped = [probe for group in GROUPS.values() for probe in group]
