@@ -110,6 +110,7 @@ class FrameWrites:
         if known is not None:
             self.pose_components(register, [fmt_number(round(v, 3) + 0.0) for v in known.pos], known.rot)  # type: ignore[attr-defined]
             return
+        self.frame_numbered(kind, key, span.line)
         self.emit(f"{register}={RESOURCE[kind]}[{{{kind}:{key}}}]")  # type: ignore[attr-defined]  # place_frames()
         if not identity(other):  # UFRAME holds uframe x oframe
             scratch = self.c.point_register(f"{SCRATCH}2")  # type: ignore[attr-defined]
@@ -117,17 +118,25 @@ class FrameWrites:
             self.pose_components(scratch, [fmt_number(round(v, 3) + 0.0) for v in inverse.pos], inverse.rot)  # type: ignore[attr-defined]
             self.emit(self.karel_line("CA_POSEMULT", [register, scratch, register]))
 
+    def frame_numbered(self, kind: str, key: str, line: int) -> None:
+        """A frame no move selects, kept because another is computed from it (Converter._frames_read): its number
+        given here, where it is first read or loaded (a move would number it otherwise)."""
+        if key in self.c.frames_only_read[kind]:  # type: ignore[attr-defined]
+            decl = self.c.symbols.get(key)  # type: ignore[attr-defined]
+            self.c.frame_number(kind, n.Name(n.Span(line, 0), decl.name if decl else key), self.name, line)  # type: ignore[attr-defined]
+
     def karel_line(self, name: str, registers: list[str]) -> str:
         from crossarm.convert.karel_poses import karel_call
 
         return karel_call(self.c, name, registers)  # type: ignore[attr-defined]
 
-    def frame_load(self, kind: str, key: str, register: str, other: Pose | None) -> None:
+    def frame_load(self, kind: str, key: str, register: str, other: Pose | None, line: int) -> None:
         """Load the frame in `register` into the frame the moves select, its oframe multiplied in first."""
         if not identity(other):
             scratch = self.c.point_register(f"{SCRATCH}2")  # type: ignore[attr-defined]
             self.pose_components(scratch, [fmt_number(round(v, 3) + 0.0) for v in other.pos], other.rot)  # type: ignore[attr-defined, union-attr]
             self.emit(self.karel_line("CA_POSEMULT", [register, scratch, register]))
+        self.frame_numbered(kind, key, line)
         self.emit(f"{RESOURCE[kind]}[{{{kind}:{key}}}]={register}")  # type: ignore[attr-defined]  # place_frames()
         if kind == "UT":
             self.active_ut = None
@@ -224,7 +233,7 @@ class FrameWrites:
                 self._rot_into(register, value)
             else:
                 self._trans_into(register, value, rest[1:] or _AXES, (key, FIELD[kind], "TRANS"))
-        self.frame_load(kind, key, register, other_pose)
+        self.frame_load(kind, key, register, other_pose, a.span.line)
         self.frame_loaded(kind, key, a.span.line, measured)
         return True
 
@@ -240,11 +249,17 @@ class FrameWrites:
         if len(given) != 2 or len(call.args) != 2 or None in given:
             return False
         left, right = given
+        rights = [right]
+        while (inner := _pose_product(left, self.c.computer.functions)) is not None:  # type: ignore[attr-defined]
+            left, first = inner  # PoseMult(PoseMult(frame, peA), peB): the frame moved by peA x peB
+            rights.insert(0, first)
         source = self.frame_kind(left)  # type: ignore[arg-type]
         if source is None:
             return False
         try:
-            offset = to_pose(self.c.computer.value(right).value)  # type: ignore[attr-defined, arg-type]
+            offset = to_pose(self.c.computer.value(rights[0]).value)  # type: ignore[attr-defined, arg-type]
+            for more in rights[1:]:
+                offset = offset.compose(to_pose(self.c.computer.value(more).value))  # type: ignore[attr-defined, arg-type]
             turn = to_pose([[0, 0, 0], self.c.computer.value(n.Component(left.span, left, "rot")).value])  # type: ignore[attr-defined, union-attr]
         except Unresolvable:
             return False
@@ -264,7 +279,7 @@ class FrameWrites:
                 self.emit(f"{element},{axis}]={element},{axis}]{'-' if shift < 0 else '+'}{fmt_number(abs(shift))}")  # type: ignore[attr-defined]
         for axis, angle in zip((4, 5, 6), quat_to_wpr(moved.rot), strict=True):  # type: ignore[arg-type]
             self.emit(f"{element},{axis}]={operand(fmt_number(round(angle, 3) + 0.0))}")  # type: ignore[attr-defined]
-        self.frame_load(kind, key, register, other_pose)
+        self.frame_load(kind, key, register, other_pose, a.span.line)
         self.frame_loaded(kind, key, a.span.line, measured)
         return True
 
@@ -300,7 +315,7 @@ class FrameWrites:
         if not (identity(before) and identity(after)):
             register = self.c.point_register(FRAME)  # type: ignore[attr-defined]
             self.frame_into(register, "UF", key, a.span, None, before)
-            self.frame_load("UF", key, register, after)
+            self.frame_load("UF", key, register, after, a.span.line)
         self.known[key] = new  # type: ignore[attr-defined]
         self.known.pop(f"{key}{STALE}", None)  # type: ignore[attr-defined]
         return True
@@ -352,3 +367,13 @@ class FrameWrites:
                                  " point or a pose kept in a position register, or of a frame", Blocker.RUNTIME_FRAME)  # fmt: skip
         for axis in (4, 5, 6):
             self.emit(f"{base},{axis}]={source[:-1]},{axis}]")  # type: ignore[attr-defined]
+
+
+def _pose_product(expr: n.Expr | None, functions: dict) -> tuple[n.Expr, n.Expr] | None:
+    """(a, b) of `PoseMult(a, b)` (RAPID's own, not a FUNC of the backup of that name), None otherwise."""
+    if not isinstance(expr, n.FuncCall) or expr.name.upper() != "POSEMULT" or expr.name.upper() in functions:
+        return None
+    given = [arg.value for arg in expr.args if arg.name is None]
+    if len(given) != 2 or len(expr.args) != 2 or None in given:
+        return None
+    return given[0], given[1]  # type: ignore[return-value]

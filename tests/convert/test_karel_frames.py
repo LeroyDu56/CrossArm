@@ -158,10 +158,15 @@ def test_a_tool_turned_for_the_other_pin_hole_stays_todo():
     assert any("tool_pin -x" in note.message for note in todo(result))
 
 
-def test_a_frame_no_move_selects_stays_todo():
+def test_a_frame_no_move_selects_and_no_program_reads_is_written_nowhere():
     data = DATA.replace("    MoveL pIn,v500,fine,tGun\\WObj:=wOther;\n", "")
     result = conversion("wOther.uframe:=DefFrame(pM1,pM2,pM3);", data=data)
-    assert [n.category for n in todo(result)] == [Blocker.CALIBRATION]
+    assert not todo(result)
+    assert any("work object wOther set at run time" in note.message and "nothing written on the FANUC" in note.message
+               for note in result.notes if note.kind == "WARNING")  # fmt: skip
+    # read by another statement: the robot keeps it (numbered where it is set), its uframe computed by KAREL
+    result = conversion("wOther.uframe:=DefFrame(pM1,pM2,pM3);\n    wFix.uframe:=wOther.uframe;", data=data)
+    assert not todo(result), [n.message for n in todo(result)]
 
 
 def test_the_numbers_of_a_mapping_written_without_karel_are_kept_with_it(tmp_path):

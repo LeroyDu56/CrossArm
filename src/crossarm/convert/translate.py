@@ -845,6 +845,8 @@ class Converter:
         self.array_statements: dict[str, set[int]] = {}  # array -> id() of the statements reading or writing it
         self.shared_arrays: set[str] = set()  # arrays of numbers that are PERS of the task: one block for all tasks
         self.frames_in_moves: dict[str, set[str]] = {"UF": set(), "UT": set()}  # upper-case names, _plan_slots
+        # among them, those no move selects, kept for a frame computed from them (_frames_read): numbered when read
+        self.frames_only_read: dict[str, set[str]] = {"UF": set(), "UT": set()}
         self.registers = TableView(shared.registers)
         self.flags = TableView(shared.flags)
         self.douts = TableView(shared.douts)
@@ -1206,6 +1208,9 @@ class Converter:
                         continue  # a frame the routine is given: numbered where it is called
                     if isinstance(expr, n.Name):
                         used[kind].add(expr.name.upper())
+        moved = {kind: set(names) for kind, names in used.items()}
+        self._frames_read(routines, used)
+        self.frames_only_read = {kind: used[kind] - moved[kind] for kind in used}
         self.frames_in_moves = used
         for kind, resource, table in (("UF", "UFRAME", self.uframes), ("UT", "UTOOL", self.utools)):
             limit = self.config.limits.get(resource)
@@ -1220,6 +1225,32 @@ class Converter:
             if (len(automatic) > len(free) or pinned_over) and free and self._banks:  # no register: over, as before
                 self.slots[kind] = free[-1]
                 table.reserved = table.reserved | {free[-1]}
+
+    def _frames_read(self, routines: list[n.Routine], used: dict[str, set[str]]) -> None:
+        """Add to `used` the tools and work objects a frame the moves select is computed from at run time
+        (`tCut := FitCutter(tBase, g)`, `tCut.tframe := PoseMult(tBase.tframe, pe)`): the robot keeps them too, so
+        that the computation reads them back (`PR[k]=UTOOL[n]`, convert.frame_writes)."""
+        sets: list[tuple[str, str, n.Expr]] = []  # kind, target, value
+        for routine in routines:
+            for stmt in walk_statements(routine.body):
+                if not isinstance(stmt, n.Assign) or not (path := path_of(stmt.target)) or "{}" in path[:2]:
+                    continue
+                decl = self.symbols.get_global(path[0])
+                kind = {"tooldata": "UT", "wobjdata": "UF"}.get(decl.type_name.lower()) if decl and not decl.dims else None
+                if kind is not None and (len(path) == 1 or path[1] == ("TFRAME" if kind == "UT" else "UFRAME")):
+                    sets.append((kind, path[0], stmt.value))
+        changed = True
+        while changed:
+            changed = False
+            for kind, target, value in sets:
+                if target not in used[kind]:
+                    continue
+                for name in {x.upper() for x in read_names(value)}:
+                    decl = self.symbols.get_global(name)
+                    if decl is not None and not decl.dims and name not in used[kind] \
+                            and decl.type_name.lower() == ("tooldata" if kind == "UT" else "wobjdata"):  # fmt: skip
+                        used[kind].add(name)
+                        changed = True
 
     def declared_frame(self, kind: str, expr: n.Expr) -> Frame:
         """A frame as declared (or saved) in the backup: what SETUP_FRAMES sets, whatever a routine did to it since.
@@ -4533,6 +4564,12 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         remark = ("!" + ascii_text(f"l.{line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip()
         if is_frame and self.field_without_frame(a, remark):  # ufprog, ufmec, a field kept as declared: no frame
             return
+        if is_frame and not self.c.computer.written.read(path_of(a.target)[0], root_type):  # type: ignore[index]
+            try:
+                self.c.computer.assigned(a)
+            except Unresolvable as exc:  # set at run time, but never used: convert.frame_fields
+                if self.frame_unread(a, root_type, remark, exc):
+                    return
         if self.provided_point(a.value) is not None:  # a provided function's pose (calls.py): loaded, or a part of it
             if is_frame and (self.frame_written(a, root_type, remark, False) or self.frame_at_run_time(a, root_type, remark)):
                 return
@@ -4571,6 +4608,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             decl = self.c.symbols.get(root)
             if root in self.c.frames_in_moves[kind] and decl is not None:
                 token = self.c.computed_frame(kind, decl.name, pose, self.name, line, a)
+                self.frame_numbered(kind, root, line)  # convert.frame_writes
                 self.emit(remark)
                 self.emit(f"{'UTOOL' if kind == 'UT' else 'UFRAME'}[{{{kind}:{root}}}]={token}")
                 if kind == "UT":

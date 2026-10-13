@@ -30,6 +30,11 @@ written part by part in TP; crossarm.convert.karel_poses: pose functions by KARE
 (tload, ufprog, ufmec) follow crossarm.convert.frame_fields. A whole tool or work object copied from one the
 programs change is its fields known now plus its frame read back where the robot keeps it.
 
+A local datum (or a parameter given as a copy) set part by part stands for its parts: after `pe.trans := g.off;
+pe.rot := OrientZYX(g.ang.z, g.ang.y, g.ang.x)`, `pe` is `[g.off, OrientZYX(...)]`, known now when g is. A whole
+copy of the base followed by its frame set from the copy (`t := tBase; t.tframe := PoseMult(t.tframe, pe)`) reads
+the base's frame directly.
+
 Only a body made of assignments (of the result, of its fields, of other local data), values of pose functions
 (PoseMult, PoseInv, RelTool, DefFrame, Offs...), constants and its parameters, and one RETURN at the end is
 copied: anything else (a loop, an IF, an instruction) stays TODO, the FUNC and the statement named. The report
@@ -110,6 +115,7 @@ class _Body:
         self.env: dict[str, n.Expr] = {}  # a parameter, a local datum: the expression it stands for
         self.params: set[str] = set()
         self.locals: set[str] = set()
+        self.types: dict[str, str] = {}  # a parameter (passed as a copy) or a local datum: its type, lower case
         self.result: str | None = None
         self.out: list[n.Assign] = []
         self.target_root = path_of(target)[0]  # type: ignore[index]
@@ -133,6 +139,8 @@ class _Body:
         for (param, *_), value in zip(groups, given, strict=True):
             self.env[param.name] = value  # type: ignore[assignment]
             self.params.add(param.name)
+            if not param.mode:
+                self.types[param.name] = param.type
             if self.target_root in {p.upper() for p in self._names(value)}:  # type: ignore[arg-type]
                 self.aliased.add(param.name)
 
@@ -164,6 +172,7 @@ class _Body:
                 if dims or storage != "VAR":
                     raise self._stop(f"l.{stmt.span.line} its local {storage} {name}{'{...}' if dims else ''}")
                 self.locals.add(key)
+                self.types[key] = type_name.lower()
                 if init is not None:
                     value = self._subst(init)
                 else:
@@ -188,18 +197,40 @@ class _Body:
                     self.default = None
                     self._emit(self._subst(target), self._subst(value))
                 elif root in self.locals or root in self.params:
-                    if len(path) > 1:
-                        raise self._stop(f"l.{stmt.span.line} sets a part of {format_expr(target)}"
-                                         " (only its result is set part by part)")  # fmt: skip
                     new = self._subst(value)
                     if self.result is not None and self.result in {x.upper() for x in self._names(value)}:
                         raise self._stop(f"l.{stmt.span.line} {format_expr(target)} reads the result being built")
+                    if len(path) > 1:
+                        new = self._part_set(stmt, root, path[1:], new)
                     self.env[root] = new
                 else:
                     raise self._stop(f"l.{stmt.span.line} changes data of the program ({format_expr(target)})")
             case _:
                 raise self._stop(f"l.{stmt.span.line} `{_describe(stmt)}` (only assignments, pose functions and"
                                  " one RETURN at the end are copied into the call)")  # fmt: skip
+
+    def _part_set(self, stmt: n.Assign, root: str, fields: tuple[str, ...], value: n.Expr) -> n.Expr:
+        """`pe.trans := g.offNose` on a local pose (or a parameter passed as a copy): what the local stands for
+        becomes `[g.offNose, <its rot>]`, its other components kept as they were (`[0,0,0]` / `pe.rot`...)."""
+        type_name = self.types.get(root)
+        if type_name is None or root in self.aliased or root not in self.env or "{}" in fields or self.layouts is None:
+            raise self._stop(f"l.{stmt.span.line} sets a part of {format_expr(stmt.target)}"
+                             " (only its result and its local data are set part by part)")  # fmt: skip
+        return self._with_part(stmt, self.env[root], type_name, fields, value)
+
+    def _with_part(self, stmt: n.Assign, whole: n.Expr, type_name: str, fields: tuple[str, ...], value: n.Expr) -> n.Expr:
+        layout = self.layouts.layouts.get(type_name, ())
+        names = [name.upper() for name, _ in layout]
+        if fields[0] not in names:
+            raise self._stop(f"l.{stmt.span.line} sets {format_expr(stmt.target)}: no component {fields[0].lower()}"
+                             f" in {type_name}")  # fmt: skip
+        if isinstance(whole, n.Aggregate) and len(whole.items) == len(layout):
+            items = list(whole.items)
+        else:
+            items = [n.Component(self.span, whole, name) for name, _ in layout]
+        i = names.index(fields[0])
+        items[i] = value if len(fields) == 1 else self._with_part(stmt, items[i], layout[i][1], fields[1:], value)
+        return n.Aggregate(self.span, tuple(items))
 
     def _emit(self, target: n.Expr, value: n.Expr) -> None:
         identity = isinstance(value, n.Name) and value.name.upper() == self.target_root and target == self.target
@@ -330,6 +361,10 @@ class FuncInline:
                     stmt = self._whole_copy(stmt, root_type, key, exc)
                     if _frame_set_later(statements[i + 1 :], key, root_type):
                         continue  # its frame is set again further on: nothing to copy
+                    following = _frame_set_next(statements[i + 1 :], key, root_type, stmt.value)
+                    if following is not None:  # set again from the frame just copied: read where it comes from
+                        statements[i + 1] = following
+                        continue
                     copied = path_of(stmt.value)[0]  # type: ignore[index]
                 elif field not in frames:
                     raise Untranslatable(f"{format_expr(stmt.target)}: {exc} (in {function}(), inlined)",
@@ -376,7 +411,12 @@ class FuncInline:
         frame = FIELD[root_type]
         data = list(value.value)
         for name, item in zip(names, data, strict=True):
-            if name != frame and isinstance(item, Hole):
+            if name == "TLOAD" and isinstance(item, Hole) and not item.measured:
+                # FANUC keeps payloads apart from tools: the copy carries the base's, set where the base's changes
+                self.warn(stmt, f"payload of {format_expr(stmt.target)} copied from {decl.name}, whose payload is"  # type: ignore[attr-defined]
+                          f" changed at run time ({item.why}): select the PAYLOAD schedule of {decl.name} with this"
+                          " tool", Blocker.PAYLOAD)  # fmt: skip
+            elif name != frame and isinstance(item, Hole):
                 raise Untranslatable(f"{format_expr(stmt.target)} := {decl.name}: {item.why}",
                                      Blocker.CALIBRATION if item.measured else Blocker.RUNTIME_FRAME)  # fmt: skip
         data[names.index(frame)] = Hole(f"'{format_expr(stmt.target)}.{frame.lower()}' is copied from {decl.name}",
@@ -437,6 +477,25 @@ def _frame_set_later(statements: list[n.Assign], key: str, root_type: str) -> bo
         if path_of(stmt.target) in ((key,), (key, FIELD[root_type])):
             return True
     return False
+
+
+def _frame_set_next(statements: list[n.Assign], key: str, root_type: str, source: n.Expr) -> n.Assign | None:
+    """`t.tframe := PoseMult(t.tframe, pe)` right after `t := tBase` (its frame not known now): the same statement
+    reading tBase's frame instead (`PoseMult(tBase.tframe, pe)`), the copy of the frame then useless; None when the
+    next statement does not set the whole frame, or reads more of the target than its frame."""
+    from crossarm.convert.compute import _names
+
+    if isinstance(source, n.Component) and source.field.upper() == FIELD[root_type]:
+        source = source.base  # the copy of the frame `t.tframe := tBase.tframe`
+    if not statements or not isinstance(source, n.Name):
+        return None
+    following = statements[0]
+    if path_of(following.target) != (key, FIELD[root_type]):
+        return None
+    value = _frame_renamed(following.value, key, root_type, source)
+    if key in {name.upper() for name in _names(value)}:
+        return None
+    return n.Assign(following.span, following.target, value)
 
 
 def _frame_hole(value: Typed, root_type: str) -> Hole | None:

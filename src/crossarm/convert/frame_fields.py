@@ -117,6 +117,25 @@ class FrameFields:
             self.forget_field(a, Unknown(f"is set at l.{a.span.line} to a value only known at run time"))
         return True
 
+    def frame_unread(self, a: n.Assign, root_type: str, remark: str, why: Unresolvable) -> bool:
+        """`a` sets (a part of) a tool or work object only known at run time, which no move selects and no program
+        reads: nothing to keep on the FANUC, the RAPID line as a remark and a warning (an initialisation routine
+        often builds every tool of a series, a few of them used). False when it is read, or `a` may change other
+        data (a call changing its arguments, a FUNC of the backup that does more than compute)."""
+        path = path_of(a.target)
+        if not path or "{}" in path[:2]:
+            return False
+        decl = self.c.symbols.get(path[0])  # type: ignore[attr-defined]
+        kind = "UT" if root_type == "tooldata" else "UF"
+        if decl is None or decl.dims or self.c.symbols.is_local(path[0]) or path[0] in self.c.frames_in_moves[kind] \
+                or self.c.computer.written.read(path[0], root_type) or not _computes_only(self.c, a.value):  # type: ignore[attr-defined]  # fmt: skip
+            return False
+        self.emit(remark)  # type: ignore[attr-defined]
+        self.known.pop(path[0], None)  # type: ignore[attr-defined]
+        self.warn(a, f"{'tool' if kind == 'UT' else 'work object'} {decl.name} set at run time ({why}), but no move"  # type: ignore[attr-defined]
+                  " selects it and no program reads it: nothing written on the FANUC", Blocker.RUNTIME_FRAME)  # fmt: skip
+        return True
+
     def _field_note(self, a: n.Assign, name: str, path: tuple[str, ...], new: Typed | None) -> None:
         index = 1 if path[1] == "UFPROG" else 2
         value = new.value[index] if new is not None and isinstance(new.value, list) else None
@@ -130,3 +149,32 @@ class FrameFields:
             unit = f"'{value}'" if value is not None else "a mechanical unit only known at run time"
             self.warn(a, f"work object {name}: ufmec names {unit}: nothing written on the FANUC, a work object moved"  # type: ignore[attr-defined]
                       " by another unit than the robot is not converted (coordinated motion)", Blocker.STATIONARY)  # fmt: skip
+
+
+def _computes_only(c: Any, expr: n.Expr, depth: int = 0) -> bool:
+    """Whether working out `expr` changes no data: no argument a call may change, each FUNC of the backup it calls
+    only setting its own data (its local data and the parameters given as copies) and calling such FUNCs."""
+    from crossarm.convert.compute import PURE_FUNCTIONS, _function_calls, parse_params
+    from crossarm.rapid.walk import walk_statements
+
+    if depth > 8:
+        return False
+    for call in _function_calls(expr):
+        if c.effects.calls.changed(call.name, call.args, PURE_FUNCTIONS):
+            return False
+        routine = c.computer.functions.get(call.name.upper())
+        if routine is None:
+            continue
+        groups = parse_params(routine.params)
+        if groups is None:
+            return False
+        own = {p.name for g in groups for p in g if not p.mode}
+        own |= {s.name.upper() for s in walk_statements(routine.body) if isinstance(s, n.DataDecl)}
+        for stmt in walk_statements(routine.body):
+            if isinstance(stmt, n.ProcCall | n.Unsupported):
+                return False
+            if isinstance(stmt, n.Assign) and ((path := path_of(stmt.target)) is None or path[0] not in own):
+                return False
+            if not _computes_only(c, stmt, depth + 1):  # type: ignore[arg-type]
+                return False
+    return True

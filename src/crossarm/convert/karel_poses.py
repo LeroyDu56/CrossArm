@@ -323,6 +323,7 @@ class KarelPoses:
             self.pose_written(n.Component(span, root, "oframe"), scratch)
             self.emit(karel_call(self.c, "CA_POSEMULT", [source, scratch, self.c.point_register(FRAME)]))
             source = self.c.point_register(FRAME)
+        self.frame_numbered(kind, path[0], span.line)  # type: ignore[attr-defined]  # convert.frame_writes
         self.emit(f"{'UTOOL' if kind == 'UT' else 'UFRAME'}[{{{kind}:{path[0]}}}]={source}")  # place_frames()
         if kind == "UT":
             self.active_ut = None  # type: ignore[attr-defined]

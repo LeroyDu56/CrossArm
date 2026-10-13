@@ -203,6 +203,55 @@ def _overlap(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
     return all(x == y or "{}" in (x, y) for x, y in zip(a, b, strict=False))
 
 
+def _reads(written: "Written", modules: list[n.Module]) -> None:
+    """Fill written.reads: a name is read when it occurs more often than as the whole target of an assignment
+    (`t := ...` and `t.tframe := ...` set it, `x := t.tframe`, `MoveL p, v, z, t` and `t.tframe := PoseMult(t...)`
+    read it)."""
+    counts: dict[str, int] = defaultdict(int)
+    types = {d.name.upper(): d.type_name.lower() for m in modules for d in m.declarations}
+
+    def by_name(args: tuple[n.Arg, ...], where: str, local_types: dict[str, str]) -> None:
+        positional = [a.value for a in args if a.name is None]
+        first, value = (positional[0], positional[-1]) if len(positional) >= 2 else (None, None)
+        if isinstance(first, n.String):
+            written.reads.add(first.value.upper())
+            return
+        type_name = None
+        if isinstance(value, n.Name):
+            type_name = local_types.get(value.name.upper()) or types.get(value.name.upper())
+        if type_name is None:
+            written.read_by_name = f"GetDataVal in {where}"
+        else:
+            written.read_types.add(type_name)
+
+    for module in modules:
+        for decl in module.declarations:
+            for name in _names(decl.init):
+                counts[name.upper()] += 1
+        for routine in module.routines:
+            local_types = {p.name: p.type for g in parse_params(routine.params) or [] for p in g}
+            local_types |= {s.name.upper(): s.type_name.lower() for s in walk_statements(routine.body)
+                            if isinstance(s, n.DataDecl)}  # fmt: skip
+            bodies: list[Any] = [routine.body]
+            for handler in routine.handlers:
+                stmts = handler_body(handler)
+                if stmts is None:
+                    written.reads.update(i.upper() for i in _IDENT.findall(handler.raw))
+                else:
+                    bodies.append(stmts)
+            for body in bodies:
+                for name in _names(tuple(body)):
+                    counts[name.upper()] += 1
+                for stmt in walk_statements(body):
+                    if isinstance(stmt, n.Assign) and (path := path_of(stmt.target)) is not None:
+                        counts[path[0]] -= 1
+                    elif isinstance(stmt, n.Unsupported):
+                        written.reads.update(i.upper() for i in _IDENT.findall(stmt.raw))
+                    if isinstance(stmt, n.ProcCall) and stmt.name.upper() == "GETDATAVAL":
+                        by_name(stmt.args, f"{module.name}.{routine.name}", local_types)
+    written.reads.update(name for name, count in counts.items() if count > 0)
+
+
 @dataclass
 class Written:
     """Every piece of data the programs can change, with where: one place each is enough to say why."""
@@ -214,6 +263,16 @@ class Written:
     # `everything` when not even the type is known.
     types: dict[str, str] = field(default_factory=dict)
     everything: str = ""
+    # Upper-case names the programs read somewhere (an expression, a move, an argument, RAPID CrossArm does not
+    # read); data read by a name computed at run time (GetDataVal): of these lower-case types, or of any type
+    # (`read_by_name`, where).
+    reads: set[str] = field(default_factory=set)
+    read_types: set[str] = field(default_factory=set)
+    read_by_name: str = ""
+
+    def read(self, name: str, type_name: str | None = None) -> bool:
+        """Whether any program may read this data (not only set it); `type_name`: its type, lower case."""
+        return bool(self.read_by_name) or type_name in self.read_types or name.upper() in self.reads
 
     def add(self, path: tuple[str, ...] | None, where: str, value: n.Expr | None = None) -> None:
         if path is not None:
@@ -295,6 +354,7 @@ class Written:
                         raw(handler.raw, f"{place} l.{handler.span.line}")
                     else:
                         statements(stmts, place, local_types)
+        _reads(written, modules)
         return written
 
 

@@ -144,17 +144,15 @@ def test_a_point_put_together_from_fixed_values_is_moved_to():
 
 def test_an_input_the_programs_change_elsewhere_keeps_the_todo():
     extra = MAKE + "\nPROC calib()\ntBase.tframe.trans.z:=250;\nENDPROC"
-    result = run(f"tBuilt:=Shifted(tBase,30);\n{MOVE}", extra=extra)
-    ((category, message),) = todos(result)
-    assert category == Blocker.RUNTIME_FRAME
-    # Shifted() is copied into the call (convert.func_inline): tBase's frame would be read back, but no move selects it
-    assert "tBase: no move selects it" in message and "(in Shifted(), inlined: `tBuilt.tframe := tBase.tframe`)" in message
-    # A move selects it: its frame read back, copied, its z moved (`PR[F,3]=PR[F,3]+30`), loaded into tBuilt's
-    result = run(f"MoveL pHome,v100,fine,tBase;\ntBuilt:=Shifted(tBase,30);\n{MOVE}", extra=extra)
-    assert todos(result) == []
-    text = lines(result)
-    assert any(line.endswith("=UTOOL[1]") for line in text)
-    assert any(line.startswith("PR[") and line.endswith(",3]+30") for line in text), text
+    # Shifted() is copied into the call (convert.func_inline): tBase's frame read back, copied, its z moved
+    # (`PR[F,3]=PR[F,3]+30`), loaded into tBuilt's. No move selects tBase: the robot keeps it all the same, as
+    # tBuilt is computed from it (Converter._frames_read), numbered where it is first read.
+    for body in (f"tBuilt:=Shifted(tBase,30);\n{MOVE}", f"MoveL pHome,v100,fine,tBase;\ntBuilt:=Shifted(tBase,30);\n{MOVE}"):
+        result = run(body, extra=extra)
+        assert todos(result) == []
+        text = lines(result)
+        assert any(line.endswith("=UTOOL[1]") for line in text), text
+        assert any(line.startswith("PR[") and line.endswith(",3]+30") for line in text), text
 
 
 def test_an_input_changed_through_a_parameter_keeps_the_todo_but_not_one_only_read():

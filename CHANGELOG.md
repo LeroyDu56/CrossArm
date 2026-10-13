@@ -40,6 +40,19 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 - Fixed: a condition with a calculation on each side of an AND or OR (`v>=r-t AND v<=r+t`) worked both out in the
   same scratch register, the second overwriting the first before the test read them. Each side now has registers of
   its own.
+- A tool or work object built by a FUNC of the backup that builds poses part by part (`pe.trans := g.offset`,
+  `pe.rot := OrientZYX(g.angles.z, g.angles.y, g.angles.x)`, the angles in a RECORD of pos fields) and returns
+  `PoseMult(PoseMult(base.tframe, pe1), pe2)` is converted: worked out at conversion time when its base is fixed;
+  when the base changes at run time, the FUNC is copied into the call (it was a TODO: only its result could be set
+  part by part), the frame read back and moved in TP when only its position changes, by KAREL (`--karel`) when its
+  orientation does. Checked against an independent computation (<= 0.001 mm, 0.001 deg).
+- A tool or work object no move selects is kept on the robot when another one a move selects is computed from it at
+  run time (`PR[k]=UTOOL[n]` then reads it back): it was a TODO ("no move selects it").
+- A tool or work object set at run time that no move selects and no program reads is a remark with a warning
+  (nothing to write on the FANUC): it was a TODO. Read anywhere (an expression, an argument, `GetDataVal` of its type
+  by a computed name), it is as before.
+- A tool copied from one whose payload changes at run time: a warning (select the same PAYLOAD schedule with it),
+  not a TODO; its frame is converted.
 
 ## 1.12.0 — 2026-10-13
 
