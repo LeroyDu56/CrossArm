@@ -31,6 +31,20 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   RETURN...) no longer makes data unknown; a tool or work object the branches leave different in one field only
   (a ufmec named per branch) keeps its other fields known; a field copied whole from another tool or work object
   that keeps it (`w2 := w1`) still counts as unchanged. No ufmec warning for a fixed work object (ufprog TRUE).
+- A routine given a tool by reference (`INOUT tooldata`) that sets its tframe, a calibration routine, converts: the
+  tool is passed by its number and the routine writes the robot's tool frame (`PR[k]=UTOOL[AR[1]]`, the parts it
+  sets, `UTOOL[AR[1]]=PR[k]`); a tool kept in a bank register is read back into it after the CALL. The tool's other
+  fields stay known to the programs, so a pose computed from its tframe afterwards reads the tool frame the robot
+  holds. A statement left TODO that may change the tool (MToolTCPCalib...) stops it being read back in the routine.
+  A tool changed other than in its tframe, or a stationary one, stays TODO. Measured on ROBOGUIDE (probe `toolarg`).
+- A bool passed by reference that the routine sets is copied to a register (1 / 0) and read back into the caller's
+  flag; an optional robtarget parameter is passed as whether the call gives it, the point in its position register
+  (measured, probe `toolarg`). `p.trans := q.trans` (or a sum of positions) and `p.rot := q.rot` of points kept in
+  position registers convert, component by component.
+- MToolTCPCalib, MToolRotCalib, SToolTCPCalib and SToolRotCalib are said to be taught on the FANUC (tool frame
+  setup) rather than "call with arguments"; CalcJointT / CalcRobT are said to need the robot's kinematics rather than
+  to read the robot's position. A tool or work object set at run time that no converted program uses (only routines
+  left out of the conversion read it) is a remark and a warning, as one no program reads.
 
 ## 1.13.0 — 2026-10-13
 

@@ -76,6 +76,8 @@ probe, everything else in local/logs/probe_all.log):
     branchframe  --karel: a work object's uframe from a pose chosen in the branches of an IF (both write its register),
                  turned by OrientZYX of a parameter (PR[k,4..6]), PoseMult by CA_POSEMULT, copied to two work
                  objects: the moves in the copies where RAPID puts the flange, two calls
+    toolarg      a routine given a tool by reference sets its tframe (PR[F]=UTOOL[AR[1]], UTOOL[AR[1]]=PR[F]) for two
+                 tools, a bool passed by reference read back into a flag, an optional point: where RAPID puts the flange
     funcinline   FUNCs of the backup building tools and work objects from base frames calibrated at run time,
                  copied into each call: TP (PR[F,i]=PR[F,i]+d) where the base's orientation is known, else
                  CA_POSEMULT: the moves with each tool, in each work object, where RAPID puts the flange
@@ -167,6 +169,7 @@ import make_string_probe
 import make_sysvar_probe
 import make_taught_probe
 import make_time_flag_probe
+import make_tool_arg_probe
 import make_wait_probe
 import make_waitrob_probe
 import roboguide
@@ -502,6 +505,14 @@ def probe_stopmove() -> str:
     return f"FAIL {problem}" if problem else make_stopmove_probe.summary(make_stopmove_probe.stored())
 
 
+def probe_toolarg() -> str:
+    try:
+        problem = make_tool_arg_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_tool_arg_probe.summary(make_tool_arg_probe.stored())
+
+
 def probe_branchframe() -> str:
     try:
         problem = make_branch_frame_probe.run()  # stores the result, as the probe's own run does
@@ -691,7 +702,7 @@ GROUPS: dict[str, dict[str, float]] = {
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
               "sysvars": 60, "optargs": 45},
     "library": {"karel": 140, "karelpose": 136, "karelfile": 120, "stopmove": 87, "exitcycle": 55},
-    "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150, "branchframe": 90},
+    "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150, "branchframe": 90, "toolarg": 40},
     "robotstudio": {"abb": 74},
 }  # fmt: skip
 GROUP_LIMIT_S = 600
@@ -724,7 +735,7 @@ def main() -> int:
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
               "optargs": probe_optargs, "rtcp": probe_rtcp, "waitrob": probe_waitrob, "exitcycle": probe_exitcycle, "branchframe": probe_branchframe,
-              "abb": probe_abb}  # fmt: skip
+              "toolarg": probe_toolarg, "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     grouped = [probe for group in GROUPS.values() for probe in group]
     assert sorted(grouped) == sorted(probes), "every probe in exactly one group"

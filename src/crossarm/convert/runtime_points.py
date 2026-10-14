@@ -244,6 +244,25 @@ class RuntimePoints:
         if len(path) == 2 and path[1] == "ROT" and self.c.runtime_points.get(key) == "pose":
             self.pose_orientation(a, register, name)
             return
+        if path[1:] == ("TRANS",):  # p.trans := q.trans: x, y, z one by one
+            self.runtime_set(name)
+            try:
+                parts = [self.arithmetic(_axis(a.value, i)) for i in range(3)]
+            except (Untranslatable, Unresolvable) as exc:
+                raise Untranslatable(f"{format_expr(a.target)} set to {format_expr(a.value)}: the x, y, z of a point kept"
+                                     f" in a position register are set one by one from values TP computes ({exc})",
+                                     Blocker.RUNTIME_POSITION) from exc  # fmt: skip
+            for i, part in enumerate(parts, 1):
+                self.emit(f"{register[:-1]},{i}]={part}")
+            return
+        if path[1:] == ("ROT",) and isinstance(a.value, n.Component) and a.value.field.upper() == "ROT" \
+                and (source := self.kept_pose(a.value.base)) is not None:  # type: ignore[attr-defined]  # fmt: skip
+            # p.rot := q.rot, q kept in a register: its W, P, R (framefield probe: PR[k,4..6]=PR[m,4..6])
+            self.runtime_set(name)
+            for i in (4, 5, 6):
+                self.emit(f"{register[:-1]},{i}]={source[:-1]},{i}]")
+            self.known[turn] = Unknown("has an orientation known at run time only")
+            return
         if len(path) > 1:
             axis = self.runtime_axis(a.target)
             self.emit(f"{axis}={self.arithmetic(a.value)}")
@@ -359,8 +378,9 @@ class RuntimePoints:
             self.c.computer.value(value)
         except MeasuredAtRunTime as exc:
             raise Untranslatable(self.measured_why(a, "jointtarget", what, exc), Blocker.CALIBRATION) from exc
-        except Unresolvable:
-            pass
+        except Unresolvable as exc:
+            if isinstance(value, n.FuncCall) and value.name.upper() == "CALCJOINTT":
+                raise Untranslatable(f"{what}: {exc}", Blocker.RUNTIME_POSITION) from exc
         raise Untranslatable(f"{what} set to {format_expr(value)}: a jointtarget kept in a position register is set to"
                              " CJointT() or to another one kept in a register", Blocker.RUNTIME_POSITION)  # fmt: skip
 
@@ -505,3 +525,13 @@ class RuntimePoints:
                     self.emit(f"{name}[{number}]=PR[{bank}]")
                 self.emit(f"{name}_NUM={number}")
         self.active_uf, self.active_ut = wanted["UF"], wanted["UT"]
+
+
+def _axis(value: n.Expr, i: int) -> n.Expr:
+    """x (0), y (1) or z (2) of a pos: an item of [x, y, z], the same axis of each side of a sum or a difference of
+    positions, else its component."""
+    if isinstance(value, n.Aggregate) and len(value.items) == 3:
+        return value.items[i]
+    if isinstance(value, n.BinaryOp) and value.op in ("+", "-"):
+        return n.BinaryOp(value.span, value.op, _axis(value.left, i), _axis(value.right, i))
+    return n.Component(value.span, value, "xyz"[i])

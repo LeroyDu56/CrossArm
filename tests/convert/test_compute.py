@@ -160,7 +160,10 @@ def test_an_input_changed_through_a_parameter_keeps_the_todo_but_not_one_only_re
     result = run(f"Show tBase;\ntBuilt:=Shifted(tBase,30);\n{MOVE}", extra=reads)
     assert todos(result) == []  # Show is given the tool's number, and only reads it
     assert result.computed_frames
+    # a routine setting the tframe of the tool it is given writes its UTOOL (frame_writes): the frame read back
     writes = MAKE + "\nPROC Calib(INOUT tooldata t)\nt.tframe.trans.z:=1;\nENDPROC\nPROC other()\nCalib tBase;\nENDPROC"
+    assert todos(run(f"tBuilt:=Shifted(tBase,30);\n{MOVE}", extra=writes)) == []
+    writes = MAKE + "\nPROC Calib(INOUT tooldata t)\nt.tload.mass:=1;\nENDPROC\nPROC other()\nCalib tBase;\nENDPROC"
     assert "is changed by the programs (M.other l." in todos(run(f"tBuilt:=Shifted(tBase,30);\n{MOVE}", extra=writes))[0][1]
 
 

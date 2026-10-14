@@ -65,7 +65,7 @@ def test_parameters_map_to_ar_in_order_switches_last():
     ("num list{*}", "parameter list is an array"),
     ("INOUT num list{*}", "parameter list is an array"),
     ("\\INOUT num list{*}", "parameter list is an array"),
-    ("\\robtarget count", "optional robtarget parameter count: a point travels in a position register"),
+    ("\\INOUT robtarget count", "optional robtarget parameter count passed by reference (INOUT): a point does not come back"),
     (",".join(f"num a{i}" for i in range(11)), "11 parameters: a TP CALL takes at most 10 arguments"),
 ])  # fmt: skip
 def test_what_tp_cannot_pass_is_said(params, reason):
@@ -84,7 +84,10 @@ def test_a_num_parameter_the_routine_changes_is_copied_to_a_register():
 
 def test_other_parameters_the_routine_changes_are_refused():
     routine = parse_module("MODULE M\nPROC p(bool on)\n  on:=FALSE;\nENDPROC\nENDMODULE").routines[0]
-    assert signature(routine) == "it changes its parameter on: only a whole num parameter can be copied to a register"
+    assert signature(routine) == ("it changes its bool parameter on passed by value: a bool is copied to a register"
+                                  " only to come back")  # fmt: skip
+    routine = parse_module("MODULE M\nPROC p(INOUT string s)\n  s:=\"A\";\nENDPROC\nENDMODULE").routines[0]
+    assert signature(routine) == "it changes its parameter s: only a whole num or bool parameter can be copied to a register"
 
 
 def test_the_called_routine_reads_its_arguments():

@@ -173,6 +173,9 @@ WRITES_ONLY = {
     "SEARCHL": 1, "SEARCHJ": 1, "SEARCHC": 1,
     "TRIGGIO": 0, "TRIGGEQUIP": 0, "TRIGGINT": 0, "TRIGGSPEED": 0, "TRIGGCHECKIO": 0, "TRIGGRAMPAO": 0,
 }  # fmt: skip
+# RAPID's tool calibrations: the position of the tool among their arguments, of which they set the tframe only (the TCP,
+# its orientation), and from which on the other arguments are results they set too (MaxErr, MeanErr).
+TFRAME_CALIBRATIONS = {"MTOOLTCPCALIB": 4, "STOOLTCPCALIB": 4, "MTOOLROTCALIB": -1, "STOOLROTCALIB": -1}
 PURE_FUNCTIONS = frozenset({
     "OFFS", "RELTOOL", "POSEMULT", "POSEINV", "POSEVECT", "ORIENTZYX", "EULERZYX", "NORIENT", "DEFFRAME",
     "DEFDFRAME", "CROBT", "CJOINTT", "CPOS", "CTOOL", "CWOBJ", "CALCROBT", "CALCJOINTT", "ABS", "SQRT", "SIN",
@@ -180,9 +183,11 @@ PURE_FUNCTIONS = frozenset({
     "STRLEN", "STRPART", "STRFIND", "STRMATCH", "STRMEMB", "STRORDER", "STRMAP", "DOUTPUT", "DINPUT",
     "GINPUT", "GOUTPUT", "AINPUT", "AOUTPUT", "TESTDI", "PRESENT", "DIM", "OPMODE", "RUNMODE", "ROBOS",
     "CLKREAD", "GETTIME", "CDATE", "CTIME", "VECTMAGN", "DOTPROD", "CROSSPROD", "MIRPOS", "DISTANCE",
-    "UIMESSAGEBOX", "UINUMENTRY", "UINUMTUNE", "UIALPHAENTRY", "UILISTVIEW", "ISFILE", "ISPERS", "ISVAR",
+    "UIMESSAGEBOX", "UINUMENTRY", "UINUMTUNE", "UIALPHAENTRY", "UILISTVIEW", "ISFILE", "ISPERS", "ISVAR", "ARGNAME",
 })  # fmt: skip
-_READS_ROBOT = frozenset({"CROBT", "CJOINTT", "CPOS", "CTOOL", "CWOBJ", "CALCROBT", "CALCJOINTT"})
+_READS_ROBOT = frozenset({"CROBT", "CJOINTT", "CPOS", "CTOOL", "CWOBJ"})
+# the robot's kinematics worked out by the controller, not a reading: TP has no instruction for them
+_KINEMATICS = frozenset({"CALCROBT", "CALCJOINTT"})
 _NOT_DATA = frozenset({"LABEL", "GOTO", "RAISE", "RETRY", "TRYNEXT", "SYNTAX_ERROR"})
 _IDENT = re.compile(r"[A-Za-z_]\w*")
 
@@ -403,6 +408,7 @@ class Calls:
         self.routines = {r.name.upper(): r for m in modules for r in m.routines}
         self.groups = {name: parse_params(r.params) for name, r in self.routines.items()}
         self._changes: dict[str, frozenset[str] | None] = {}
+        self._parts: dict[tuple[str, str], bool] = {}
 
     def changed(self, name: str, args: tuple[n.Arg, ...], read_only: frozenset[str]) -> list[n.Expr]:
         """The arguments this call may change."""
@@ -413,6 +419,10 @@ class Calls:
                 positional = [a.value for a in args if a.name is None and a.value is not None]
                 index = WRITES_ONLY[key]
                 return positional[index : index + 1]
+            if key in TFRAME_CALIBRATIONS and (positional := [a.value for a in args if a.name is None and a.value is not None]):
+                index = TFRAME_CALIBRATIONS[key] % len(positional)
+                tool = positional[index]
+                return [n.Component(tool.span, tool, "tframe"), *positional[index + 1 :]]
             return [] if key in read_only else values
         groups = self.groups[key]
         if groups is None:  # its parameter list is not read: anything given may be changed
@@ -424,15 +434,58 @@ class Calls:
 
         required = [g[0] for g in groups if not g[0].optional]
         optional = {p.name: p for g in groups if g[0].optional for p in g}
+        def part(param: Param | None, value: n.Expr) -> n.Expr:
+            """A tooldata parameter of which the routine sets the tframe only: that field of what the call gives."""
+            if param is not None and param.type == "tooldata" and path_of(value) and self.frame_part(key, param.name):
+                return n.Component(value.span, value, "tframe")
+            return value
+
         out = []
         for i, arg in enumerate(a for a in args if a.name is None):
             if arg.value is not None and (i >= len(required) or may(required[i])):
-                out.append(arg.value)
+                out.append(part(required[i] if i < len(required) else None, arg.value))
         for arg in (a for a in args if a.name is not None):
             param = optional.get(arg.name.upper())
             if arg.value is not None and (param is None or may(param)):
-                out.append(arg.value)
+                out.append(part(param, arg.value))
         return out
+
+    def frame_part(self, key: str, name: str) -> bool:
+        """Whether routine `key` changes nothing of its tooldata parameter `name` (upper case) but its tframe: it sets
+        a part of the tframe, or passes it to a tool calibration or a routine doing so; any other change, or code
+        CrossArm does not read naming it, is a change of the whole tool."""
+        if (key, name) in self._parts:
+            return self._parts[(key, name)]
+        self._parts[(key, name)] = False  # a routine calling itself back while this is worked out
+        routine = self.routines[key]
+        stmts = list(walk_statements(routine.body))
+        for handler in routine.handlers:
+            body = handler_body(handler)
+            if body is None:
+                if name in {w.upper() for w in _IDENT.findall(handler.raw)}:
+                    return False
+            else:
+                stmts += walk_statements(body)
+        fields: set[str] = set()
+        for stmt in stmts:
+            changed: list[n.Expr] = []
+            if isinstance(stmt, n.Assign):
+                changed.append(stmt.target)
+            elif isinstance(stmt, n.ProcCall):
+                changed += self.changed(stmt.name, stmt.args, READ_ONLY_PROCS)
+            elif isinstance(stmt, n.Unsupported) and stmt.kind not in _NOT_DATA \
+                    and name in {w.upper() for w in _IDENT.findall(stmt.raw)}:  # fmt: skip
+                return False
+            for call in _function_calls(stmt):
+                changed += self.changed(call.name, call.args, PURE_FUNCTIONS)
+            for value in changed:
+                path = path_of(value)
+                if path and path[0] == name:
+                    if len(path) < 2:
+                        return False
+                    fields.add(path[1])
+        self._parts[(key, name)] = fields == {"TFRAME"}
+        return self._parts[(key, name)]
 
     def changes(self, key: str) -> frozenset[str] | None:
         """The VAR / PERS / INOUT parameters a routine of the backup changes; None when that is not told."""
@@ -808,6 +861,9 @@ class Computer:
             return self._user_function(self.functions[key], call)
         if key in _READS_ROBOT:
             raise MeasuredAtRunTime(f"{call.name}() reads the robot's position when the program runs")
+        if key in _KINEMATICS:
+            raise Unresolvable(f"{call.name}() works the {'joints of a point' if key == 'CALCJOINTT' else 'point of joints'}"
+                               " out with the robot's kinematics when the program runs: TP has no instruction for it")
         positional = [a.value for a in call.args if a.name is None and a.value is not None]
         options = {a.name.upper(): a.value for a in call.args if a.name is not None}
         if key == "PRESENT":

@@ -128,12 +128,19 @@ class FrameFields:
         decl = self.c.symbols.get(path[0])  # type: ignore[attr-defined]
         kind = "UT" if root_type == "tooldata" else "UF"
         if decl is None or decl.dims or self.c.symbols.is_local(path[0]) or path[0] in self.c.frames_in_moves[kind] \
-                or self.c.computer.written.read(path[0], root_type) or not _computes_only(self.c, a.value):  # type: ignore[attr-defined]  # fmt: skip
+                or not _computes_only(self.c, a.value):  # type: ignore[attr-defined]  # fmt: skip
+            return False
+        elsewhere = self.c.computer.written.read(path[0], root_type)  # type: ignore[attr-defined]
+        written = self.c.computer.written  # type: ignore[attr-defined]
+        if elsewhere and (written.read_by_name or root_type in written.read_types
+                          or _read_in(self.c.converted_routines, path[0])):  # type: ignore[attr-defined]
             return False
         self.emit(remark)  # type: ignore[attr-defined]
         self.known.pop(path[0], None)  # type: ignore[attr-defined]
+        read = ("no program converted reads it (only routines left out of the conversion do)" if elsewhere
+                else "no program reads it")  # fmt: skip
         self.warn(a, f"{'tool' if kind == 'UT' else 'work object'} {decl.name} set at run time ({why}), but no move"  # type: ignore[attr-defined]
-                  " selects it and no program reads it: nothing written on the FANUC", Blocker.RUNTIME_FRAME)  # fmt: skip
+                  f" selects it and {read}: nothing written on the FANUC", Blocker.RUNTIME_FRAME)  # fmt: skip
         return True
 
     def _fixed_work_object(self, a: n.Assign, name: str) -> bool:
@@ -187,3 +194,23 @@ def _computes_only(c: Any, expr: n.Expr, depth: int = 0) -> bool:
             if not _computes_only(c, stmt, depth + 1):  # type: ignore[arg-type]
                 return False
     return True
+
+
+def _read_in(routines: list[n.Routine], name: str) -> bool:
+    """Whether any of these routines names the data `name` (upper case) other than as what an assignment sets."""
+    from crossarm.rapid.walk import walk_statements
+
+    for routine in routines:
+        for stmt in walk_statements(routine.body):
+            target = stmt.target if isinstance(stmt, n.Assign) else None
+            for node in expr_nodes(stmt):
+                if isinstance(node, n.Name) and node.name.upper() == name and not _within(node, target):
+                    return True
+    return False
+
+
+def _within(node: n.Name, target: n.Expr | None) -> bool:
+    """Whether `node` is the data an assignment's target names (`w.uframe.trans` sets w)."""
+    while isinstance(target, n.Component | n.Index):
+        target = target.base
+    return target is node

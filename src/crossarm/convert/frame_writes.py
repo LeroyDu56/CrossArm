@@ -25,15 +25,22 @@ by KAREL (CA_POSEMULT, --karel), and taken out again when the uframe is read bac
 What the robot keeps in UFRAME / UTOOL is what the RAPID data holds as long as each statement changing the
 frame was converted: one left TODO marks the frame (`NAME#FRAME`), and it is not read back after that.
 
+A routine given a tool by reference (INOUT tooldata) that sets a part of its tframe, a calibration, is given the
+tool's number (crossarm.convert.arguments): it writes UTOOL[AR[n]] the same way, `PR[F]=UTOOL[AR[1]]`, the parts,
+`UTOOL[AR[1]]=PR[F]`; the caller's moves select that UTOOL, and a tool kept in a bank register is read back into
+it after the CALL (`PR[bank]=UTOOL[n]`). A statement left TODO that may change the tool (MToolTCPCalib...) marks it:
+it is not read back after that in the routine.
+
 Measured on ROBOGUIDE V10.10 (tools/make_frame_field_probe.py): `PR[F]=UFRAME[n]` / `UTOOL[n]`, `PR[F,i]=PR[k,i]`
-for the six components, and `UFRAME[n]=PR[F]` / `UTOOL[n]=PR[F]` put the frame where RAPID's data does.
+for the six components, and `UFRAME[n]=PR[F]` / `UTOOL[n]=PR[F]` put the frame where RAPID's data does;
+(tools/make_tool_arg_probe.py) `PR[F]=UTOOL[AR[1]]` and `UTOOL[AR[1]]=PR[F]` in a called program too.
 """
 
 from typing import Any
 
 from crossarm.convert.blockers import Blocker, Untranslatable
 from crossarm.convert.compute import FRAME_RECORDS, LAYOUTS, Hole, Typed, Unknown, path_of, to_pose
-from crossarm.convert.tp_numbers import fmt_number, operand
+from crossarm.convert.tp_numbers import ascii_text, fmt_number, operand
 from crossarm.convert.values import Unresolvable
 from crossarm.geometry import Pose, quat_to_wpr
 from crossarm.rapid import nodes as n
@@ -167,6 +174,78 @@ class FrameWrites:
                              " for its saved value. A frame turned far from it may need another configuration: the move"
                              " then stops (MOTN-017/018) or takes another posture: check the moves after a calibration",
                              Blocker.RUNTIME_FRAME)  # fmt: skip
+
+    # -- a tool the routine is given by reference ----------------------------------------------------------------
+
+    def param_frame_written(self, a: n.Assign) -> bool:
+        """`tCal.tframe.trans.z := nLen`, tCal a tooldata parameter whose tframe the routine sets: written to
+        UTOOL[AR[n]] (module docstring); False when `a` does not set such a parameter."""
+        path = path_of(a.target)
+        args = self.args  # type: ignore[attr-defined]
+        if not path or args is None or path[0] not in args.frames_written:
+            return False
+        name = next(s.name for s in args.slots if s.key == path[0])
+        rest = path[2:]
+        if path[1:2] != ("TFRAME",) or rest not in ((), ("TRANS",), ("ROT",), *(("TRANS", axis) for axis in _AXES)):
+            raise Untranslatable(f"{format_expr(a.target)}: only the tframe of a tool the routine is given is written"
+                                 " (UTOOL)", Blocker.RUNTIME_FRAME)  # fmt: skip
+        stale = self.known.get(path[0])  # type: ignore[attr-defined]
+        if isinstance(stale, Unknown):
+            raise Untranslatable(f"'{name}' {stale.reason}: its UTOOL is not what the RAPID holds",
+                                 Blocker.CALIBRATION if stale.measured else Blocker.RUNTIME_FRAME)  # fmt: skip
+        resource = f"UTOOL[{args.frame(name)}]"
+        value = a.value
+        register = self.c.point_register(FRAME)  # type: ignore[attr-defined]
+        start = len(self.lines)  # type: ignore[attr-defined]
+        from crossarm.convert.translate import REMARK_MAX
+
+        self.emit(("!" + ascii_text(f"l.{a.span.line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip())  # type: ignore[attr-defined]
+        try:
+            if rest:
+                self.emit(f"{register}={resource}")  # type: ignore[attr-defined]
+                if rest[0] == "ROT":
+                    self._rot_into(register, value)
+                else:
+                    self._trans_into(register, value, rest[1:] or _AXES, (path[0], "TFRAME", "TRANS"))
+            elif isinstance(value, n.Aggregate) and len(value.items) == 2:
+                self._trans_into(register, value.items[0], _AXES)
+                self._rot_into(register, value.items[1])
+            elif (source := self.frame_kind(value)) is not None:
+                base, base_other = self.frame_now(source[0], source[1], a.span)
+                self.frame_into(register, source[0], source[1], a.span, base, base_other)
+            else:
+                try:
+                    known = to_pose(self.c.computer.value(value).value)  # type: ignore[attr-defined]
+                except Unresolvable as exc:
+                    raise Untranslatable(f"tframe of {name} set to {format_expr(value)}: a tool the routine is given is"
+                                         " set from [trans, rot], another tool's tframe or a value known now",
+                                         Blocker.RUNTIME_FRAME) from exc  # fmt: skip
+                self.pose_components(register, [fmt_number(round(v, 3) + 0.0) for v in known.pos], known.rot)  # type: ignore[attr-defined]
+        except Untranslatable:
+            del self.lines[start:]  # type: ignore[attr-defined]
+            raise
+        self.emit(f"{resource}={register}")  # type: ignore[attr-defined]
+        self.active_ut = None
+        return True
+
+    def tools_returned(self, call: n.ProcCall) -> None:
+        """After a CALL converted to a routine setting the tframe of a tool it is given: the tool's tframe is what the
+        robot holds in its UTOOL, its other fields as they were (crossarm.convert.arguments)."""
+        from crossarm.convert.arguments import Signature
+
+        layout = self.c.signatures.get(call.name.upper())  # type: ignore[attr-defined]
+        if not isinstance(layout, Signature) or not layout.frames_written:
+            return
+        positional = [a.value for a in call.args if a.name is None]
+        for value, slot in zip(positional, layout.required, strict=False):
+            if slot.key not in layout.frames_written or not isinstance(value, n.Name):
+                continue
+            key = value.name.upper()
+            decl = self.c.symbols.get(value.name)  # type: ignore[attr-defined]
+            if decl is None or self.c.symbols.is_local(key) or (self.args and self.args.kind(value.name)):  # type: ignore[attr-defined]
+                continue
+            self.known.pop(key, None)  # type: ignore[attr-defined]
+            self.frame_loaded("UT", key, call.span.line, False)
 
     # -- the statements -----------------------------------------------------------------------------------------
 

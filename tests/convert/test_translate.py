@@ -1054,8 +1054,8 @@ ENDFUNC"""
 
 def test_a_call_to_a_routine_using_sockets_is_said_so_before_its_parameters():
     """Whatever it is given, the routine talks over a socket: that is why the call stays TODO."""
-    procs = SOCKETS + "\nPROC ReadReply(INOUT bool bOk)\n  bOk:=Ask(\"ok\")=\"1\";\nENDPROC"
-    result = run("ReadReply bDone;", "VAR socketdev sCam;\nVAR bool bDone;", extra_procs=procs)
+    procs = SOCKETS + "\nPROC ReadReply(INOUT string sOk)\n  sOk:=Ask(\"ok\");\nENDPROC"
+    result = run("ReadReply sDone;", "VAR socketdev sCam;\nVAR string sDone;", extra_procs=procs)
     found = [n for n in result.notes if n.kind == "TODO" and n.program == result.programs[0].program.name]
     assert [(n.category, n.message.split(" — ")[0]) for n in found] == [
         (Blocker.NO_TP_EQUIVALENT, "ReadReply, through Ask, SendLine, calls SocketSend: sockets: TP has no network messaging"),

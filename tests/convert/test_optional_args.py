@@ -85,10 +85,13 @@ def test_a_tool_passed_by_reference_and_not_changed_is_passed_by_its_number():
 
 
 def test_a_tool_the_routine_changes_by_reference_says_where():
-    procs = "PROC Tilt(INOUT tooldata tUse)\n  tUse.tframe.rot:=[1,0,0,0];\nENDPROC"
     data = "PERS tooldata tHold:=[TRUE,[[0,0,100],[1,0,0,0]],[1,[0,0,50],[1,0,0,0],0,0,0]];"
+    procs = "PROC Tilt(INOUT tooldata tUse)\n  tUse.tframe.rot:=[1,0,0,0];\nENDPROC"
+    result = convert_all("Tilt tHold;", procs, data)  # its tframe: written to UTOOL[AR[1]] (frame_writes)
+    assert not todos(result) and "UTOOL[AR[1]]=PR[" in " ".join(lines(result, "TILT"))
+    procs = "PROC Tilt(INOUT tooldata tUse)\n  tUse.tload.mass:=2;\nENDPROC"
     (message,) = todos(convert_all("Tilt tHold;", procs, data))
-    assert "it changes its tooldata parameter tUse passed by reference (INOUT), `tUse.tframe.rot := [1, 0, 0, 0]`" in message
+    assert "it changes its tooldata parameter tUse passed by reference (INOUT), `tUse.tload.mass := 2`" in message
 
 
 def test_a_bool_passed_by_reference_is_read_when_not_changed():

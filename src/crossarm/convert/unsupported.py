@@ -54,6 +54,10 @@ NO_TP_FAMILIES = {
     " standard UOP outputs do not give it; an output the robot is set up to give it on can be tested instead": (
         "OPMODE",
     ),
+    "tool calibration from robot positions: TP has none; teach the tool on the FANUC (SETUP Frames, Tool Frame, Four"
+    " Point or Six Point method) into the UTOOL the routine writes": (
+        "MTOOLTCPCALIB", "MTOOLROTCALIB", "STOOLTCPCALIB", "STOOLROTCALIB",
+    ),
     "world zone: the FANUC sets zones up in its DCS or interference check menus, not in TP": (
         "WZBOXDEF", "WZCYLDEF", "WZSPHDEF", "WZHOMEJOINTDEF", "WZLIMJOINTDEF", "WZLIMSUP", "WZDOSET",
         "WZENABLE", "WZDISABLE", "WZFREE", "WZSTATIONARY", "WZTEMPORARY", "SHAPEDATA",

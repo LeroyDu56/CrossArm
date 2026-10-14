@@ -227,7 +227,7 @@ class RoutineCalls:
                 if slot.by_reference and slot.key in layout.points_changed:  # VAR, INOUT: the point comes back
                     back.append(f"{self.point_back(a.value, slot)}={self.c.point_register(f'{layout.routine}.{slot.name}')}")
             elif slot.kind in ("tooldata", "wobjdata"):
-                values.append(self.frame_argument(a.value, slot, points))
+                values.append(self.frame_argument(a.value, slot, points, back if slot.key in layout.frames_written else None))
             elif slot.kind in ("speeddata", "zonedata"):
                 if a.value is None:
                     raise Untranslatable(f"argument {slot.name} is missing", Blocker.CALL_ARGS)
@@ -244,6 +244,8 @@ class RoutineCalls:
                     if slot.by_reference and field.key in layout.copied:  # INOUT, VAR: its changed num components
                         copy = self.c.written_register(field.name, key=f"{name}.{field.name}")  # come back
                         back.append(f"{self.component_back(component, slot)}={copy}")
+            elif slot.kind == "bool" and slot.key in returned:  # a bool passed by reference, set by the routine
+                values.append(self.bool_passed(a.value, slot, name, points, back))
             else:
                 values.append(self.argument(a.value, slot))
                 if slot.key in returned:  # INOUT, VAR, PERS the routine changes: read back after the CALL
@@ -251,8 +253,17 @@ class RoutineCalls:
                     back.append(f"{self.returned_to(a.value, slot)}={copy}")
         for slot in layout.slots[len(required):]:
             arg = given.get(slot.key)
-            if slot.given_flag:  # whether the call gives it, then its value
-                values += self.optional_value(arg, slot, name, back, returned)
+            if slot.kind == "robtarget":  # an optional point: whether the call gives it, the point in its register
+                if arg is None:
+                    values.append("0")
+                    continue
+                if arg.conditional or arg.value is None:
+                    raise Untranslatable(f"\\{arg.name}: an optional point is passed given a value, not passed on",
+                                         Blocker.CALL_ARGS)  # fmt: skip
+                points.append(self.point_argument(arg.value, slot, layout, call.span.line, frames))
+                values.append("1")
+            elif slot.given_flag:  # whether the call gives it, then its value
+                values += self.optional_value(arg, slot, name, back, returned, points)
             elif arg is None:
                 values.append("0")  # a switch not given; a work object not given: wobj0, UFRAME 0
             elif slot.kind == "wobjdata":
@@ -272,7 +283,8 @@ class RoutineCalls:
         for text in back:
             self.emit(text)
 
-    def optional_value(self, arg: n.Arg | None, slot, program: str, back: list[str], returned: set[str]) -> list[str]:
+    def optional_value(self, arg: n.Arg | None, slot, program: str, back: list[str], returned: set[str],
+                       before: list[str]) -> list[str]:  # fmt: skip
         """The two arguments of an optional num, bool or string: 1 and its value when the call gives it, 0 and 0
         (or '') when not; `\\Speed?Speed` passes on what this routine was given. Passed by reference and changed,
         it is read back after the CALL only when given."""
@@ -289,6 +301,8 @@ class RoutineCalls:
             return [flag, self.copies.get(name.upper()) or self.args.register(name)]  # type: ignore[union-attr, list-item]
         if arg.value is None:
             raise Untranslatable(f"\\{arg.name} given without a value", Blocker.CALL_ARGS)
+        if slot.kind == "bool" and slot.key in returned:
+            return ["1", self.bool_passed(arg.value, slot, program, before, back)]
         value = self.argument(arg.value, slot)
         if slot.key in returned:  # INOUT, VAR, PERS the routine changes: read back after the CALL
             copy = self.c.written_register(slot.name, key=f"{program}.{slot.name}")
@@ -326,16 +340,51 @@ class RoutineCalls:
         except Unresolvable as exc:
             raise Untranslatable(f"argument {field.name}: {exc}", Blocker.CALL_ARGS) from exc
 
-    def frame_argument(self, expr: n.Expr | None, slot, before: list[str]) -> str:
+    def frame_argument(self, expr: n.Expr | None, slot, before: list[str], back: list[str] | None = None) -> str:
         """The frame number a tooldata or wobjdata argument is passed as; this routine's own frame parameter as
-        its AR[n]. A frame above what the controller holds is loaded into its slot first (`before`)."""
+        its AR[n]. A frame above what the controller holds is loaded into its slot first (`before`). `back`: a tool
+        whose tframe the routine writes (UTOOL[AR[n]]): one the robot holds, its bank register read back after."""
         kind = "UT" if slot.kind == "tooldata" else "UF"
         if isinstance(expr, n.Name) and self.args and (own := self.args.frame(expr.name)):
+            if back is not None and expr.name.upper() not in self.args.frames_written:
+                raise Untranslatable(f"argument {slot.name}: this routine's {expr.name}, which it passes on to be"
+                                     " written, would come back to the caller only if this routine wrote it too",
+                                     Blocker.CALL_ARGS)  # fmt: skip
             return own
+        if back is not None:
+            try:
+                held = self.c.computer.value(n.Component(expr.span, expr, "robhold")).value if expr else None  # type: ignore[union-attr]
+            except Unresolvable:
+                held = None
+            if not isinstance(expr, n.Name) or held is not True:
+                raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' must be tooldata the"
+                                     " robot holds (robhold TRUE, known now): the routine writes its tframe to UTOOL",
+                                     Blocker.CALL_ARGS)  # fmt: skip
         number, bank = self.c.selection(kind, self.c.frame_number(kind, expr, self.name, expr.span.line if expr else 0))
         if bank is not None:
             before.append(f"{'UTOOL' if kind == 'UT' else 'UFRAME'}[{number}]=PR[{bank}]")
+            if back is not None:
+                back.append(f"PR[{bank}]=UTOOL[{number}]")  # what the routine wrote, kept in the bank
         return str(number)
+
+    def bool_passed(self, expr: n.Expr | None, slot, program: str, before: list[str], back: list[str]) -> str:
+        """A bool passed by reference that the routine sets: passed as 1 / 0 (from the caller's flag: `IF (F[n]=ON)
+        THEN R[k]=1 ELSE R[k]=0 ENDIF` first), read back after the CALL from the routine's copy (`F[n]=(R[k]=1)`):
+        measured (toolarg probe)."""
+        copy = self.c.written_register(slot.name, key=f"{program}.{slot.name}")
+        if isinstance(expr, n.Name) and expr.name.upper() in self.copies:  # this routine's own bool, passed on
+            own = self.copies[expr.name.upper()]
+            back.append(f"{own}={copy}")
+            return own
+        decl = self.c.symbols.get(expr.name) if isinstance(expr, n.Name) else None
+        if decl is None or decl.type_name.lower() != "bool" or decl.dims or decl.storage == "CONST" \
+                or (self.args and self.args.kind(expr.name)):  # type: ignore[union-attr]  # fmt: skip
+            raise Untranslatable(f"argument {slot.name}: '{format_expr(expr) if expr else ''}' is passed by reference"
+                                 " and set: it must be bool data of the caller", Blocker.CALL_ARGS)  # fmt: skip
+        flag = self.c.flag(expr.name)  # type: ignore[union-attr]
+        before += [f"IF ({flag}=ON) THEN", f"{copy}=1", "ELSE", f"{copy}=0", "ENDIF"]
+        back.append(f"{flag}=({copy}=1)")
+        return copy
 
     def returned_to(self, expr: n.Expr | None, slot) -> str:
         """The register a num passed by reference is read back into: the caller's data, or its own copy."""

@@ -24,7 +24,7 @@ written: when every call passes `fine` for a zone, the routine's moves through i
 for them; when only some do, each such move is written twice, CNT and FINE, and the call passes 101 for fine
 (`IF R[m]>100,JMP LBL[a]`): a CALL takes no negative number (ASBN-092), a CNT is at most 100.
 A routine with any other parameter — a record passed whole to another routine, a frame used other
-than to move with, an optional point or pose, a frame the routine changes when it is passed by reference — is
+than to move with, an optional pose, a work object the routine changes when it is passed by reference — is
 not converted, and its calls stay TODO with the reason.
 
 A `robtarget` has no place in AR[n]: it goes in a position register of its own, which the caller
@@ -42,7 +42,12 @@ num, bool or string is passed as two arguments: 1 / 0 whether the call gives it,
 when not given): `Station 3\\Speed:=200;` -> `CALL STATION(3,1,200)`, `Station 4;` -> `CALL STATION(4,0,0)`,
 and Present(Speed) in the routine reads the first (`IF AR[2]=1`). Passed by reference (`\\INOUT num`), the
 caller reads it back only when it gave it. A tooldata or wobjdata passed by reference (INOUT, VAR) is passed
-by its number when the routine does not change it: the frame is the caller's own.
+by its number when the routine does not change it: the frame is the caller's own. A tooldata of which the routine
+sets the tframe (a calibration: `tCal.tframe.trans.z := nLen`) is passed by its number too: the routine writes
+UTOOL[AR[n]] (crossarm.convert.frame_writes), which is where the caller's moves take the tool from. An optional
+point is passed as whether the call gives it (Present() reads it), the point in its position register when given.
+A bool passed by reference that the routine sets is copied to a register as a num is (1 / 0), and read back into
+the caller's flag.
 
 A RAPID parameter passed by value is a local copy the routine may change (`Angle:=0;`). AR[n]
 cannot be written, so such a num parameter is copied into a register when the program starts,
@@ -111,7 +116,6 @@ def presence(name: str) -> str:
 
 # Why an optional parameter of another type is not passed: a TP argument is a number or a text.
 _OPTIONAL_REFUSED = {
-    "robtarget": "a point travels in a position register, which only the calls giving it would set",
     "pose": "a pose is six numbers, a TP argument one",
     "pos": "a position is three numbers, a TP argument one",
     "orient": "an orientation is four numbers, a TP argument one",
@@ -135,13 +139,16 @@ class Signature:
     # (VAR, INOUT), the caller reads the point back after the CALL
     points_changed: frozenset[str] = frozenset()
     fine_zones: frozenset[str] = frozenset()  # upper-case zonedata parameters every call passes fine for: FINE
+    # upper-case tooldata parameters passed by reference of which the routine sets the tframe: UTOOL[AR[n]]
+    frames_written: frozenset[str] = frozenset()
 
     @property
     def arguments(self) -> tuple[Slot, ...]:
         """The slots passed as AR[n], in order: every one but the points, a record as its components, an optional
         value after the argument saying whether the call gives it."""
-        return tuple(f for s in self.slots if s.kind != "robtarget"
+        return tuple(f for s in self.slots if s.kind != "robtarget" or s.optional
                      for f in (s.fields if s.kind in ("record", "speeddata", "zonedata") else
+                               (Slot(f"Present({s.name})", "present", optional=True),) if s.kind == "robtarget" else
                                (Slot(f"Present({s.name})", "present", optional=True), s) if s.given_flag else
                                (s,)))  # fmt: skip
 
@@ -151,7 +158,7 @@ class Signature:
         kind = self.kind(name)
         if kind == "switch":
             return self.register(name)
-        return self.register(presence(name)) if kind in ("num", "bool", "string") else None
+        return self.register(presence(name)) if kind in ("num", "bool", "string", "robtarget") else None
 
     def frames_of(self, name: str) -> tuple[n.Expr | None, n.Expr | None]:
         """(tool, work object) the routine moves to its point `name` with; (None, None) if it only passes it on."""
@@ -204,6 +211,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
     fine = fine or {}
     required: list[Slot] = []
     switches: list[Slot] = []
+    frames_written: set[str] = set()
     for part in split_params(routine.params):
         optional = part.startswith("\\")
         alternatives = part.lstrip("\\").split("|")
@@ -218,25 +226,39 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
             mode = words[0].upper() if words[0].upper() in ("VAR", "PERS", "INOUT") else ""
             type_name = words[-2] if not dims else words[-2].split("{")[0]
             frame = type_name.lower() in ("tooldata", "wobjdata")
+            written = False
             if mode in ("VAR", "INOUT") and frame and (changed := _frame_changed(routine, name)):
-                return (f"it changes its {type_name} parameter {name} passed by reference ({mode}), `{changed}`: a"
-                        " frame is passed by its number, what the routine writes in it would not come back")  # fmt: skip
+                if type_name.lower() != "tooldata":
+                    return (f"it changes its {type_name} parameter {name} passed by reference ({mode}), `{changed}`: a"
+                            " frame is passed by its number, and only what a routine writes in a tool's tframe comes"
+                            " back (UTOOL)")  # fmt: skip
+                if other := _tframe_only(routine, name):
+                    return (f"it changes its tooldata parameter {name} passed by reference ({mode}), `{other}`: a tool"
+                            " is passed by its number, and only what the routine writes in its tframe comes back"
+                            " (UTOOL)")  # fmt: skip
+                written = True
             if dims:
                 return f"parameter {name} is an array: TP arguments are single values"
             record = type_name.lower() in records
             if mode and not frame and not record and type_name.lower() not in ("num", "bool", "string", "robtarget"):
                 return f"{type_name} parameter {name} is passed by reference ({mode}): only a num or a point is read back"
-            if frame and (reason := _frame_uses(routine, name)):
+            if frame and (reason := _frame_uses(routine, name, written)):
                 return reason
             if optional:
                 kind = type_name.lower()
-                if kind in ("wobjdata", "switch", "num", "bool", "string"):
-                    # an optional value: an argument saying whether the call gives it, then the value (Present())
-                    switches.append(Slot(name, kind, optional=True, by_reference=bool(mode) and kind != "wobjdata"))
+                if kind in ("wobjdata", "switch", "num", "bool", "string") or (kind == "robtarget" and not mode):
+                    # an optional value: an argument saying whether the call gives it, then the value (Present());
+                    # a point: in its position register, set by the calls giving it
+                    switches.append(Slot(name, kind, optional=True,
+                                         by_reference=bool(mode) and kind not in ("wobjdata", "robtarget")))  # fmt: skip
                     continue
+                if kind == "robtarget":
+                    return f"optional robtarget parameter {name} passed by reference ({mode}): a point does not come back"
                 return f"optional {type_name} parameter {name}: {_OPTIONAL_REFUSED.get(kind, _OPTIONAL_OTHER)}"
             elif frame:
                 required.append(Slot(name, type_name.lower()))
+                if written:
+                    frames_written.add(name.upper())
             elif type_name.lower() in ("num", "bool", "string", "robtarget", "speeddata", "zonedata"):
                 required.append(Slot(name, type_name.lower(), by_reference=bool(mode)))
             elif type_name.lower() in records:
@@ -254,7 +276,7 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
         required = [replace(s, fields=found[s.key]) if s.key in motion else s for s in required]
     slots = tuple(required + switches)
     arguments = [f for s in slots if s.kind != "robtarget" for f in (s.fields if s.kind in ("speeddata", "zonedata") else (s,))]
-    arguments += [s for s in slots if s.given_flag]  # whether each optional value is given
+    arguments += [s for s in slots if s.given_flag or (s.optional and s.kind == "robtarget")]  # whether given
     if len(arguments) > MAX_ARGS:
         return f"{len(arguments)} parameters: a TP CALL takes at most {MAX_ARGS} arguments"
     kinds = {s.key: s.kind for s in slots}
@@ -277,17 +299,24 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                     key = arg.value.name.upper()
                     if kinds[key] in ("bool", "string"):
                         return (f"it passes its {kinds[key]} parameter {arg.value.name}, passed by reference, on to"
-                                f" {stmt.name}, which may change it: only a num is read back")  # fmt: skip
+                                f" {stmt.name}, which may change it: only a num is read back from a call")  # fmt: skip
                     (points_changed if kinds[key] == "robtarget" else copied).add(key)
         if changed and changed.upper() in kinds:
             if kinds[changed.upper()] != "num":
                 return f"it changes its parameter {changed}: only a whole num parameter can be copied to a register"
             copied.add(changed.upper())
         if isinstance(stmt, n.Assign) and (target := base_name(stmt.target)) and kinds.get(target.upper()) == "robtarget":
+            if target.upper() not in {s.key for s in required}:
+                return f"it changes its optional robtarget parameter {target}: a point given or not does not come back"
             points_changed.add(target.upper())  # worked out in its position register, as a point of the program
+        elif isinstance(stmt, n.Assign) and (target := base_name(stmt.target)) and target.upper() in frames_written:
+            continue  # a part of the tframe of a tool passed by its number: written to UTOOL[AR[n]] (frame_writes)
         elif isinstance(stmt, n.Assign) and (target := base_name(stmt.target)) and target.upper() in kinds:
-            if kinds[target.upper()] != "num" or not isinstance(stmt.target, n.Name):
-                return f"it changes its parameter {target}: only a whole num parameter can be copied to a register"
+            if kinds[target.upper()] not in ("num", "bool") or not isinstance(stmt.target, n.Name):
+                return (f"it changes its parameter {target}: only a whole num or bool parameter can be copied to a"
+                        " register")  # fmt: skip
+            if kinds[target.upper()] == "bool" and target.upper() not in by_reference:
+                return f"it changes its bool parameter {target} passed by value: a bool is copied to a register only to come back"
             copied.add(target.upper())
         elif isinstance(stmt, n.For) and stmt.var.upper() in kinds:
             return f"it uses its parameter {stmt.var} as a FOR variable"
@@ -306,7 +335,8 @@ def signature(routine: n.Routine, records: dict[str, tuple[tuple[str, str], ...]
                     frames.setdefault(base.name.upper(), (fixed(stmt.tool), fixed(stmt.wobj)))
     return Signature(slots, frozenset(copied), routine.name,
                      tuple((key, tool, wobj) for key, (tool, wobj) in frames.items()), frozenset(points_changed),
-                     frozenset(key for key, every in fine.items() if every and key in motion))  # fmt: skip
+                     frozenset(key for key, every in fine.items() if every and key in motion),
+                     frozenset(frames_written))  # fmt: skip
 
 
 def fine_given(calls: list[tuple[Signature, n.ProcCall]], is_fine) -> dict[str, dict[str, bool]]:
@@ -337,17 +367,44 @@ def _frame_changed(routine: n.Routine, name: str) -> str:
     return ""
 
 
-def _frame_uses(routine: n.Routine, name: str) -> str:
+def _tframe_only(routine: n.Routine, name: str) -> str:
+    """The first statement setting a tooldata parameter other than in a part of its tframe, as written ("" when
+    none does): `t.tframe.trans.z := 120`, `t.tframe := [[0, 0, 120], [1, 0, 0, 0]]` are parts of its tframe."""
+    for stmt in walk_statements(routine.body):
+        if isinstance(stmt, n.Assign) and (base_name(stmt.target) or "").upper() == name.upper() \
+                and not _in_tframe(stmt.target):  # fmt: skip
+            return f"{format_expr(stmt.target)} := {format_expr(stmt.value)}"
+    return ""
+
+
+def _in_tframe(expr: n.Expr) -> bool:
+    """`t.tframe`, `t.tframe.trans`, `t.tframe.rot`, `t.tframe.trans.z`: a part of a tool's tframe."""
+    chain: list[str] = []
+    while isinstance(expr, n.Component):
+        chain.insert(0, expr.field.upper())
+        expr = expr.base
+    return isinstance(expr, n.Name) and tuple(chain) in (("TFRAME",), ("TFRAME", "TRANS"), ("TFRAME", "ROT"),
+                                                         *(("TFRAME", "TRANS", a) for a in "XYZ"))  # fmt: skip
+
+
+def _frame_uses(routine: n.Routine, name: str, written: bool = False) -> str:
     """Why a tooldata or wobjdata parameter cannot be passed as its frame number: the routine uses it other
-    than as the tool or work object of its moves, or passed on to a routine ("" when it does not)."""
+    than as the tool or work object of its moves, or passed on to a routine ("" when it does not). ArgName() of it
+    is its name; `written`: a tool whose tframe the routine sets, which it may read too (UTOOL[AR[n]])."""
     other: list[str] = []
 
     def mine(expr: object) -> bool:
         return isinstance(expr, n.Name) and expr.name.upper() == name.upper()
 
+    def named(node: object) -> bool:  # ArgName(t)
+        return isinstance(node, n.FuncCall) and node.name.upper() == "ARGNAME" and len(node.args) == 1 \
+            and mine(node.args[0].value)  # fmt: skip
+
     def visit(node: object) -> None:
         if mine(node):
             other.append(name)
+        elif named(node) or (written and isinstance(node, n.Component) and _in_tframe(node) and mine(_root(node))):
+            return  # its name, or its tframe the routine sets or reads (UTOOL[AR[n]])
         elif isinstance(node, n.Move):
             for field_name in node.__dataclass_fields__:
                 value = getattr(node, field_name)
@@ -367,6 +424,12 @@ def _frame_uses(routine: n.Routine, name: str) -> str:
 
     visit(routine.body)
     return f"its {name} is used other than to move with or to pass on: a frame is passed by its number" if other else ""
+
+
+def _root(expr: n.Expr) -> n.Expr:
+    while isinstance(expr, n.Component | n.Index):
+        expr = expr.base
+    return expr
 
 
 def _motion_fields(routine: n.Routine, params: dict[str, Slot], given_fine: dict[str, bool]) -> dict[str, tuple[Slot, ...]] | str:

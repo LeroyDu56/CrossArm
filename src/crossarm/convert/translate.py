@@ -872,6 +872,7 @@ class Converter:
         self.array_statements: dict[str, set[int]] = {}  # array -> id() of the statements reading or writing it
         self.shared_arrays: set[str] = set()  # arrays of numbers that are PERS of the task: one block for all tasks
         self.frames_in_moves: dict[str, set[str]] = {"UF": set(), "UT": set()}  # upper-case names, _plan_slots
+        self.converted_routines: list[n.Routine] = []  # the routines converted, _plan_slots
         # among them, those no move selects, kept for a frame computed from them (_frames_read): numbered when read
         self.frames_only_read: dict[str, set[str]] = {"UF": set(), "UT": set()}
         self.registers = TableView(shared.registers)
@@ -1216,9 +1217,17 @@ class Converter:
         so that the reserved number is not first given to a frame of its own.
         """
         used: dict[str, set[str]] = {"UF": set(), "UT": set()}
+        self.converted_routines = routines
         for routine in routines:
             for stmt in walk_statements(routine.body):
                 move = stmt if isinstance(stmt, n.Move) else None
+                if isinstance(stmt, n.ProcCall) and isinstance(called := self.signatures.get(stmt.name.upper()), Signature) \
+                        and called.frames_written:  # fmt: skip
+                    # a tool given to a routine setting its tframe: the robot keeps it (UTOOL), others read it back
+                    given = [a.value for a in stmt.args if a.name is None]
+                    used["UT"] |= {value.name.upper() for value, slot in zip(given, called.required, strict=False)
+                                   if slot.key in called.frames_written and isinstance(value, n.Name)
+                                   and self.symbols.get_global(value.name) is not None}  # fmt: skip
                 if isinstance(stmt, n.ProcCall) and stmt.name.upper() in self.move_routines:
                     wrapper = self.move_routines[stmt.name.upper()]
                     if self.converts_calls(wrapper):
@@ -2449,8 +2458,16 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             if f"{name}#ROT" in self.known:  # the orientation of a point kept in a register goes with it
                 self.known[f"{name}#ROT"] = why
         if anything:
-            for name in self.known:
-                if name not in self.local_names:
+            for name in list(self.known):
+                if name in self.local_names:
+                    continue
+                decl = self.c.symbols.get(name) if name not in names else None
+                if decl is not None and not decl.dims and decl.type_name.lower() in FRAME_RECORDS \
+                        and not self.c.symbols.is_local(name):  # fmt: skip
+                    # a tool or work object the call is not given: what any routine finds, each field the programs
+                    # change unknown alone (compute.Written), the frame the robot holds
+                    del self.known[name]
+                else:
                     self.known[name] = why
 
     def merge(self, line: int, *states: dict[str, Typed | Unknown], what: str = "IF") -> None:
@@ -2656,6 +2673,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             case n.ProcCall():
                 self.call(s)
                 self.forget((s,), Unknown(f"may be changed by the call at l.{s.span.line}"))
+                self.tools_returned(s)  # a tool whose tframe the routine wrote to UTOOL: frame_writes
             case n.Assign():
                 self.assign(s)
             case n.If():
@@ -4029,6 +4047,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.emit(f"{self.copies[part]}={self.arithmetic(a.value)}")  # parameter: its component's copy
             return
         path = path_of(a.target)
+        if self.param_frame_written(a):  # the tframe of a tool the routine is given by reference: frame_writes
+            return
         if path and (key := self.runtime_key(path[0])):
             self.runtime_assign(a, key, path)
             return
@@ -4055,6 +4075,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         if not isinstance(a.target, n.Name):
             raise Untranslatable("assignment to a record component or array element",
                                  _assign_blocker(a.target, self.c.symbols.type_of))  # fmt: skip
+        if a.target.name.upper() in self.copies and self.args and self.args.kind(a.target.name) == "bool":
+            self.bool_copy(self.copies[a.target.name.upper()], a.value)  # a bool passed by reference: 1 / 0
+            return
         if a.target.name.upper() in self.copies:  # a parameter the routine changes: its register copy
             self.emit(f"{self.copies[a.target.name.upper()]}={self.arithmetic(a.value)}")
             return
@@ -4580,6 +4603,20 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             condition = self.condition(source)
             self.emit(f"{target()}=({condition})")
 
+    def bool_copy(self, register: str, value: n.Expr) -> None:
+        """A register holding a bool as 1 / 0 (a bool passed by reference) set to a bool value: `R[k]=1` for one
+        known now, else `IF (condition) THEN R[k]=1 ELSE R[k]=0 ENDIF` (measured: funcbody, toolarg probes)."""
+        source = self.fold_texts(self.simplify(value))
+        if isinstance(source, n.Bool):
+            self.emit(f"{register}={1 if source.value else 0}")
+            return
+        if self.has_text(source):
+            raise Untranslatable(f"{format_expr(value)}: a comparison of texts, which TP makes in a jump only, set to a"
+                                 " bool passed by reference", Blocker.CONDITION)  # fmt: skip
+        test = self.bool_flag(source) or self.condition(source)
+        for text in (f"IF ({test}) THEN", f"{register}=1", "ELSE", f"{register}=0", "ENDIF"):
+            self.emit(text)
+
     def bool_flag(self, expr: n.Expr) -> str | None:
         """F[n:...] keeping a bool data or a bool field the programs change; None for anything else."""
         if isinstance(expr, n.Name) and self.c.symbols.type_of(expr.name) == "bool":
@@ -4650,7 +4687,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         remark = ("!" + ascii_text(f"l.{line} {self.rapid_text(a).rstrip(';')}")[:REMARK_MAX]).rstrip()
         if is_frame and self.field_without_frame(a, remark):  # ufprog, ufmec, a field kept as declared: no frame
             return
-        if is_frame and not self.c.computer.written.read(path_of(a.target)[0], root_type):  # type: ignore[index]
+        if is_frame and path_of(a.target)[0] not in self.c.frames_in_moves["UT" if root_type == "tooldata" else "UF"]:  # type: ignore[index]
             try:
                 self.c.computer.assigned(a)
             except Unresolvable as exc:  # set at run time, but never used: convert.frame_fields
@@ -5313,7 +5350,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                     return f"{signal}={state}"
                 return f"{decimal(self.single(left, 1))}{op}{decimal(self.single(right, 2))}"  # (-2.5): operand()
             case n.Name(name=name) if self.args and self.args.kind(name) in ("bool", "switch"):
-                return f"{self.args.register(name)}={0 if negate else 1}"
+                return f"{self.copies.get(name.upper()) or self.args.register(name)}={0 if negate else 1}"
             case n.Component() if (field := self.component(expr)) and self.args.kind(field) == "bool":  # type: ignore[union-attr]
                 return f"{self.args.register(field)}={0 if negate else 1}"  # type: ignore[union-attr]
             case n.FuncCall(name=fn, args=(n.Arg(value=n.Name(name=name), name=None),)) if (
