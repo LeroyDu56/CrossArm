@@ -3,6 +3,18 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
+## Unreleased
+
+- StopMove / StartMove convert with `--karel`, through CrossArm's new KAREL program `CA_STOPMOVE`. In the program
+  moving the robot: KAREL STOP / RESUME, when the same routine starts the motion again before its next move. In a
+  TRAP (an input pausing the robot): the program holding the robot is paused and continued, the TRAP's program
+  ignoring pause requests (`PAUSE_REQUEST = 2`); a TRAP leaving the robot paused waits itself for the input of the
+  TRAP that starts it again (its own, or the one other such TRAP), then runs it, since no condition monitor fires
+  while its program is paused. ClearPath after a StopMove in a TRAP is a remark. Measured on ROBOGUIDE (probe
+  `stopmove`). The mapping file gains the flag keys `CROSSARM.STOPPED` and `CROSSARM.STOPMOVE.<INTERRUPT>`; no key
+  is removed or redefined. Without `--karel` they stay TODO, now under "motion without a TP equivalent".
+- A TRAP connected by a routine of a system module that the programs call is written with that routine.
+
 ## 1.13.0 — 2026-10-13
 
 Patterns typical of large industrial cells: loops whose bounds are worked out at run time, optional arguments,

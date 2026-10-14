@@ -453,10 +453,11 @@ def priority_actions(result: ConversionResult, config: ConversionConfig | None =
     if result.karel_todo:  # converted without --karel: what it would convert
         sockets = any(note.kind == "TODO" and "sockets:" in note.message for note in result.notes)
         actions.append(Action(
-            "Convert again with `--karel` for the poses computed at run time and the text files",
+            "Convert again with `--karel` for the poses computed at run time, the text files and StopMove",
             f"{_todo(result.karel_todo)} converted then by CrossArm's KAREL programs (PoseMult, PoseInv, RelTool,"
             " DefFrame of poses kept in position registers, frames loaded from them; text files written with Open,"
-            " Write, Close on UD1:). Load the KAREL programs (.pc) before the .LS; a real robot needs the KAREL"
+            " Write, Close on UD1:; StopMove / StartMove pausing the robot, in the program and in a TRAP). Load the"
+            " KAREL programs (.pc) before the .LS; a real robot needs the KAREL"
             " option (R632)." + (" Sockets stay TODO with it." if sockets else ""), "#review", "Items to review",
             todo=result.karel_todo, who=(integrator, triage.OPTION), option="R632"))  # fmt: skip
 

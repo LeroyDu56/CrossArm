@@ -85,7 +85,9 @@ def karel_candidates(modules: list[n.Module], result: "ConversionResult") -> boo
     if any(d.type_name.lower() == "iodev" for d in declared):  # files: convert.karel_files
         return True
     causes = (Blocker.RUNTIME_POSITION, Blocker.RUNTIME_FRAME, Blocker.CALIBRATION)
-    if any(note.kind == "TODO" and "convert with --karel" in note.message for note in result.notes):  # frame_writes
+    if any(note.kind == "TODO" and ("convert with --karel" in note.message  # frame_writes
+                                    or "converts with --karel" in note.message)  # stop_move, interrupts
+           for note in result.notes):  # fmt: skip
         return True
     return any(note.kind == "TODO" and note.category in causes and "`" in note.message
                and any(f"{name}(" in note.message.split("`")[1].upper() for name in FUNCTIONS)

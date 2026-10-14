@@ -62,6 +62,9 @@ probe, everything else in local/logs/probe_all.log):
                  a point read: loaded into UFRAME / UTOOL, the moves after them where RAPID puts the flange
     karelfile    --karel: Open, Write, Close by CA_FILE: the files written on UD1:, read back by FTP, byte for byte
                  as RAPID writes them (CR LF, its numbers, appended, written again); wrong calls abort
+    stopmove     --karel: StopMove / StartMove by CA_STOPMOVE, in line after a CNT move and in TRAPs on inputs switched
+                 through COM while the robot moves (a TRAP resuming itself, one waiting for another TRAP's input, one
+                 on any change): the robot stops on its line, then goes on to the point; the TRAP counts as RAPID's
     framefield   a tool's tframe.trans and a work object's uframe.trans / .rot set from points read on the robot
                  (PR[F]=UTOOL/UFRAME, PR[F,i]=PR[k,i], UTOOL/UFRAME=PR[F]), that uframe copied to nine work objects
                  (banks, oframe by CA_POSEMULT): the moves after them where RAPID puts the flange
@@ -149,6 +152,7 @@ import make_search_probe
 import make_select_probe
 import make_setup_probe
 import make_speed_arg_probe
+import make_stopmove_probe
 import make_string_probe
 import make_sysvar_probe
 import make_taught_probe
@@ -479,6 +483,14 @@ def probe_karelfile() -> str:
     return f"FAIL {problem}" if problem else make_karel_file_probe.summary(make_karel_file_probe.stored())
 
 
+def probe_stopmove() -> str:
+    try:
+        problem = make_stopmove_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_stopmove_probe.summary(make_stopmove_probe.stored())
+
+
 def probe_framefield() -> str:
     try:
         problem = make_frame_field_probe.run()  # stores the result, as the probe's own run does
@@ -643,7 +655,7 @@ GROUPS: dict[str, dict[str, float]] = {
     "timing": {"movedo": 72, "timeflag": 12, "speedargs": 132, "search": 250, "io": 20},
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
               "sysvars": 60, "optargs": 45},
-    "library": {"karel": 140, "karelpose": 136, "karelfile": 120},
+    "library": {"karel": 140, "karelpose": 136, "karelfile": 120, "stopmove": 87},
     "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150},
     "robotstudio": {"abb": 74},
 }  # fmt: skip
@@ -673,7 +685,7 @@ def main() -> int:
               "arraywrite": probe_arraywrite, "flags": probe_flags, "flagarrays": probe_flagarrays, "pointref": probe_pointref, "joints": probe_joints, "movedo": probe_movedo, "search": probe_search, "timeflag": probe_timeflag, "speedargs": probe_speedargs,
               "external": probe_external, "taught": probe_taught,
               "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel, "karelpose": probe_karelpose,
-              "karelfile": probe_karelfile, "framefield": probe_framefield,
+              "karelfile": probe_karelfile, "stopmove": probe_stopmove, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
               "optargs": probe_optargs, "rtcp": probe_rtcp,

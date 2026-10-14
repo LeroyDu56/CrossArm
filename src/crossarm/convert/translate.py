@@ -106,6 +106,9 @@ from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, rec
 from crossarm.convert.remote_tcp import RTCP, RemoteTcp, remote_pair, remote_point
 from crossarm.convert.runtime_points import RuntimePoints, expr_nodes, find_runtime_points
 from crossarm.convert.source_map import SourceTags
+from crossarm.convert.stop_move import IGNORE_PAUSE, StopMoves
+from crossarm.convert.stop_move import INSTRUCTIONS as STOP_MOVE_INSTRUCTIONS
+from crossarm.convert.stop_move import PROGRAM as STOP_MOVE_PROGRAM
 from crossarm.convert.strings import TEXT_PIECE, Strings, same_regardless_of_case
 from crossarm.convert.system_data import SystemData
 from crossarm.convert.tp_numbers import NUMBER_TYPES as _NUMBERS
@@ -984,7 +987,7 @@ class Converter:
         modules are data. Default: every module without the SYSMODULE attribute."""
         wanted = {r.upper() for r in routines} if routines else None
         everything = [r for m in self.modules for r in m.routines]
-        self.interrupts = scan_interrupts(everything, self.procs, set(self.move_routines))
+        self.interrupts = scan_interrupts(everything, self.procs, set(self.move_routines), self.config.karel)
         self.runtime_points = find_runtime_points(self, everything)
         if self.config.karel:  # the library's programs: a routine of the same name is renamed
             self.shared.program_names.update(KAREL_PROGRAMS)
@@ -1550,17 +1553,26 @@ class Converter:
         return (info.slot, info.bank) if info.bank is not None and info.slot is not None else (number, None)
 
     def _called_from_system(self, selected: list[tuple[n.Module, n.Routine]]) -> list[tuple[n.Module, n.Routine]]:
-        """Routines of the system modules that the programs call, directly or not: written too.
+        """Routines of the system modules that the programs call, directly or not: written too, and the TRAP
+        routines they CONNECT to an interrupt.
 
         System modules are data and utilities, not programs; but a program calling one of their
-        routines needs it on the robot, or its CALL fails when it runs.
+        routines needs it on the robot, or its CALL fails when it runs; an interrupt it arms, its TRAP.
         """
         by_name = {r.name.upper(): (m, r) for m in reversed(self.modules) for r in m.routines if r.kind == "PROC"}
+        traps = {r.name.upper(): (m, r) for m in reversed(self.modules) for r in m.routines if r.kind == "TRAP"}
         done = {r.name.upper() for _, r in selected}
         added: list[tuple[n.Module, n.Routine]] = []
         todo = [r for _, r in selected]
         while todo:
             for stmt in walk_statements(todo.pop().body):
+                if (pair := connected(stmt)) is not None and pair[1].upper() in traps and pair[1].upper() not in done:
+                    done.add(pair[1].upper())
+                    module, routine = traps[pair[1].upper()]
+                    if not self._skip_reason(routine, None):
+                        added.append((module, routine))
+                        todo.append(routine)
+                    continue
                 if not isinstance(stmt, n.ProcCall):
                     continue
                 key = stmt.name.upper()
@@ -1929,7 +1941,8 @@ class Converter:
                 relay += [f"{self.intno()}={interrupt.number}", f"CALL {trap}"]
                 relay += [] if interrupt.single else [f"MONITOR {interrupt.program}"]
                 program = Program(interrupt.relay, [Instruction(text) for text in relay], [],
-                                  dataclasses.replace(attrs))  # fmt: skip
+                                  dataclasses.replace(attrs, pause_request=IGNORE_PAUSE if interrupt.stops_motion
+                                                      else attrs.pause_request))  # fmt: skip
                 self.result.programs.append(ProgramInfo(program, modules.get(interrupt.trap, ""),
                                                         f"{interrupt.name} (relay)", ()))  # fmt: skip
                 trap = interrupt.relay
@@ -2249,7 +2262,7 @@ class Converter:
 
 class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, FrameFields, FrameWrites, FuncInline,
                          RemoteTcp,
-                         FuncPrograms, LateCalls, SystemData, ModuleLoads, RaisedPaths, ConditionGates):
+                         FuncPrograms, LateCalls, SystemData, ModuleLoads, RaisedPaths, ConditionGates, StopMoves):
     def __init__(self, conv: Converter, module: n.Module, routine: n.Routine, tp_name: str) -> None:
         self.c = conv
         self.module = module
@@ -2354,6 +2367,11 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         # A TRAP runs as a task of its own while the program it interrupted holds the robot (interrupts.called_by)
         if self.routine.kind == "TRAP" or self.routine.name.upper() in self.c.no_group:
             attrs.default_group = NO_GROUP
+        # A TRAP pausing the robot runs on to its StartMove: it ignores pause requests (convert.stop_move)
+        pausing = f"CALL {STOP_MOVE_PROGRAM}(1,1)"
+        if any(i.stops_motion and self.routine.name.upper() in i.traps for i in self.c.interrupts.values()) \
+                or any(isinstance(line, Instruction) and line.text == pausing for line in self.lines):  # fmt: skip
+            attrs.pause_request = IGNORE_PAUSE
         program = Program(self.name, self.lines, self.positions, attrs)
         return ProgramInfo(program, self.module.name, self.routine.name, tuple(self.points),
                            self.tags.of(self.lines), self.routine.span.line)  # fmt: skip
@@ -2368,6 +2386,13 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 pass  # IPers itself stays TODO, with why
         if not interrupt.single:
             self.epilogue = [f"MONITOR {interrupt.program}"]
+        if interrupt.resumer:  # it stops the robot: waits for the TRAP starting it again (convert.stop_move)
+            try:
+                self.resume_prologue(interrupt)
+                self.epilogue = self.resume_epilogue(interrupt) + self.epilogue
+            except Untranslatable as exc:
+                self.emit("!TODO resume of the robot")
+                self.c.note(self.name, None, "TODO", str(exc), exc.category)
 
     # -- output helpers --------------------------------------------------------
 
@@ -3380,6 +3405,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.set_sys_data(call)  # convert.system_data
         elif name == "GETSYSDATA" and name not in self.c.procs:
             self.get_sys_data(call)  # convert.system_data
+        elif name in STOP_MOVE_INSTRUCTIONS and name not in self.c.procs:
+            self.stop_move(call, name)  # convert.stop_move
         elif name in MODULE_LOADS and name not in self.c.procs:
             self.module_load(call, name)  # convert.module_loads
         elif name == "BOOKERRNO" and name not in self.c.procs and self.book_error(call):

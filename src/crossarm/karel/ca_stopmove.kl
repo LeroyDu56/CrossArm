@@ -1,0 +1,50 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CALL CA_STOPMOVE(op, where): RAPID's StopMove (op 1) and StartMove (op 0) of the robot (group 1). Written by
+-- CrossArm (--karel).
+--   where 0, in the program moving the robot: STOP stops its motion where the robot is, RESUME goes on with it.
+--   where 1, in a TRAP (a program without a motion group, called by a condition monitor): the motion belongs to
+--   another task, which only that task can resume; PAUSE_TASK pauses the task holding the robot, motion
+--   included, and CONT_TASK lets it go on. The TRAP's program ignores pause requests (PAUSE_REQUEST = 2), so
+--   that it runs on to its StartMove.
+-- Nothing stopped, or no task holding the robot: nothing happens, as with RAPID.
+PROGRAM ca_stopmove
+%NOLOCKGROUP
+%NOBUSYLAMP
+%NOPAUSE = ERROR + COMMAND + TPENABLE
+%COMMENT = 'CrossArm StopMove'
+%ENVIRONMENT MULTI
+%ENVIRONMENT REGOPE
+VAR
+  op, where, i, mask, status : INTEGER
+  sval : STRING[16]
+  name, task : STRING[16]
+%INCLUDE ca_lib
+BEGIN
+  op = ca_reg_arg(1)
+  where = ca_reg_arg(2)
+  IF where = 0 THEN
+    IF op = 1 THEN
+      STOP GROUP[1]
+    ELSE
+      RESUME GROUP[1]
+    ENDIF
+  ELSE
+    task = ''
+    FOR i = 1 TO 16 DO
+      name = ''
+      GET_TSK_INFO(name, i, TSK_LOCKGRP, mask, sval, status)
+      IF (status = 0) AND ((mask AND 1) <> 0) THEN
+        task = name
+      ENDIF
+    ENDFOR
+    IF task <> '' THEN
+      IF op = 1 THEN
+        PAUSE_TASK(task, TRUE, TRUE, status)
+      ELSE
+        CONT_TASK(task, status)
+      ENDIF
+    ENDIF
+  ENDIF
+END ca_stopmove

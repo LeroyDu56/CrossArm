@@ -15,7 +15,8 @@ have loads, and stops on the CALL when it runs (INTP-222, MEMO-073); arguments w
 reach GET_TPE_PRM as INTEGER; PR[c] = PR[a] : PR[b] is RAPID's PoseMult. tools/make_karel_pose_probe.py: CA_POSEINV,
 CA_RELTOOL (arguments R[i] holding a whole or a real number, angles past 180) and CA_DEFFRAME (each origin) give
 RAPID's values within 0.001 mm; points closer than 10 mm, an origin other than 1 to 3 (ROUT-035) and a string
-argument (ROUT-043) abort on the CALL.
+argument (ROUT-043) abort on the CALL. tools/make_stopmove_probe.py: CA_STOPMOVE stops the robot on its line and lets
+it go on to the same point, in the moving program and from TRAPs (crossarm.convert.stop_move).
 
 Adding a program: write ca_<name>.kl here (%INCLUDE ca_lib after its VAR section, arguments read with
 ca_reg_arg), add it to PROGRAMS, measure it with a probe, then have the converter write its CALL.
@@ -54,6 +55,10 @@ PROGRAMS = {
                             "op; h: number of the register keeping the handle; Open: mode 1 \\Write, 2 \\Append,"
                             " then the name's parts; Write: 1 new line or 0 \\NoNewLine, then texts (constants,"
                             " SR[n], AR[n]) and numbers (constants, R[n])"),
+    "CA_STOPMOVE": KarelProgram("CA_STOPMOVE", "ca_stopmove.kl", "RAPID's StopMove (op 1) and StartMove (op 0) of"
+                                " the robot: in the moving program (where 0) KAREL STOP / RESUME; in a TRAP (where 1)"
+                                " the task holding the robot paused and continued (PAUSE_TASK / CONT_TASK)",
+                                "op: 1 StopMove, 0 StartMove; where: 0 in the moving program, 1 in a TRAP"),
 }  # fmt: skip
 _CALL = re.compile(r"^CALL (CA_[A-Z0-9_]+)\(")
 
