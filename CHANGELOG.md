@@ -8,8 +8,9 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
 Patterns typical of large industrial cells: the motion paused and resumed on an input, cycles ended from a TRAP,
 waits for the robot to stand still, calibration routines given the tool to set, FUNCs giving a text, and what
 stands between a "not ready" conversion and a workable one. Share of instructions converted: the test corpus at
-87 %, 93 % and 91 % (78 % for the calibration modules, which gained modules of world zones, motion paused on
-inputs and other instructions TP has no form for); public open-source programs, about 65 %.
+87 %, 93 % and 91 %, 88 % for the calibration modules as they stood until 1.13 (the edge-case modules added in
+1.14, world zones, motion paused on inputs and other instructions TP has no form for, are counted apart: 59 %;
+78 % all together, the test got harder); public open-source programs, about 65 %.
 
 **Upgrading:** StopMove / StartMove and ExitCycle convert with `--karel` only (the KAREL option R632 on a real
 robot); without it they stay TODO, now under "motion without a TP equivalent". World zones are TODO under a cause

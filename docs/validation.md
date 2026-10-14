@@ -167,9 +167,11 @@ part by part, copied, built by FUNCs), since 1.12 one testing the operating mode
 stationary tool with held parts, and since 1.14 modules of motion paused on inputs, cycles ended from TRAPs,
 gauges calibrating the tool they are given, world zones, module loads, FUNCs giving texts and tasks working
 together. Without `--karel` and without provided routines, CrossArm converts
-87 %, 93 % and 91 % of the instructions of the three RobotWare backups, and 78 % of the calibration modules
-(since 1.14 they hold world zones, motion paused on inputs and instructions of tasks working together, which
-TP has no form for without `--karel`, or at all). It is checked on the controllers
+87 %, 93 % and 91 % of the instructions of the three RobotWare backups, and 88 % of the calibration modules
+as they stood until 1.13. The edge-case modules added in 1.14 (world zones, motion paused on inputs, cycles ended
+from TRAPs, tasks working together: forms TP has none for without `--karel`, or at all, and safety that CrossArm
+never counts as converted) are counted apart: 59 % on their own. Together, 78 %: the figure went down because the
+test got harder, not because less is converted (the modules of 1.13 still give 88 %). It is checked on the controllers
 themselves: RobotStudio loads every RAPID task, every reference resolved (the World Zones
 instructions aside, an option the virtual controller lacks); the three FANUC backups are what three
 ROBOGUIDE controllers (R-2000iC/190S, ARC Mate 120iD, R-1000iA/80F) hold once their programs are
