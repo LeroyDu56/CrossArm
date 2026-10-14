@@ -54,7 +54,7 @@ def test_probe_groups_cover_every_probe_once_and_each_runs_in_less_than_ten_minu
     import probe_all
 
     names = [probe for group in probe_all.GROUPS.values() for probe in group]
-    assert len(names) == len(set(names)) == 46
+    assert len(names) == len(set(names)) == 47
     assert probe_all.expand([], names) == names
     assert probe_all.expand(["frames", "karel", "funcinline"], names) == ["framefield", "funcinline", "rtcp", "karel"]
     for group, times in probe_all.GROUPS.items():

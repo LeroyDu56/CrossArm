@@ -17,6 +17,8 @@ CA_RELTOOL (arguments R[i] holding a whole or a real number, angles past 180) an
 RAPID's values within 0.001 mm; points closer than 10 mm, an origin other than 1 to 3 (ROUT-035) and a string
 argument (ROUT-043) abort on the CALL. tools/make_stopmove_probe.py: CA_STOPMOVE stops the robot on its line and lets
 it go on to the same point, in the moving program and from TRAPs (crossarm.convert.stop_move).
+tools/make_exitcycle_probe.py: CA_EXITCYCLE runs the program holding the robot again from its first line, from a
+TRAP and in line, the line after the CALL never running.
 
 Adding a program: write ca_<name>.kl here (%INCLUDE ca_lib after its VAR section, arguments read with
 ca_reg_arg), add it to PROGRAMS, measure it with a probe, then have the converter write its CALL.
@@ -59,6 +61,10 @@ PROGRAMS = {
                                 " the robot: in the moving program (where 0) KAREL STOP / RESUME; in a TRAP (where 1)"
                                 " the task holding the robot paused and continued (PAUSE_TASK / CONT_TASK)",
                                 "op: 1 StopMove, 0 StartMove; where: 0 in the moving program, 1 in a TRAP"),
+    "CA_EXITCYCLE": KarelProgram("CA_EXITCYCLE", "ca_exitcycle.kl", "RAPID's ExitCycle: the task holding the robot"
+                                 " aborted, its motion cancelled, and run again from its first line (ABORT_TASK /"
+                                 " RUN_TASK, from a task of its own); the line after the CALL never runs",
+                                 "1 (the caller; the task it starts has none)"),
 }  # fmt: skip
 _CALL = re.compile(r"^CALL (CA_[A-Z0-9_]+)\(")
 

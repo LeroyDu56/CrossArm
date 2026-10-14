@@ -1,0 +1,77 @@
+-- SPDX-FileCopyrightText: 2026 Enzo LEROY
+-- SPDX-License-Identifier: BUSL-1.1
+--
+-- CALL CA_EXITCYCLE(1): RAPID's ExitCycle. Written by CrossArm (--karel), in the program moving the robot or in a
+-- TRAP (a program without a motion group, called by a condition monitor).
+-- The task holding the robot (group 1) is aborted, its motion cancelled, and run again from its first line. A
+-- program cannot do it for its own task, nor a TRAP for the program it interrupted (an abort ends the TRAP too):
+-- called with its argument, CA_EXITCYCLE starts itself as a task of its own (RUN_TASK, no argument), which aborts
+-- the task holding the robot and runs it again, while the caller waits to be aborted with it: the line after the
+-- CALL never runs, as in RAPID.
+-- No task holding the robot: nothing aborts the caller, which stops on the CALL with an error after 5 s.
+PROGRAM ca_exitcycle
+%NOLOCKGROUP
+%NOBUSYLAMP
+%NOPAUSE = ERROR + COMMAND + TPENABLE
+%COMMENT = 'CrossArm ExitCycle'
+%ENVIRONMENT MULTI
+%ENVIRONMENT REGOPE
+VAR
+  kind, ival, i, k, mask, status : INTEGER
+  rval : REAL
+  sval : STRING[32]
+  tval : STRING[16]
+  name, task : STRING[16]
+%INCLUDE ca_lib
+BEGIN
+  GET_TPE_PRM(1, kind, ival, rval, sval, status)
+  IF status = 0 THEN
+    -- the caller: the task that aborts and runs again, then wait to be aborted (5 s at most)
+    RUN_TASK('CA_EXITCYCLE', 0, FALSE, FALSE, 0, status)
+    IF status <> 0 THEN
+      ca_stop(status)
+    ENDIF
+    FOR k = 1 TO 250 DO
+      DELAY 20
+    ENDFOR
+    ca_stop(17040)  -- nothing aborted it: no task holding the robot
+  ENDIF
+  task = ''
+  FOR i = 1 TO 16 DO
+    name = ''
+    GET_TSK_INFO(name, i, TSK_LOCKGRP, mask, tval, status)
+    IF (status = 0) AND ((mask AND 1) <> 0) THEN
+      task = name
+    ENDIF
+  ENDFOR
+  IF task = '' THEN
+    RETURN
+  ENDIF
+  ABORT_TASK(task, TRUE, TRUE, status)
+  -- TSK_STATUS 2: aborted (0 running, 1 paused). Run at once, a task aborted while paused stays aborted though
+  -- RUN_TASK accepts: 0.1 s first (measured), then run, and again while it reads aborted (3 times at most).
+  FOR k = 1 TO 100 DO
+    GET_TSK_INFO(task, i, TSK_STATUS, ival, tval, status)
+    IF ival = 2 THEN
+      k = 101
+    ELSE
+      DELAY 20
+    ENDIF
+  ENDFOR
+  FOR i = 1 TO 3 DO
+    DELAY 100
+    FOR k = 1 TO 100 DO
+      RUN_TASK(task, 1, FALSE, FALSE, 1, status)
+      IF status = 0 THEN
+        k = 101
+      ELSE
+        DELAY 20
+      ENDIF
+    ENDFOR
+    DELAY 100
+    GET_TSK_INFO(task, k, TSK_STATUS, ival, tval, status)
+    IF ival <> 2 THEN
+      RETURN
+    ENDIF
+  ENDFOR
+END ca_exitcycle

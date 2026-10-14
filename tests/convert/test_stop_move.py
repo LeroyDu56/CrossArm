@@ -187,3 +187,47 @@ def test_a_trap_a_system_module_routine_connects_is_written_with_it():
     assert todos(result) == []
     assert {"ARMGUARD", "TLIB", "ILIB"} <= {info.program.name for info in result.programs}
     assert program(result, "TLIB").attributes.pause_request == 2
+
+
+# -- ExitCycle (CA_EXITCYCLE) -----------------------------------------------------------------------------------------
+
+ENDING = ("TRAP tGuard\nIF diGo=1 THEN\nStopMove;\nClearPath;\nENDIF\nSetDO doLamp,0;\nExitCycle;\nENDTRAP\n")
+
+
+def test_exit_cycle_in_the_program_runs_it_again_from_its_first_line():
+    result = run("PROC main()\nMoveL pA,v500,z50,tool0;\nIF diGo=1 ExitCycle;\nMoveL pB,v500,fine,tool0;\nENDPROC\n")
+    assert todos(result) == []
+    assert lines(result, "MAIN") == ["L P[1]", "IF (DI[1]=ON) THEN", "CALL CA_EXITCYCLE(1)", "ENDIF", "L P[2]"]
+    assert result.karel_calls == {"CA_EXITCYCLE": {"MAIN": 1}}
+    warned = [note.message for note in result.notes if note.kind == "WARNING" and "ExitCycle" in note.message]
+    assert len(warned) == 1 and "runs it again from its first line" in warned[0]
+
+
+def test_a_trap_stopping_the_robot_then_ending_the_cycle_needs_no_trap_starting_it_again():
+    result = run(ARMING + ENDING)
+    assert todos(result) == []
+    assert flags(lines(result, "TGUARD")) == [
+        "IF (DI[2]=ON) THEN", "CALL CA_STOPMOVE(1,1)", "F[P]=(ON)", "!l.14 ClearPath", "ENDIF", "DO[1]=OFF",
+        "F[P]=(OFF)", "CALL CA_EXITCYCLE(1)", "MONITOR IGUARD"]  # fmt: skip
+    assert program(result, "TGUARD").attributes.pause_request == 2
+    assert set(result.karel_calls) == {"CA_STOPMOVE", "CA_EXITCYCLE"}
+
+
+def test_without_karel_exit_cycle_stays_todo_and_says_karel_converts_it():
+    result = run("PROC main()\nExitCycle;\nENDPROC\n", karel=False)
+    assert [category for _, category in todos(result)] == [Blocker.MOTION]
+    assert "converts with --karel" in todos(result)[0][0]
+    messages = [message for message, _ in todos(run(ARMING + ENDING, karel=False))]
+    assert messages and all(KAREL_HINT in message for message in messages)
+
+
+def test_an_exit_cycle_in_a_branch_of_the_trap_still_needs_a_trap_starting_the_robot():
+    branch = "TRAP tGuard\nStopMove;\nIF diGo=1 THEN\nExitCycle;\nENDIF\nENDTRAP\n"
+    assert any("no TRAP armed on a digital signal starts it again" in m for m, _ in todos(run(ARMING + branch)))
+
+
+def test_the_exit_cycle_library_program():
+    text = source(PROGRAMS["CA_EXITCYCLE"].source)
+    assert "RUN_TASK('CA_EXITCYCLE', 0, FALSE, FALSE, 0, status)" in text
+    assert "ABORT_TASK(task, TRUE, TRUE, status)" in text and "RUN_TASK(task, 1, FALSE, FALSE, 1, status)" in text
+    assert "POST_ERR_L" not in text and "ERSEV_ABORTL" not in text

@@ -19,6 +19,11 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   and stops there, as in RAPID, before the next line runs (measured on ROBOGUIDE, probe `waitrob`; without it, the
   line after a CNT100 move runs about 9 mm before the point). The mapping file gains the position register key
   `CROSSARM.STANDSTILL`. In a TRAP it stays TODO.
+- ExitCycle converts with `--karel`, in the program and in a TRAP, through CrossArm's new KAREL program
+  `CA_EXITCYCLE`: it starts itself as a task of its own, which aborts the program holding the robot (its motion
+  cancelled) and runs it again from its first line; the line after the CALL never runs, data keep their values, as
+  in RAPID. A TRAP that stops the robot then ends the cycle no longer needs a TRAP starting it again. Measured on
+  ROBOGUIDE (probe `exitcycle`). Without `--karel` it stays TODO, now under "motion without a TP equivalent".
 
 ## 1.13.0 — 2026-10-13
 

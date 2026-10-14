@@ -65,6 +65,9 @@ probe, everything else in local/logs/probe_all.log):
     stopmove     --karel: StopMove / StartMove by CA_STOPMOVE, in line after a CNT move and in TRAPs on inputs switched
                  through COM while the robot moves (a TRAP resuming itself, one waiting for another TRAP's input, one
                  on any change): the robot stops on its line, then goes on to the point; the TRAP counts as RAPID's
+    exitcycle    --karel: ExitCycle by CA_EXITCYCLE, from a TRAP that stopped the robot (input switched through COM)
+                 and in line after a zone move: the program aborted and run again from its first line, three
+                 cycles, the counts as RAPID's (data kept, the line after ExitCycle never run)
     waitrob      WaitRob \\InPos / \\ZeroSpeed after a move through a zone, in the program and after a call (a zero
                  incremental FINE move): the position read on the next line is the point, 9 mm before it without
     framefield   a tool's tframe.trans and a work object's uframe.trans / .rot set from points read on the robot
@@ -126,6 +129,7 @@ import make_bank_probe
 import make_compute_probe
 import make_condition_gate_probe
 import make_condition_probe
+import make_exitcycle_probe
 import make_external_probe
 import make_flag_array_probe
 import make_flag_probe
@@ -494,6 +498,14 @@ def probe_stopmove() -> str:
     return f"FAIL {problem}" if problem else make_stopmove_probe.summary(make_stopmove_probe.stored())
 
 
+def probe_exitcycle() -> str:
+    try:
+        problem = make_exitcycle_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_exitcycle_probe.summary(make_exitcycle_probe.stored())
+
+
 def probe_waitrob() -> str:
     try:
         problem = make_waitrob_probe.run()  # stores the result, as the probe's own run does
@@ -666,7 +678,7 @@ GROUPS: dict[str, dict[str, float]] = {
     "timing": {"movedo": 72, "timeflag": 12, "speedargs": 132, "search": 250, "io": 20},
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
               "sysvars": 60, "optargs": 45},
-    "library": {"karel": 140, "karelpose": 136, "karelfile": 120, "stopmove": 87},
+    "library": {"karel": 140, "karelpose": 136, "karelfile": 120, "stopmove": 87, "exitcycle": 55},
     "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150},
     "robotstudio": {"abb": 74},
 }  # fmt: skip
@@ -699,7 +711,7 @@ def main() -> int:
               "karelfile": probe_karelfile, "stopmove": probe_stopmove, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
-              "optargs": probe_optargs, "rtcp": probe_rtcp, "waitrob": probe_waitrob,
+              "optargs": probe_optargs, "rtcp": probe_rtcp, "waitrob": probe_waitrob, "exitcycle": probe_exitcycle,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     grouped = [probe for group in GROUPS.values() for probe in group]

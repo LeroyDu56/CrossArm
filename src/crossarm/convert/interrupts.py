@@ -20,10 +20,11 @@ A TRAP stopping the robot (StopMove) converts with --karel: CrossArm's KAREL pro
 holding the robot, and lets it go on at a StartMove (convert.stop_move). No condition monitor fires while its
 program is paused (ROBOGUIDE), so a TRAP that leaves the motion stopped waits itself for the interrupt that starts
 it again: its own (a TRAP starting or stopping the robot as its signal changes) or the one other interrupt whose
-TRAP calls StartMove, armed on a digital signal; it then runs that TRAP, and again until the motion goes on.
+TRAP calls StartMove, armed on a digital signal; it then runs that TRAP, and again until the motion goes on. A
+TRAP ending with ExitCycle (--karel, CA_EXITCYCLE) needs none: the program it paused is aborted and run again.
 
 What does not convert: an interrupt connected to several TRAP routines, a TRAP that moves the robot or controls
-its motion otherwise (StorePath, ExitCycle...: it runs without a motion group), and the interrupts FANUC
+its motion otherwise (StorePath...: it runs without a motion group), and the interrupts FANUC
 cannot watch (ITimer: a WHEN on a TIMER is refused; IError, the group and analog signals).
 """
 
@@ -54,7 +55,9 @@ _MOTION_CONTROL = frozenset({
 })  # fmt: skip
 # What a TRAP may do to the motion with --karel (CA_STOPMOVE; ClearPath after a StopMove: the move goes on)
 STOP_MOVES = frozenset({"STOPMOVE", "STARTMOVE", "CLEARPATH"})
-KAREL_HINT = "; a TRAP pausing the motion (StopMove, StartMove) converts with --karel"
+# ... and end the cycle (CA_EXITCYCLE: the program holding the robot aborted and run again)
+KAREL_MOTION = STOP_MOVES | {"EXITCYCLE"}
+KAREL_HINT = "; a TRAP pausing the motion (StopMove, StartMove) or ending the cycle (ExitCycle) converts with --karel"
 
 
 @dataclass(slots=True)
@@ -155,7 +158,10 @@ def _resumers(found: dict[str, Interrupt], traps: dict[str, n.Routine], procs: d
         return bool(interrupt.kinds) and interrupt.kinds <= {"DI", "DO"} and len(interrupt.arms) == 1 \
             and not interrupt.shared  # fmt: skip
 
-    stopping = [key for key, names in calls.items() if "STOPMOVE" in names]
+    # a TRAP ending the cycle (ExitCycle in its own body, not in a branch) leaves no motion paused
+    ending = {key for key in calls if any(isinstance(s, n.ProcCall) and s.name.upper() == "EXITCYCLE"
+                                          for s in traps[found[key].trap].body)}  # fmt: skip
+    stopping = [key for key, names in calls.items() if "STOPMOVE" in names and key not in ending]
     for key in sorted(stopping, key=lambda k: "STARTMOVE" not in calls[k]):  # those resuming themselves first
         interrupt = found[key]
         routine = traps[interrupt.trap]
@@ -218,9 +224,9 @@ def _problem(interrupt: Interrupt, traps: dict[str, n.Routine], procs: dict[str,
     if len(interrupt.kinds) > 1:
         return f"interrupt {interrupt.name} is armed on conditions of different kinds"
     routine = traps[trap]
-    moving = moves(routine, procs, move_routines, STOP_MOVES if karel else frozenset())
+    moving = moves(routine, procs, move_routines, KAREL_MOTION if karel else frozenset())
     if moving:
-        pausing = not karel and not moves(routine, procs, move_routines, STOP_MOVES) and not unpaired(routine, procs)
+        pausing = not karel and not moves(routine, procs, move_routines, KAREL_MOTION) and not unpaired(routine, procs)
         return (f"TRAP {routine.name} {moving}: a FANUC condition monitor calls a program without a motion"
                 f" group, which cannot move the robot or stop its motion{KAREL_HINT if pausing else ''}")  # fmt: skip
     if karel and (why := unpaired(routine, procs)):

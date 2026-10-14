@@ -3406,6 +3406,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.set_sys_data(call)  # convert.system_data
         elif name == "GETSYSDATA" and name not in self.c.procs:
             self.get_sys_data(call)  # convert.system_data
+        elif name == "EXITCYCLE" and name not in self.c.procs:
+            self.exit_cycle(call)  # convert.stop_move
         elif name in STOP_MOVE_INSTRUCTIONS and name not in self.c.procs:
             self.stop_move(call, name)  # convert.stop_move
         elif name in MODULE_LOADS and name not in self.c.procs:

@@ -33,15 +33,21 @@ TP has no instruction stopping the robot's motion. Measured on ROBOGUIDE (R-1000
   (RAPID's runs on to its next move).
 - ClearPath after a StopMove in a TRAP: a remark; the move paused goes on to its point (RAPID plans it again from
   where the robot stopped, along the same line for a linear move).
+ExitCycle (--karel), in the program or in a TRAP: CALL CA_EXITCYCLE(1), which starts itself as a task of its own
+(RUN_TASK) that aborts the task holding the robot (ABORT_TASK, motion cancelled) and runs it again from its first
+line, the caller waiting to be aborted with it: measured on ROBOGUIDE, in line and in a TRAP after a StopMove
+(PAUSE_TASK); aborting it directly from the TRAP ends the TRAP too, nothing runs again; a task aborted while paused
+stays aborted when RUN_TASK follows at once (it accepts): 0.1 s first.
 Without --karel all of them stay TODO.
 """
 
 from crossarm.convert.blockers import Blocker, Untranslatable
-from crossarm.convert.interrupts import Interrupt, moves
+from crossarm.convert.interrupts import Interrupt, motion_stops, moves
 from crossarm.rapid import nodes as n
 from crossarm.rapid.walk import walk_statements
 
 PROGRAM = "CA_STOPMOVE"
+EXIT_PROGRAM = "CA_EXITCYCLE"  # RAPID ExitCycle (--karel)
 INSTRUCTIONS = frozenset({"STOPMOVE", "STARTMOVE", "CLEARPATH", "STOPMOVERESET", "STARTMOVERETRY"})
 IGNORE_PAUSE = 2  # PAUSE_REQUEST of a TRAP pausing the robot: it runs on while the program it paused waits
 PAUSED_KEY = "CROSSARM.STOPPED"  # the flag a TRAP sets while the robot is paused (mapping key, flags)
@@ -98,6 +104,28 @@ class StopMoves:
                    " line near the end of a CNT move only, RAPID earlier: the robot stops further along the path")
         self.c.warn_once(f"stopmove:{self.name}", self.name, call.span.line,  # type: ignore[attr-defined]
                          f"StopMove: CrossArm's KAREL program {PROGRAM} {why}", Blocker.OTHER)
+
+    def exit_cycle(self, call: n.ProcCall) -> None:
+        """ExitCycle, in the program or in a TRAP (--karel): CALL CA_EXITCYCLE(1), which aborts the task holding the
+        robot and runs it again from its first line; the line after the CALL never runs (measured 1.14-02)."""
+        if call.args:
+            raise Untranslatable(f"{call.name} with arguments is not converted", Blocker.MOTION)
+        if not self.c.config.karel:  # type: ignore[attr-defined]
+            raise Untranslatable(f"{call.name}: TP cannot end the cycle and start the program again from its first"
+                                 f" line; converts with --karel (CrossArm's KAREL program {EXIT_PROGRAM})",
+                                 Blocker.MOTION)  # fmt: skip
+        routine = self.routine.name.upper()  # type: ignore[attr-defined]
+        trap = self.routine.kind == "TRAP" or routine in self.c.trap_side  # type: ignore[attr-defined]
+        stops = motion_stops(self.routine, self.c.procs)  # type: ignore[attr-defined]
+        if trap and any(c.name.upper() == "STOPMOVE" for c in stops):
+            self.emit(f"{self.paused_flag()}=(OFF)")  # type: ignore[attr-defined]  # the robot no longer paused
+        self.emit(f"CALL {EXIT_PROGRAM}(1)")  # type: ignore[attr-defined]
+        self.c.warn_once(f"exitcycle:{self.name}", self.name, call.span.line,  # type: ignore[attr-defined]
+                         f"ExitCycle: CrossArm's KAREL program {EXIT_PROGRAM} aborts the program holding the robot,"
+                         " its motion cancelled, and runs it again from its first line (ABORT_TASK, RUN_TASK,"
+                         " ROBOGUIDE): the program started on the robot, which may call the one converted from"
+                         " RAPID's main routine; data keep their values, as in RAPID. The robot goes from where it"
+                         " stopped to the first move of the cycle: check that path", Blocker.OTHER)  # fmt: skip
 
     def paused_flag(self) -> str:
         number = self.c.flags.number("Robot paused", PAUSED_KEY, "", by_name=False)  # type: ignore[attr-defined]
@@ -204,4 +232,4 @@ class StopMoves:
         return name in procs and bool(moves(procs[name], procs, set(self.c.move_routines)))  # type: ignore[attr-defined]
 
 
-__all__ = ["IGNORE_PAUSE", "INSTRUCTIONS", "PAUSED_KEY", "PROGRAM", "SEEN_KEY", "StopMoves"]
+__all__ = ["EXIT_PROGRAM", "IGNORE_PAUSE", "INSTRUCTIONS", "PAUSED_KEY", "PROGRAM", "SEEN_KEY", "StopMoves"]
