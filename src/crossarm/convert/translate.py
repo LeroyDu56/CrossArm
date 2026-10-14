@@ -103,6 +103,7 @@ from crossarm.convert.late_calls import LateCalls
 from crossarm.convert.module_loads import INSTRUCTIONS as MODULE_LOADS
 from crossarm.convert.module_loads import MissingModule, ModuleLoads
 from crossarm.convert.motion import corner, next_move
+from crossarm.convert.multitask import multitask_todo
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.raised import RaisedErrors, RaisedPaths
 from crossarm.convert.records import MOTION, SCALARS, Field, Records, nodes, recursive
@@ -2656,6 +2657,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
         if getattr(exc, "category", None) in (Blocker.SAFETY, Blocker.LOADED_MODULE):
             return str(exc), exc.category  # type: ignore[attr-defined]  # said precisely, as raised
+        if (together := multitask_todo(stmt, self.c.procs.keys() | self.c.computer.functions.keys())) is not None:
+            return together  # tasks or robots working together (convert.multitask)
         none = no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
                                  self.c.symbols.type_of, MODULE_LOADS | (KAREL_FILES if self.c.config.karel else set()),
                                  self.c.config.karel)  # fmt: skip

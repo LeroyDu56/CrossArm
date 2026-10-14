@@ -86,6 +86,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   converts when the robot holds that frame (every change of it converted, a move selecting it): the frame is read back
   from UTOOL / UFRAME into a position register and its x, y, z copied (`PR[k,i]=PR[s,i]`), forms already measured. A
   work object with an oframe, or a frame a statement left TODO may have changed, stays TODO as before.
+- RAPID's instructions for tasks or robots working together stay TODO, each saying what it is for and how the FANUC
+  cell does it, rather than "call ... with arguments has no mapping": WaitSyncTask (a meeting point of tasks: flags or
+  outputs each program sets and waits for, set up by hand) and WaitTestAndSet (a semaphore: TP has no test-and-set in
+  one step) under "RAPID instruction without a TP equivalent"; SyncMoveOn, SyncMoveOff, SyncMoveResume,
+  SyncMoveSuspend, SyncMoveUndo (coordinated motion of several robots, the FANUC's own options) under "motion without
+  a TP equivalent". Nothing new is converted.
 
 ## 1.13.0 — 2026-10-13
 
