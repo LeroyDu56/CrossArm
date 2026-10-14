@@ -1,22 +1,26 @@
-## CrossArm 1.13.0
+## CrossArm 1.14.0
 
 CrossArm converts ABB robot programs written in RAPID into FANUC TP programs (`.LS`), with a report of
 everything left to review before commissioning.
 
-**What 1.13 changes:** more of what large industrial cells write is converted.
+**What 1.14 changes:** more of what large industrial cells write is converted, and the report says what stands
+between a "not ready" conversion and a workable one.
 
-- **Stationary tool, part held by the robot:** written for the FANUC Remote TCP (option J624): `L` and `C` with
-  `RTCP`, the user frame the stationary tool, the tool frame the held part. The analysis and the checklist say the
-  option is needed. Measured on ROBOGUIDE.
-- **`FOR` loops:** a bound worked out at run time is computed before the loop (mapping keys
-  `CROSSARM.FOR.<ROUTINE>.L<line>.FROM|TO`); one TP cannot compute is left to you, the loop skipped until you set
-  it; a constant `STEP` is converted.
-- **Optional arguments:** an optional `num`, `bool` or `string` is passed as two arguments, 1 / 0 then the value;
-  `Present()` reads the first. A program of your own calling such a routine passes both.
-- **Calibration:** tools built by a FUNC from a base tool and a record of offsets and angles; `GetSysData` of a
-  frame the routine selected; a tool or work object set but never used is a remark with a warning.
-- **Module loads** (`Load`, `StartLoad`, `WaitLoad`, `UnLoad`) of a module of the backup: a remark with a warning.
-- **The number of TODO can go up:** routines and loops once left TODO whole are converted and show their own.
+- **Motion paused on an input, cycles ended** (`--karel`, KAREL option R632): `StopMove` / `StartMove` and
+  `ExitCycle`, in the program and in TRAPs, by CrossArm's new KAREL programs `CA_STOPMOVE` and `CA_EXITCYCLE`.
+  Without `--karel` they stay TODO, under "motion without a TP equivalent". Measured on ROBOGUIDE.
+- **`WaitRob \InPos`** after a move through a zone: a zero incremental FINE move, the robot on its point before the
+  next line runs.
+- **Calibration:** a routine given a tool by reference that sets its tframe is passed the tool's number; with
+  `--karel`, a frame computed from a pose chosen in the branches of an `IF`.
+- **FUNCs giving a text** are TP programs writing their result in a string register.
+- **Path to workable**, under the decision: the blocking causes to solve, the instructions to convert besides,
+  the verdict `--karel` would give. Diagnostic schema 4.
+- **World zones** are TODO under a cause of their own and listed in the checklist, to set up in DCS: CrossArm
+  converts no safety function. **Modules loaded** that the input does not hold: the files to add.
+- **New mapping keys** (`CROSSARM.STOPPED`, `CROSSARM.STOPMOVE.<INTERRUPT>`, `CROSSARM.STANDSTILL`,
+  `<PROGRAM>.<FUNC>.result`); keys are only added. The number of TODO can go up: routines once left out show
+  their own.
 
 Full list: [CHANGELOG](https://github.com/LeroyDu56/CrossArm/blob/main/CHANGELOG.md).
 
@@ -28,7 +32,7 @@ test corpus, written for testing; the rest is marked `!TODO` with its cause
 
 **Licence:** free for evaluation and other non-production use; production use needs a commercial licence:
 **enzoleroy56@gmail.com** ([LICENSING.md](https://github.com/LeroyDu56/CrossArm/blob/main/LICENSING.md)).
-Business Source License 1.1; this version becomes Apache 2.0 on 2030-10-13. `python_license.txt` covers the
+Business Source License 1.1; this version becomes Apache 2.0 on 2030-10-14. `python_license.txt` covers the
 Python runtime bundled in the executable.
 
 **Download `CrossArm.exe`**: Windows 10/11, nothing to install, runs offline. Drop a backup on its icon,

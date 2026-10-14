@@ -7,6 +7,7 @@ reference below it is there to look things up, not to read in one go. What Cross
 **Start here**
 - [Quick start](#quick-start)
 - [What to expect](#what-to-expect)
+- [Upgrading to 1.14](#upgrading-to-114)
 - [Upgrading to 1.13](#upgrading-to-113)
 - [Upgrading to 1.12](#upgrading-to-112)
 - [Upgrading to 1.10](#upgrading-to-110)
@@ -101,6 +102,43 @@ Measured, it stays within 4 mm.
   ([speeds and zones](#speeds-and-zones)).
 
 How each figure was measured: [validation.md](validation.md).
+
+## Upgrading to 1.14
+
+A mapping file written by an earlier version is read as before (keys are only added), and the command line keeps
+its options. These changes make a program converted again with 1.14 differ:
+
+- **`StopMove` / `StartMove` and `ExitCycle` convert with `--karel`**, through CrossArm's KAREL programs
+  `CA_STOPMOVE` and `CA_EXITCYCLE` ([KAREL programs](#karel-programs---karel)); a real robot needs the KAREL option
+  (R632). Without `--karel` they stay TODO, now under "motion without a TP equivalent" (`StopMove` / `StartMove`
+  were under "routine call with arguments"), and the analysis says what `--karel` would make of the decision.
+  *What to do:* load the two `.pc` with the other KAREL programs, before the `.LS`; pin `CROSSARM.STOPPED` and
+  `CROSSARM.STOPMOVE.<INTERRUPT>` (in `flags`) to numbers your cell keeps free.
+- **`WaitRob \InPos` (or `\ZeroSpeed`) after a move through a zone, a call or a branch is a zero incremental FINE
+  move**: `PR[k]=LPOS`, `PR[k]=PR[k]-PR[k]`, `L PR[k] 100mm/sec FINE INC`. The robot ends the move before on its
+  point and stops there before the next line runs, as RAPID waits for. `CROSSARM.STANDSTILL` (in
+  `point_registers`) is that register. In a TRAP it stays TODO.
+- **A routine given a tool by reference (`INOUT tooldata`) that sets its tframe is passed the tool's number** and
+  writes the robot's tool frame (`PR[k]=UTOOL[AR[1]]`, the parts it sets, `UTOOL[AR[1]]=PR[k]`); a `bool` passed by
+  reference that it sets is read back into the caller's flag. *What to do:* a program of your own calling such a
+  routine passes the tool's number.
+- **A FUNC giving a text known at run time only is a TP program** writing its text in a string register
+  (`SR[AR[n]]`), called just before the line (`CALL F(args,k)`). The mapping file names its result registers
+  `<PROGRAM>.<FUNC>.result` in `string_registers`.
+- **New causes.** World zones (`WZBoxDef`, `WZLimSup`, `WZDOSet`...) are TODO under "world zone or safety
+  function: set up in DCS on the FANUC" (before: "RAPID instruction without a TP equivalent"), each listed in the
+  checklist group "Safety and world zones (DCS)": CrossArm converts no safety function, set each zone up again in
+  DCS and validate it on the robot. A module that `Load` / `StartLoad` name and the input does not hold, or whose
+  file is named at run time, is TODO under "module loaded at run time, not in the input" (before: "routine or data
+  not in the backup" or "value not known at conversion time"): add the files the analysis lists to the input and
+  convert again. `SyncMoveOn` and the other instructions of coordinated robots are under "motion without a TP
+  equivalent", `WaitSyncTask` / `WaitTestAndSet` under "RAPID instruction without a TP equivalent" (before:
+  "routine call with arguments"). *What to do:* a filter or a script reading the causes by name sees these.
+- **The analysis says what stands between "not ready" and workable** ("Path to workable", under the decision);
+  the rule is unchanged. `crossarm_summary.json` gains `causes_to_workable`, `instructions_to_workable` and
+  `verdict_with_karel`; the diagnostic is [schema 4](diagnostic.md#schema).
+- **The number of TODO can go up**: routines once left out (a `bool` they set passed by reference, a tool they
+  calibrate) are converted now and show their own TODO.
 
 ## Upgrading to 1.13
 
@@ -350,6 +388,8 @@ the TP program stays the main program and calls them with the numbers of the reg
 | `CA_RELTOOL` | a displacement and turns in the tool frame of a pose (constants or registers) | `RelTool` of a point whose orientation is only known at run time |
 | `CA_DEFFRAME` | a frame from three points (and the origin RAPID's `\Origin` asks for) | `DefFrame` |
 | `CA_FILE` | open, write and close a text file | `Open` (`\Write`, `\Append`), `Write` (texts, `\Num`, `\NoNewLine`), `Close` |
+| `CA_STOPMOVE` | stops and resumes the robot's motion: in the program moving it (`STOP` / `RESUME`), or from a `TRAP` (the program holding the robot paused and continued) | `StopMove`, `StartMove` (since 1.14) |
+| `CA_EXITCYCLE` | as a task of its own, aborts the program holding the robot and runs it again from its first line | `ExitCycle` (since 1.14) |
 
 What it converts:
 - poses the programs change while they run (`VAR` poses, points read with `CRobT`) are kept in position
@@ -361,6 +401,12 @@ What it converts:
 - a work object written part by part or copied whose `oframe` is not the identity is multiplied in by
   `CA_POSEMULT`, and a [FUNC copied into its calls](#frames-and-points-the-programs-compute) that turns a
   frame whose orientation is only known at run time calls it too;
+- a pose set in the branches of an `IF` or a `TEST` is kept in one position register every branch writes
+  (`p.rot := OrientZYX(z, y, x)` as its W, P, R), and a work object's frame computed from it, and its copies,
+  follow (measured, [validation](validation.md#53-a-frame-from-a-pose-chosen-in-the-branches-of-an-if-run));
+- `StopMove` / `StartMove` and `ExitCycle`, in the program and in `TRAP`s
+  ([what is converted](#what-is-converted); measured,
+  [validation](validation.md#50-stopmove-and-startmove-run), [section 52](validation.md#52-exitcycle-run));
 - RAPID's text files: `Open "HOME:" \File:="log.txt", ioLog \Write;` becomes
   `CALL CA_FILE(1,1,1,'UD1:log.txt')`, the iodev a register (here `R[1]`) keeping the file's handle; `Write` and
   `Close` the same. The files of `HOME:` are written on the controller's `UD1:` (its USB memory stick, read
@@ -400,13 +446,13 @@ program by program ([validation](validation.md#37-karel-programs-called-from-tp-
 In short:
 
 - **Motion**: `MoveJ`, `MoveL`, `MoveC`, `MoveAbsJ` with their targets (`Offs`, `RelTool` included),
-  the arm configuration, speeds and zones, tool and user frames, payloads (`GripLoad` included), a stationary
+  the arm configuration, speeds and zones, tool and user frames, payloads (`GripLoad` included), `WaitRob \InPos` after a move through a zone, a stationary
   tool with a work object the robot holds (the FANUC Remote TCP, option J624).
 - **I/O**: digital, group and analog signals, typed by the backup's `EIO.cfg`, pulses, clocks; waits,
   including a wait with a time limit and its error handler.
 - **Logic**: `IF`/`ELSEIF`, `TEST`/`CASE`, `FOR` (bounds worked out at run time, any constant `STEP`), `WHILE`,
   conditions calling the backup's own functions, the
-  backup's FUNCs known only at run time as TP programs of their own, errors the program raises itself (`RAISE`)
+  backup's FUNCs known only at run time as TP programs of their own (texts included), errors the program raises itself (`RAISE`)
   and the `ERROR` handlers of its callers (`RETRY`, `TRYNEXT`), calls with
   num, bool, string, point (robtarget), record, tool, work object, speed, zone and switch arguments (optional
   num, bool and string ones included), nums passed by reference, the integrator's own move routines; loading a
@@ -419,10 +465,12 @@ In short:
   read on the robot (`CJointT()`) in joint position registers; operator messages; comments.
 - **Calibration**: tools and work objects written part by part or copied at run time, FUNCs that build them
   (from a base tool and a record of offsets and angles too) worked out or copied into each call, functions you
-  provide as programs (their result read back from a register), `SetSysData`, `GetSysData` of a frame the routine
+  provide as programs (their result read back from a register), routines given the tool they calibrate by
+  reference, `SetSysData`, `GetSysData` of a frame the routine
   selected; routines called by a name worked out at run time (`%"Bay_" + NumToStr(n,0)%`, `CallByVar`).
 - **With `--karel`**: `PoseMult`, `PoseInv`, `RelTool` and `DefFrame` of poses known only at run time, the
-  tool and user frames calibrated from them, and text files, by CrossArm's KAREL programs.
+  tool and user frames calibrated from them (from a pose chosen in the branches of an `IF` too), text files,
+  `StopMove` / `StartMove` and `ExitCycle`, by CrossArm's KAREL programs.
 
 Frames and points the programs compute are worked out at conversion time when every value they read
 is fixed; points worked out from data that changes at run time are kept in position registers. Marked
@@ -453,7 +501,7 @@ and a few ABB-specific instructions. The full table:
 | `WaitTime`, `WaitDI/DO`, `WaitUntil` | `WAIT` | A `WaitTime` of a calculation (`WaitTime PERIOD-tSpent`) is worked out in a register first, then `WAIT R[n]`. With `\Visualize` (and `\Header`, `\Message`, `\MsgArray`, `\Icon`, `\Image`, `\VisualizeTime`), the same wait: the FlexPendant message is dropped, with a warning |
 | `MoveLDO` / `MoveJDO` / `MoveCDO` to a fine point | `L P[1] 500mm/sec FINE`, then `DO[1]=ON` | The line after a FINE move runs with the robot on the point (measured: the output switches with the TCP 0.000 mm from it), where RAPID sets it. Through a zone RAPID sets it in the middle of the corner path: TODO |
 | `SearchL \Stop,diProbe,pFound,pEnd,v50,tool` on a digital input | `SKIP CONDITION DI[1]=ON`, then `L P[2] 50mm/sec FINE Skip,LBL[2],PR[99]=LPOS` | The move stops where the input switches, the point found in a position register, read as any point known at run time (`Offs()`, its x, y, z). A search for a change (`\PosFlank`, the default, `\NegFlank`) first checks the input is not already at that level. `\Sup` or no stop option: the FANUC stops, then goes on to the point, where RAPID does not stop (warning). Where RAPID stops with an error (nothing found, the input already on), a `MESSAGE` and `PAUSE`, then the search again when resumed. **The FANUC stops past the switch and comes back to it, where RAPID stays past it: check the stopping distance at the search speed, mostly for a search by contact.** `\Flanks`, a search faster than 100 mm/s (the controller slows a move recording the position down to that: measured), a routine with an `ERROR` handler: TODO |
-| `TestDI(di)`; `WaitRob \InPos` after a FINE move | `DI[n]=ON`; a remark | TP runs the line after a FINE move once the robot stands on the point: nothing to wait for. After a move through a zone, `WaitRob` stays TODO |
+| `TestDI(di)`; `WaitRob \InPos` (or `\ZeroSpeed`) | `DI[n]=ON`; after a FINE move a remark; after a move through a zone, a call or a branch `PR[k]=LPOS`, `PR[k]=PR[k]-PR[k]`, `L PR[k] 100mm/sec FINE INC` | TP runs the line after a FINE move once the robot stands on the point: nothing to wait for. After a move through a zone it runs the next line before the robot is there (9.3 mm before a CNT100 point at 100 mm/s, measured): the zero incremental FINE move ends the move before on its point and stops there, 0.000 mm from it, as `WaitRob` waits for (`CROSSARM.STANDSTILL` in `point_registers`). In a TRAP: TODO. Measured on ROBOGUIDE ([validation](validation.md#51-waitrob-after-a-move-through-a-zone-run)) |
 | wait with `\MaxTime` and `\TimeFlag` | the same loop, then `F[n]=(R[m:WaitTimer]>=2.5)` | RAPID raises no error then: the flag says whether the time ran out, no handler needed |
 | wait with `\MaxTime` and the `ERROR` handler's `ERR_WAIT_MAXTIME` case | a loop on a `TIMER`, then the handler's steps (`RETRY` → back to the wait, `TRYNEXT` → past it) | `$WAITTMOUT`, the limit of `WAIT ... TIMEOUT`, is write-protected for programs. A handler that only passes errors on (`RAISE`) needs nothing on FANUC |
 | `SetGO`, `GInput()`, a group input read by name | `GO[n]=…`, `GI[n]` | Group signals, typed by `EIO.cfg` |
@@ -475,13 +523,17 @@ and a few ABB-specific instructions. The full table:
 | an `IF` / `ELSEIF`, `WHILE` or `TEST` whose condition (a `TEST`'s value) TP cannot write: `IF OpMode()=OP_AUTO THEN`, `WHILE UIMessageBox(...)<>resYes DO`, `TEST StrLen(s)` | `!TODO l.15 IF OpMode()=OP_AUTO TH`, `!Replace JMP by F[1]=(...)`, `JMP LBL[1]`, then `IF (F[1]=ON) THEN` ... `ENDIF`, `LBL[1]`; a `TEST`: `SELECT R[200]=1,JMP LBL[10]` | The blocks are converted; the condition alone is left to the integrator, in a flag CrossArm reserves (a register for a `TEST`), `CROSSARM.CONDITION.<ROUTINE>.L<line>` in the mapping file. **Nothing of the instruction runs until the `JMP LBL[n]` before it is replaced** by the line setting the flag (`F[1]=(DI[3]=ON)`; for a `TEST`, `R[200]=...`): no branch, not the `ELSE`, and a `WHILE` does not turn (its jump is at the top of each turn, so the condition written there is tested at each turn). An `ELSEIF`'s condition is set before the `IF`. One TODO per condition, with the cause of the condition; the report lists each under "Conditions to set". A `TEST` on a string, or with a `CASE` value TP cannot write, is still TODO as a whole. Measured on ROBOGUIDE |
 | `CONNECT` + `ISignalDI` / `ISignalDO`, `IPers`; `ISleep`, `IDelete`, `IWatch` | a condition program `WHEN DI[3]=ON+,CALL TSTOP` armed with `MONITOR ISTOP`; `MONITOR END ISTOP`, `MONITOR ISTOP` | The FANUC Condition Monitor function: one condition program per interrupt, named after it, `ON+` for 1, `OFF-` for 0, both for `edge`; `IPers` compares the data's register with a copy of the value last seen. The `TRAP` is a program without a motion group (and so is every routine it calls: it runs as a task of its own while the program it interrupted holds the robot); it arms its condition program again as it ends, as the controller disarms one when it fires, unless `\Single`. A `TRAP` several interrupts share, or one reading `INTNO`, is called through a relay per interrupt, which notes the interrupt in `R[n:IntNo]` (what `INTNO` reads; an `intnum` reads as its interrupt's number), calls the `TRAP` and arms its condition again. The program stops while the `TRAP` runs, the move under way goes on, as in RAPID. The controller checks the condition periodically: a change within 0.05 s of `MONITOR`, or held less than 0.02 s, can be missed (a warning says so). Data a `TRAP` changes is never taken as known |
 | routine call, `Stop`, `RETURN`, `EXIT` | `CALL`, `PAUSE`, `END`, `ABORT` | A routine of a system module the programs call is written too: the robot needs it |
-| `Load`, `StartLoad`, `WaitLoad`, `UnLoad`, `EraseModule` of a module the backup holds: `Load \Dynamic, diskhome \File:="CellJobs.mod"` | a remark: `!l.12 Load CellJobs (loaded)` | A FANUC controller has no modules: the module's programs are converted with the others and are on the controller before the line runs (they stay there after an `UnLoad`); a warning says so. The module is read from the path written, a constant or data no program changes. A module the backup does not hold, or a path only known at run time, stays TODO: load its programs on the controller. `Save` stays TODO |
+| `StopMove` / `StartMove` (`--karel`), in the program or in a `TRAP` an input calls | in the program `CALL CA_STOPMOVE(1,0)` / `CALL CA_STOPMOVE(0,0)`; in a `TRAP` `CALL CA_STOPMOVE(1,1)` / `CALL CA_STOPMOVE(0,1)` | CrossArm's KAREL program ([KAREL programs](#karel-programs---karel)): in the program, KAREL `STOP` / `RESUME`, when the same routine starts the motion again before its next move; in a `TRAP`, the program holding the robot paused and continued (the TRAP's program ignoring pause requests, `PAUSE_REQUEST = 2`), the flag `CROSSARM.STOPPED` ON meanwhile. A `TRAP` leaving the robot stopped waits itself for the input of the `TRAP` that starts it again, as no condition monitor fires while its program is paused. Differences, said by warnings: in a `TRAP` the program is paused (its logic and timers too) where RAPID's logic goes on up to the next move; in the program, TP runs the line at the end of the corner. `ClearPath` after it in a `TRAP`: a remark. `StopMoveReset`, `StartMoveRetry`, `\AllMotionTasks`, a stopping `TRAP` several interrupts share: TODO. Without `--karel`: TODO, "motion without a TP equivalent". Measured on ROBOGUIDE ([validation](validation.md#50-stopmove-and-startmove-run)) |
+| `ExitCycle` (`--karel`), in the program or in a `TRAP` | `CALL CA_EXITCYCLE(1)` | CrossArm's program starts itself as a task of its own, aborts the program holding the robot (its motion cancelled) and runs it again from its first line: the line after the `CALL` never runs, data keep their values, as in RAPID. The program run again is the one started (a warning says so when it is not RAPID's main). A `TRAP` that stops the robot, then ends the cycle, needs no `TRAP` to start it again. Without `--karel`: TODO, "motion without a TP equivalent". Measured on ROBOGUIDE ([validation](validation.md#52-exitcycle-run)) |
+| world zones: `WZBoxDef`, `WZCylDef`, `WZSphDef`, `WZHomeJointDef`, `WZLimJointDef`, `WZLimSup`, `WZDOSet`, `WZEnable`, `WZDisable`, `WZFree` | TODO, under "world zone or safety function: set up in DCS on the FANUC" | **CrossArm converts no safety function.** The checklist group "Safety and world zones (DCS)" lists each zone: its shape, its values when known at conversion (corners, centre, radius, joint values; none for 9E9), what it does (the robot stops, or an output is set) and where the RAPID switches it. Set it up again on the FANUC, in DCS (Cartesian or Joint Position Check, the zone's status on a safe output) or as an interference check zone, and validate it on the robot. When the backup's system description lists SafeMove or World Zones, the analysis and the checklist remind it. Not a blocking cause |
+| tasks and robots working together: `WaitSyncTask`, `WaitTestAndSet`; `SyncMoveOn`, `SyncMoveOff`, `SyncMoveResume`, `SyncMoveSuspend`, `SyncMoveUndo` | TODO, saying what it is for | A meeting point of tasks (flags or outputs each program sets and waits for, set up by hand), a semaphore (TP has no test-and-set in one step): "RAPID instruction without a TP equivalent"; the coordinated motion of several robots, the FANUC's own options: "motion without a TP equivalent". `IsSyncMoveOn()` is a condition left to the integrator |
+| `Load`, `StartLoad`, `WaitLoad`, `UnLoad`, `EraseModule` of a module the backup holds: `Load \Dynamic, diskhome \File:="CellJobs.mod"` | a remark: `!l.12 Load CellJobs (loaded)` | A FANUC controller has no modules: the module's programs are converted with the others and are on the controller before the line runs (they stay there after an `UnLoad`); a warning says so. The module is read from the path written, a constant or data no program changes. A module the backup does not hold, or a path only known at run time, stays TODO under "module loaded at run time, not in the input": the analysis lists the files as the RAPID names them; add them to the input and convert again. `Save` stays TODO |
 | `GetSysData tSaved` of a tool or work object a move or `SetSysData` of the same routine selected before it | the copy of that frame, as `tSaved := tGrip` is written | Where only the caller knows the active frame (at the start of a routine, after a call), it stays TODO (a TP program reads no system variable, VARS-034). `GetSysData` of a `loaddata`: a remark with a warning, the payload carried being the PAYLOAD schedule selected |
 | a routine called by its name worked out at run time: `%"Bay_" + NumToStr(n,0)%`, `CallByVar "Bay_", n`, `%sStep%` | `SELECT R[3:n]=1,CALL BAY_1` / `=2,CALL BAY_2` / `ELSE,JMP`; for a text, `IF SR[2]<>SR[25],JMP LBL[n]` then the `CALL` | TP calls a program by the name written in the line only: the call is one branch per routine of the backup the name can be (the texts the string is set to, or the routines named by the prefix and a number), its arguments passed as written. A name outside those ends the program (`ABORT`, where RAPID raises ERR_REFUNKPRC), with a warning |
 | a FUNC of the backup that builds a tool, a work object or a pose: `tNew := MakeTool(tBase, tOffset)`, its body only assignments, pose functions and a final `RETURN`; one building poses part by part from a `RECORD` of `pos` fields (`pe.trans := g.offset`, `pe.rot := OrientZYX(g.angles.z, g.angles.y, g.angles.x)`) and returning `PoseMult(PoseMult(base.tframe, pe1), pe2)` | its body, written at each call: `PR[91]=UTOOL[2]`, `PR[91,2]=PR[91,2]+25`, `UTOOL[4]=PR[91]` | Worked out at conversion time when its base is fixed (a constant tool). When its result cannot be (a base frame calibrated at run time): TP when the base frame's orientation is known (a shift, a turn about known axes), else `CA_POSEMULT` with `--karel`. The report notes at how many calls each FUNC was copied, and the analysis says to convert again after the FUNC changes. Another body stays TODO, naming the FUNC and the statement. Measured on ROBOGUIDE ([validation](validation.md#41-funcs-copied-into-their-calls-run)) |
-| a FUNC of the backup returning a `num`, `dnum`, `bool` or `robtarget` known only at run time: `nGap:=nGap+Gap(r)*3`, `IF Free(r) THEN`, `pCell:=Cell(r,2)` | `CALL GAP(R[1:r],5)` just before the line, which reads `R[5]`; the program `GAP` ends with `R[AR[2]]=...` (a bool: 1 / 0; a robtarget: `PR[AR[n]]=PR[k]`) | Its parameters are passed as a routine's, plus the number of the register for its result, one per calling program. Each test of a `WHILE` calls it again; an `ELSEIF` calls it inside the `ELSE`. Written only when its whole body converts: otherwise its calls stay TODO and name the line of the FUNC that stops it, and the analysis lists them. A FUNC calling itself back, with array or `INOUT` record parameters, or read in a `WaitUntil`: TODO. Measured on ROBOGUIDE |
+| a FUNC of the backup returning a `num`, `dnum`, `bool`, `robtarget` or `string` known only at run time: `nGap:=nGap+Gap(r)*3`, `IF Free(r) THEN`, `pCell:=Cell(r,2)` | `CALL GAP(R[1:r],5)` just before the line, which reads `R[5]`; the program `GAP` ends with `R[AR[2]]=...` (a bool: 1 / 0; a robtarget: `PR[AR[n]]=PR[k]`) | Its parameters are passed as a routine's, plus the number of the register for its result, one per calling program. Each test of a `WHILE` calls it again; an `ELSEIF` calls it inside the `ELSE`. Written only when its whole body converts: otherwise its calls stay TODO and name the line of the FUNC that stops it, and the analysis lists them. A FUNC calling itself back, with array or `INOUT` record parameters, or read in a `WaitUntil`: TODO. A FUNC giving a text (since 1.14) writes it in `SR[AR[n]]`, the caller reading the string register of its result (`<PROGRAM>.<FUNC>.result` in `string_registers`); its text can be put together with others, compared, passed on. It is called before any scratch string register of the line is used, else TODO; a comparison reading it converts when what it can give back cannot differ from the other side by case alone. A string register took 152 characters; 304 stopped the program (INTP-323). Measured on ROBOGUIDE ([validation](validation.md#55-funcs-giving-a-text-as-tp-programs-run)) |
 | the program's own errors: `RAISE ERR_JAM;` (an `errnum` of the backup), `RAISE 12;`, a caller's `ERROR` handler testing `ERRNO` | the routine sets `R[e:Raised]` and ends; after `CALL FEED`: `IF R[e:Raised]=0,JMP LBL[n]`, then the handler: `RETRY` (counted, at most 4 times, then `ABORT`), `TRYNEXT`, `RETURN` (`END`), `RAISE` (to its own caller) | `R[e]` (`CROSSARM.RAISED` in the mapping file) holds the error a routine ends with, `ERRNO` is `CROSSARM.ERRNO`, each RETRY count `CROSSARM.RETRY.<routine>`: keep them for CrossArm. An error raised with no handler to take it stops the program (`ABORT`), as in RAPID. **The end of an `ERROR` handler, the one of a wait's timeout included, stops the program (`ABORT`), as RAPID does; CrossArm 1.9 and earlier wrote `END`.** Errors of the system (`ERR_...`) stay TODO; `BookErrNo` becomes a remark. Measured on ROBOGUIDE |
-| routine with `num`, `bool`, `string`, switch parameters, optional ones included: `Station 3\Speed:=200;`, `IF Present(Speed) THEN` | `CALL NAME(3,(-2.5),1,0)`, `CALL FAULT('Gripper not open')`, read as `AR[n]`; `CALL STATION(3,1,200)`, `CALL STATION(4,0,0)`, `IF (AR[2]=1) THEN` | Every argument on every call (a switch as 1 / 0). An optional `num`, `bool` or `string` is two arguments: 1 / 0 whether the call gives it, then its value (0, or '' for a text, when it does not: a flag rather than a value standing for "absent", which a real value could equal), and `Present()` reads the first; they count in the ten arguments a TP `CALL` takes. `\Speed?Speed` passes on what the caller was given; an optional `\INOUT num` the routine changes is read back after the `CALL` only when the call gives it. Measured on ROBOGUIDE ([validation](validation.md#48-optional-arguments-run)). A parameter the routine changes is copied to a register; a `num` passed by reference (`INOUT`, `VAR`, `PERS`) the routine changes is read back by the caller after the CALL (`R[3:nBack]=R[4:n]`). A record of a type the backup declares is passed as the components the routine reads, each an argument of its own (`CALL DEBURRPART('HOUSING-120',2,35,.8,1)`), a PERS no program changes at its saved values; passed by reference (`INOUT`, `VAR`) to a routine that changes its num components, each is copied to a register and read back after the CALL, as a num passed by reference is. A tool or a work object is passed as its frame number and selected by the routine (`UTOOL_NUM=AR[1]`; an optional work object not given is 0, wobj0); the points it moves to with them are in position registers `SETUP_FRAMES` sets, as the controller refuses a P recorded in another tool than the one selected (INTP-253). A string is text written in the call, 38 characters at most; the routine cannot show it (`MESSAGE` takes fixed text), so a `TPWrite` of it stays TODO. A point (robtarget) goes in a position register of its own: the caller sets it (`PR[99]=P[1]`), the routine moves to it (`L PR[99]`) in the frames it selects; passed by reference (`VAR`, `INOUT`), the routine may change it there (`pAt:=Offs(pAt,0,50,0)`, `pAt.trans.z:=...`) and the caller reads it back after the CALL into the position register its own point is then kept in; `Offs()` of it is a copy offset component by component, `RelTool()` of it a move with `Tool_Offset,PR[m]` (the displacement and the turns, as W, P, R, in a copy of the point), and it can be passed on as it is or with `Offs()`. A tool or work object passed by reference (`INOUT`, `VAR`) that the routine only moves with or passes on is passed by its number, as one passed by value; a `bool` or `string` passed by reference that the routine does not change, as one passed by value. Other parameters (a frame used other than to move with, a tool passed by reference the routine changes, an optional point, pose, tool, speed or zone, a record used whole...) stay TODO, with the reason |
+| routine with `num`, `bool`, `string`, switch parameters, optional ones included: `Station 3\Speed:=200;`, `IF Present(Speed) THEN` | `CALL NAME(3,(-2.5),1,0)`, `CALL FAULT('Gripper not open')`, read as `AR[n]`; `CALL STATION(3,1,200)`, `CALL STATION(4,0,0)`, `IF (AR[2]=1) THEN` | Every argument on every call (a switch as 1 / 0). An optional `num`, `bool` or `string` is two arguments: 1 / 0 whether the call gives it, then its value (0, or '' for a text, when it does not: a flag rather than a value standing for "absent", which a real value could equal), and `Present()` reads the first; they count in the ten arguments a TP `CALL` takes. `\Speed?Speed` passes on what the caller was given; an optional `\INOUT num` the routine changes is read back after the `CALL` only when the call gives it. Measured on ROBOGUIDE ([validation](validation.md#48-optional-arguments-run)). A parameter the routine changes is copied to a register; a `num` passed by reference (`INOUT`, `VAR`, `PERS`) the routine changes is read back by the caller after the CALL (`R[3:nBack]=R[4:n]`). A record of a type the backup declares is passed as the components the routine reads, each an argument of its own (`CALL DEBURRPART('HOUSING-120',2,35,.8,1)`), a PERS no program changes at its saved values; passed by reference (`INOUT`, `VAR`) to a routine that changes its num components, each is copied to a register and read back after the CALL, as a num passed by reference is. A tool or a work object is passed as its frame number and selected by the routine (`UTOOL_NUM=AR[1]`; an optional work object not given is 0, wobj0); the points it moves to with them are in position registers `SETUP_FRAMES` sets, as the controller refuses a P recorded in another tool than the one selected (INTP-253). A string is text written in the call, 38 characters at most; the routine cannot show it (`MESSAGE` takes fixed text), so a `TPWrite` of it stays TODO. A point (robtarget) goes in a position register of its own: the caller sets it (`PR[99]=P[1]`), the routine moves to it (`L PR[99]`) in the frames it selects; passed by reference (`VAR`, `INOUT`), the routine may change it there (`pAt:=Offs(pAt,0,50,0)`, `pAt.trans.z:=...`) and the caller reads it back after the CALL into the position register its own point is then kept in; `Offs()` of it is a copy offset component by component, `RelTool()` of it a move with `Tool_Offset,PR[m]` (the displacement and the turns, as W, P, R, in a copy of the point), and it can be passed on as it is or with `Offs()`. A tool or work object passed by reference (`INOUT`, `VAR`) that the routine only moves with or passes on is passed by its number, as one passed by value; a `bool` or `string` passed by reference that the routine does not change, as one passed by value. A tool passed by reference (`INOUT tooldata`) to a routine that only sets its tframe (a calibration: assignments, `MToolTCPCalib`..., routines doing so) is passed by its number: the routine writes the robot's tool frame (`PR[k]=UTOOL[AR[1]]`, the parts it sets, `UTOOL[AR[1]]=PR[k]`), a tool kept in a bank register read back after the `CALL`; the tool must be one the robot holds, known in its other fields (measured, [validation](validation.md#54-a-tool-passed-by-reference-run)). A `bool` passed by reference the routine sets is copied to a register (1 / 0) and read back into the caller's flag; an optional robtarget is passed as whether the call gives it, the point in its position register. Other parameters (a frame used other than to move with, a tool passed by reference changed other than in its tframe, a work object passed by reference the routine changes, an optional pose, tool, speed or zone, a record used whole...) stay TODO, with the reason |
 | routine given its speed and zone: `PROC Approach(robtarget p,speeddata v,zonedata z)` making its `MoveJ`, `MoveL`, `MoveAbsJ` with them | `CALL APPROACH(400,9,100)`; in the routine `R[1:v.tcp]=AR[1]`, `L P[1] R[1]mm/sec CNT R[3]` | TP takes no argument as the speed or the CNT of a move (measured): the call passes the speed (mm/s, and % for joint moves) and the CNT of each corner, worked out as the move would be written with them, and the routine copies them to registers where it starts. `fine` given for the zone: the moves through it are FINE when every call gives it; when only some do, each is written both ways (`IF R[3]>100,JMP LBL[1]`, the move with `CNT R[3]`, else with `FINE`) and the call passes 101 for fine, as a CALL takes no negative number. Measured on both controllers: the moves take the time they take written with constants ([validation](validation.md#32-speeds-and-zones-given-to-a-routine-run)). `MoveC` and other uses of the speed or zone stay TODO |
 | array of points indexed at run time: `MoveL pSlot{nTool}`, `pGrid{r,c}` in FOR loops | `PR[R[n]]` | `SETUP_FRAMES` keeps the array in consecutive position registers, row after row; the program works the index out in `R[n:PointIndex]` and reads `PR[R[n]]`, moved to, offset with `Offs()` or passed to a routine. An element at a fixed index is an ordinary point |
 | array of numbers indexed at run time: `nTorque{nScrew}` | `R[R[n]]` | The same with numeric registers, read in calculations, conditions and arguments (`R[n:NumberIndex]`, a second one when a statement reads two elements). For both: a CONST array, or a PERS one no program changes, kept at the values saved in the backup (a warning says so) |
@@ -497,8 +549,8 @@ and a few ABB-specific instructions. The full table:
 | comments | `!remark` | Split to 32 characters, accents folded to ASCII |
 
 **Reported as TODO**:
-- routines with other parameters (a frame used other than to move with or in a MoveAbsJ, a tool or a bool
-  passed by reference the routine changes, an optional point, pose, tool, speed or zone, a record used whole, a speed or zone used in a `MoveC` or other than to move with), a
+- routines with other parameters (a frame used other than to move with or in a MoveAbsJ, a tool passed
+  by reference the routine changes other than in its tframe, an optional pose, tool, speed or zone, a record used whole, a speed or zone used in a `MoveC` or other than to move with), a
   string argument only known at run time, a VAR array no program sets indexed at run time, an array of a
   routine the routine changes, arrays of bools, strings and points the programs change, a
   point parameter passed on with `RelTool()` (TP has no pose product), `FUNC` whose body does not
@@ -513,8 +565,8 @@ and a few ABB-specific instructions. The full table:
 - payload changes (`tool.tload`), to redo with the FANUC `PAYLOAD[n]` schedules;
 - `AccSet` and `VelSet` that slow the robot down (dropping them would run it faster than the ABB), a
   `SetAO` without its scale; interrupts a condition monitor cannot watch (`ITimer`, `IError`, group and
-  analog signals), `IDisable` / `IEnable`, a `TRAP` that moves the robot or controls its motion
-  (`StopMove`, `ClearPath`...: it runs without a motion group);
+  analog signals), `IDisable` / `IEnable`, a `TRAP` that moves the robot (it runs without a motion group), one that controls its motion
+  without `--karel` (`StopMove`, `StartMove`, `ExitCycle`), `StopMoveReset`, `StartMoveRetry`;
 - texts TP handles otherwise: a comparison where the texts could differ by case alone, `StrToVal` (TP
   reads 'ABC' as 0 and '12AB' as 12 where RAPID fails), `StrFind`, `StrMemb`, `StrOrder`, `StrMap`,
   `StrMatch` from another character than the first, a number with decimals written as a text, more than
@@ -527,14 +579,20 @@ and a few ABB-specific instructions. The full table:
   written with [`--karel`](#karel-programs---karel)), sockets,
   raw byte buffers, operator dialogs waiting for an answer (`TPReadFK`, `UIMessageBox`...), screens of
   the ABB pendant (`TPShow`), the ABB event log (`BookErrNo`, `ErrLog`...), system instructions
-  (`Load` of a module the backup does not hold, `GetSysData` where only the caller knows the active frame,
+  (`GetSysData` where only the caller knows the active frame,
   `OpMode()`, `ActUnit`...: a TP program reads no system variable on the
   controller measured, where `R[1]=$MNUTOOLNUM[1]` loads but stops the program with VARS-034,
-  [validation](validation.md#43-system-variables-read-by-tp-refused)), world zones (`WZBoxDef`...); what an operator dialog or a
+  [validation](validation.md#43-system-variables-read-by-tp-refused)), tasks meeting or sharing a semaphore
+  (`WaitSyncTask`, `WaitTestAndSet`); what an operator dialog or a
   socket gave (`IF answer=resCancel`); a call to a routine of the backup that writes files or uses sockets
   or byte buffers, itself or through the routines it calls, saying which (`Ask, through SendLine, calls
   SocketSend`), and the `ERROR` handler of such a routine; a byte array handed to a socket or a file (a
   frame); a position a function of the backup gets over a socket (a camera); and calibration functions;
+- world zones, under a cause of their own, "world zone or safety function: set up in DCS on the FANUC" (the
+  checklist lists each zone to set up in DCS); a module `Load` names that the input does not hold, under "module
+  loaded at run time, not in the input" (the analysis lists the files to add); the coordinated motion of several
+  robots (`SyncMoveOn`...), `StopMove`, `StartMove` and `ExitCycle` without `--karel`, under "motion without a
+  TP equivalent";
 - a routine or data no module of the backup declares (a system module, an option, another task), under a
   cause of its own, "routine or data not in the backup", saying what to add, and the conditions on such
   data.
@@ -612,7 +670,8 @@ filtered, and every count of TODO in the page leads to that list. Its menu leads
 - **Summary**: programs ready as is, the TODO by cause (a cause clicked filters the list below), and
   the share of the RAPID converted;
 - **Checklist**: the commissioning, in the order the cell is brought up: load the programs (the KAREL
-  programs first with `--karel`, then the `.LS`, or the `TP` folder), frames and tools with their values, payloads, I/O to map, registers, flags and
+  programs first with `--karel`, then the `.LS`, or the `TP` folder), frames and tools with their values, payloads, the
+  safety and world zones to set up in DCS, I/O to map, registers, flags and
   timers with their initial values, TODO lines to finish by hand, points to touch up, motion to check
   (each zone's CNT, the speeds), other assumptions, and the programs to provide
   ([programs you provide](#programs-you-provide)). It is folded until opened, with its number of
@@ -653,12 +712,19 @@ A large backup produces hundreds of TODO entries that come down to a handful of 
   program, a CrossArm internal error. It needs a solution designed on the FANUC side. Every other cause is
   work to plan, with a known fix the report gives (provide a module, map a signal, write a line by hand,
   redo an error handler or a dialog the FANUC way). "How this is decided" lists the blocking causes found;
+- **the path to workable**, under the decision when it is not ready: the blocking causes to solve (the fewest
+  that bring them down to the 3 allowed, those with the fewest TODO first, each a link to its TODO), the RAPID
+  instructions to convert besides when less than 85 % are (solving those causes counts towards it), and,
+  converted without `--karel`, the decision `--karel` gives when it differs ("With --karel and the KAREL option
+  R632, the conversion is workable"). The window, the one-page summary and `crossarm_summary.json`
+  (`causes_to_workable`, `instructions_to_workable`, `verdict_with_karel`) give it too;
 - **what to do first**: 3 to 7 actions drawn from what is left, each with its detail, the exact number of
   TODO it concerns ("N TODO concerned", leading to them) and who acts: the FANUC integrator, the ABB
   backup (a module to add), a robot option, or "a later CrossArm version may help" (no date is given).
   The cosmetic TODO (operator messages cut or computed) are an action apart. The actions cover the
   resources over the controller's capacity, routines or data missing from the backup (with the
-  `external_routines` candidates), the KAREL programs to load first (with `--karel`; without it, converting
+  `external_routines` candidates), the module files the programs load to add to the input, the safety and world
+  zones to set up in DCS, the KAREL programs to load first (with `--karel`; without it, converting
   again with `--karel` when it would convert TODO), programs to provide, the blocking causes with their programs, error
   handlers to redo the FANUC way (not a CrossArm bug), what TP has no instruction for, then the points to
   touch up again and to touch up;
@@ -677,10 +743,13 @@ for one line or for a whole `IF` block. So the report also counts RAPID instruct
 (motion, I/O, program flow, data, calls, messages, error handling), and gives the share written as
 TP. An instruction inside a block that became a TODO counts as not converted, and so do the routines
 left out; the window shows the overall figure next to the TODO count. What TP has no instruction for
-at all (files, sockets, operator dialogs, world zones...) is a cause of its own, "RAPID instruction
+at all (files, sockets, operator dialogs...) is a cause of its own, "RAPID instruction
 without a TP equivalent": work to redo another way on the FANUC, not a conversion still to come. A
 routine or data that no module of the backup declares is one too, "routine or data not in the backup":
 the backup to complete (a system module, an option, another task), not RAPID CrossArm cannot read.
+World zones and safety functions are one, "world zone or safety function: set up in DCS on the FANUC", not
+blocking: each is set up again and validated on the FANUC. A module loaded from the disk that the input does not
+hold is one too, "module loaded at run time, not in the input": its file to add.
 
 It also compares what the conversion allocated with what the controller holds. Numbers are handed
 out from 1 up with no upper bound, so a large backup can ask for `UTOOL_NUM=19` when a standard
@@ -799,6 +868,12 @@ A mapping file can also be written from scratch, with only the keys you care abo
   number your cell keeps free.
 - `CROSSARM.FOR.<ROUTINE>.L<line>.FROM` / `.TO`, in `registers` (since 1.13), hold a `FOR` bound worked out
   before the loop.
+- `CROSSARM.STOPPED` and `CROSSARM.STOPMOVE.<INTERRUPT>`, in `flags` (since 1.14, with `--karel`): the robot
+  stopped by a `TRAP`, and the input a stopping `TRAP` waits for as last read. `CROSSARM.STANDSTILL`, in
+  `point_registers` (since 1.14): the position register of the zero incremental move `WaitRob \InPos` is
+  written as.
+- `<PROGRAM>.<FUNC>.result`, in `string_registers` (since 1.14): the string register a FUNC giving a text
+  writes its result in, for that calling program, as in `registers` or `point_registers` for a num or a point.
 - A stationary tool used with a work object the robot holds is a user frame (`uframes`), that work object a tool
   frame (`utools`), as the Remote TCP selects them (since 1.13). A file written by 1.12 that numbered them the
   other way keeps those numbers reserved, unused.
@@ -1066,6 +1141,13 @@ the `.LS` format as FANUC controllers and current ROBOGUIDE versions export it. 
 were measured against an IRB 6700 on an M-20iD/25, an R-2000iC/190S and an R-1000iA/80F; other
 models should be checked in ROBOGUIDE.
 
+### What changes when I upgrade to 1.14?
+`StopMove` / `StartMove` and `ExitCycle` convert with `--karel`; `WaitRob \InPos` after a move through a zone is
+a zero incremental FINE move; a routine given a tool by reference that sets its tframe is passed the tool's
+number; a FUNC giving a text is a TP program; world zones and modules loaded from outside the input are TODO under
+causes of their own; the analysis says what stands between not ready and workable. Mapping files and the command
+line keep working. What to do: [upgrading to 1.14](#upgrading-to-114).
+
 ### What changes when I upgrade to 1.13?
 An optional `num`, `bool` or `string` parameter is passed as two arguments; a `FOR` bound is worked out in a
 register of its own; a module loaded and a frame set but never used are remarks; a stationary tool with a work
@@ -1101,7 +1183,8 @@ open-source programs, about 65 %. What is left gives the order of the next steps
 
 1. Values only known at run time, and the conditions on them: what is left of them is spread over
    many forms, each found in few programs.
-2. Calls whose arguments TP cannot take (an optional point, pose or tool, a tool the routine changes).
+2. Calls whose arguments TP cannot take (an optional pose or tool, a tool the routine changes other than in its
+   tframe, a work object the routine changes).
 3. Error handlers (`ERROR`, `RETRY`, `RAISE`) for the errors of the instructions the program calls (those
    it raises itself are converted since 1.10).
 4. Frames and positions measured on the robot (calibration): TP cannot compute a frame. Those computed
@@ -1116,7 +1199,9 @@ actions saying who acts), a one-page summary, the comparison with the previous c
 1.10: the backup's FUNCs as TP programs, the errors the program raises itself, `CrossArm.exe` on the command
 line. Done in 1.12: an `IF`, `WHILE` or `TEST` whose condition TP cannot write keeps its blocks, the condition
 left to the integrator. Done in 1.13: `FOR` bounds worked out at run time, optional arguments, module loads,
-tools built by FUNCs from records, a stationary tool with a work object the robot holds (Remote TCP). Sockets are
+tools built by FUNCs from records, a stationary tool with a work object the robot holds (Remote TCP). Done in 1.14: the motion paused on an input and
+cycles ended from a `TRAP` (with `--karel`), waits for the robot to stand still, calibration routines given the
+tool to set, FUNCs giving a text, and the path from a not ready conversion to a workable one. Sockets are
 not planned: a routine using them can be replaced by a program the integrator writes
 (`external_routines`). Further out: other brands behind the same program model (KUKA KRL, Yaskawa INFORM).
 

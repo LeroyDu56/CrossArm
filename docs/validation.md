@@ -28,7 +28,7 @@ touched up on the robot at commissioning anyway.
 | RAPID instructions converted, our test corpus, written for testing | 87 % to 93 % |
 | Programs of the three RobotWare backups, loaded on a FANUC controller | 130 of 130 |
 | Forms of instruction CrossArm writes, read back from the controller | 234, stored as written |
-| Controller probes, all run again for 1.10.0, the new ones for 1.12.0 and 1.13.0 | 44 of 44 give what was measured |
+| Controller probes, all run again for 1.10.0, the new ones for 1.12.0, 1.13.0 and 1.14.0 | 50 of 50 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE | within 0.004 mm and 0.001° |
 | Path through corners, approaches, retracts, reversals, zigzags | within 4 mm of the ABB's |
 
@@ -48,7 +48,7 @@ it give, for each, how it was measured and the tool that measures it again.
 | RAPID instructions converted, our test corpus, written for testing, without `--karel` and without provided routines | 87 % to 93 % |
 | Every program converted from the three RobotWare backups of the test corpus, loaded on a FANUC controller | 130 of 130 |
 | Every form of instruction CrossArm writes, read back from the controller | stored as written (234 forms) |
-| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1), all run again for 1.10.0, the new ones for 1.12.0 and 1.13.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 44 of 44 give what was measured |
+| The controller probes on ROBOGUIDE (R-1000iA/80F, V10.10) and RobotStudio (IRB 6700, RobotWare 8.1), all run again for 1.10.0, the new ones for 1.12.0, 1.13.0 and 1.14.0 ([which](#11-stored-as-written-and-every-probe-run-again-unattended)) | 50 of 50 give what was measured |
 | Flange pose, RobotStudio against ROBOGUIDE running the converted program | within 0.004 mm and 0.001° |
 | Arm configuration (`confdata` → `CONFIG`) | the controller's own, on three FANUC robots (two edge cases, listed) |
 | Joint moves, converted, against the ABB | −16 % to +19 % in time |
@@ -89,6 +89,12 @@ it give, for each, how it was measured and the tool that measures it again.
 | `FOR` loops whose bounds are worked out at run time, with a `STEP`, or left to the integrator, run on ROBOGUIDE | the turns RAPID makes; a bound left to set, no turn until its jump is replaced |
 | Routines with optional arguments, given or not, passed on, read back, run on ROBOGUIDE | the values RAPID works out |
 | A stationary tool with a work object the robot holds, as the FANUC Remote TCP, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm; the stationary TCP on RAPID's line and circle in the part, within 0.03 mm |
+| With `--karel`: `StopMove` / `StartMove` in the program and in TRAPs on inputs, run on ROBOGUIDE | the robot stopped, then on along the same path within 0.17 mm, the last point at 0.000 mm; the counters RAPID keeps |
+| `WaitRob \InPos` after a move through a zone, as a zero incremental FINE move, run on ROBOGUIDE | the robot on the point before the next line, 0.000 mm (9.3 mm before it without) |
+| With `--karel`: `ExitCycle` in the program and from a TRAP that stopped the robot, run on ROBOGUIDE | the program run again from its first line, the data RAPID keeps, no alarm |
+| With `--karel`: a work object's frame computed from a pose chosen in the branches of an `IF`, run on ROBOGUIDE | the flange where RAPID puts it, within 0.001 mm |
+| A routine given a tool by reference that sets its tframe, a bool by reference, an optional point, run on ROBOGUIDE | the flange where RAPID puts it, 0.000 mm; the values RAPID works out |
+| FUNCs giving a text, as TP programs writing a string register, run on ROBOGUIDE | the texts RAPID works out |
 
 ## Sections
 
@@ -141,6 +147,12 @@ it give, for each, how it was measured and the tool that measures it again.
 47. [FOR loops and their bounds, run](#47-for-loops-and-their-bounds-run)
 48. [Optional arguments, run](#48-optional-arguments-run)
 49. [Stationary tool and held work object (Remote TCP), run](#49-stationary-tool-and-held-work-object-remote-tcp-run)
+50. [StopMove and StartMove, run](#50-stopmove-and-startmove-run)
+51. [WaitRob after a move through a zone, run](#51-waitrob-after-a-move-through-a-zone-run)
+52. [ExitCycle, run](#52-exitcycle-run)
+53. [A frame from a pose chosen in the branches of an IF, run](#53-a-frame-from-a-pose-chosen-in-the-branches-of-an-if-run)
+54. [A tool passed by reference, run](#54-a-tool-passed-by-reference-run)
+55. [FUNCs giving a text, as TP programs, run](#55-funcs-giving-a-text-as-tp-programs-run)
 
 ## 1. The test corpus
 
@@ -152,8 +164,12 @@ tasks), with as much of RAPID and of TP as the controllers offer; since 1.8, als
 modules of calibration routines that compute tools and work objects while the robot runs (calibrated
 part by part, copied, built by FUNCs), since 1.12 one testing the operating mode and operator dialogs, and since
 1.13 modules of loops with computed bounds, module loads, optional arguments, tools built from records and a
-stationary tool with held parts. Without `--karel` and without provided routines, CrossArm converts
-87 %, 93 % and 91 % of the instructions of the three RobotWare backups, and 88 % of the calibration modules. It is checked on the controllers
+stationary tool with held parts, and since 1.14 modules of motion paused on inputs, cycles ended from TRAPs,
+gauges calibrating the tool they are given, world zones, module loads, FUNCs giving texts and tasks working
+together. Without `--karel` and without provided routines, CrossArm converts
+87 %, 93 % and 91 % of the instructions of the three RobotWare backups, and 78 % of the calibration modules
+(since 1.14 they hold world zones, motion paused on inputs and instructions of tasks working together, which
+TP has no form for without `--karel`, or at all). It is checked on the controllers
 themselves: RobotStudio loads every RAPID task, every reference resolved (the World Zones
 instructions aside, an option the virtual controller lacks); the three FANUC backups are what three
 ROBOGUIDE controllers (R-2000iC/190S, ARC Mate 120iD, R-1000iA/80F) hold once their programs are
@@ -384,6 +400,12 @@ the results are read from the virtual controller's `HOME:` folder:
 | `FOR` bounds | the turns RAPID makes, the end copied when the body changes it; a bound left to set, no turn ([section 47](#47-for-loops-and-their-bounds-run)) |
 | optional arguments | the values RAPID works out, given, absent and passed on ([section 48](#48-optional-arguments-run)) |
 | Remote TCP | the flange within 0.001 mm of RAPID; the stationary TCP on the line and the circle; `J ... RTCP` refused ([section 49](#49-stationary-tool-and-held-work-object-remote-tcp-run)) |
+| `StopMove` / `StartMove` (`--karel`) | 4 stops on inputs, the robot on along the same path within 0.17 mm, the counters RAPID keeps ([section 50](#50-stopmove-and-startmove-run)) |
+| `WaitRob \InPos` | the robot on the point, 0.000 mm, in the program and after a call ([section 51](#51-waitrob-after-a-move-through-a-zone-run)) |
+| `ExitCycle` (`--karel`) | 3 cycles, each run again from its first line, the data RAPID keeps ([section 52](#52-exitcycle-run)) |
+| frame from a pose chosen in branches (`--karel`) | 4 moves within 0.001 mm of RAPID ([section 53](#53-a-frame-from-a-pose-chosen-in-the-branches-of-an-if-run)) |
+| tool passed by reference | the flange 0.000 mm from RAPID with two tools; bools and optional points as RAPID ([section 54](#54-a-tool-passed-by-reference-run)) |
+| FUNCs giving a text | 6 texts as RAPID works them out ([section 55](#55-funcs-giving-a-text-as-tp-programs-run)) |
 | ABB probe modules (RobotStudio) | the 16 modules write what RobotStudio measured before, number for number |
 
 For 1.10.0, on 2026-10-12, every probe was run again, in groups of under ten minutes: the 39 on ROBOGUIDE
@@ -396,7 +418,10 @@ For 1.12.0, on 2026-10-13, the new probe (conditions left to the integrator) and
 measured. For 1.13.0, on 2026-10-13, the three new probes (`FOR` bounds, optional arguments, Remote TCP, on the
 R-1000iA/80F with the Remote TCP option added) and those whose forms they use (calls with arguments, conditions,
 frames written part by part, FUNCs copied into their calls and as TP programs, functions the integrator provides,
-poses computed by KAREL, system variables) were run and gave what was measured.
+poses computed by KAREL, system variables) were run and gave what was measured. For 1.14.0, on 2026-10-14, the six
+new probes (`StopMove` / `StartMove`, `WaitRob`, `ExitCycle`, a frame from a pose chosen in branches, a tool passed
+by reference, FUNCs giving a text) were run on the R-1000iA/80F (V10.10, with the KAREL option) and gave what was
+measured.
 
 ## 12. Speeds and zones, measured on both robots
 
@@ -1301,3 +1326,99 @@ Remote TCP option), and on RobotStudio for RAPID's side:
 | `L ... RTCP` | the stationary TCP on RAPID's line in the part, within 0.03 mm (without `RTCP`, 18 mm off it) |
 | `C ... RTCP` | the stationary TCP on RAPID's circle in the part |
 | `L`, `C`, `A` with `RTCP`, CNT, offsets, `TB` | loaded; `J ... RTCP` refused (ASBN-092) |
+
+## 50. StopMove and StartMove, run
+
+With `--karel`, `StopMove` and `StartMove` are calls of CrossArm's KAREL program `CA_STOPMOVE`
+([user guide](guide.md#karel-programs---karel)). Measured first, on ROBOGUIDE (R-1000iA/80F, V10.10, KAREL option):
+in the program moving the robot, KAREL `STOP` stops the motion where the robot is and `RESUME` goes on along the
+same path to the same point (`HOLD` / `UNHOLD` there leaves the next move blocked); from a program without a motion
+group, as a TRAP is, `HOLD` stops the robot but `UNHOLD` and `RESUME` are refused (PROG-040), while pausing the task
+that holds the robot and continuing it resumes at the same place (0.000 mm), when the TRAP's program ignores pause
+requests (`PAUSE_REQUEST = 2`). No condition monitor fires while its program is paused, nor afterwards for an edge
+met meanwhile: a TRAP leaving the robot stopped waits itself for the input of the TRAP that starts it again.
+
+[tools/make_stopmove_probe.py](../tools/make_stopmove_probe.py) converts a TRAP stopping the robot on an input, one
+starting it again, a TRAP on any change of an input, and a stop and start in line after a CNT move, the inputs
+switched through the controller's COM interface while the robot moves. On ROBOGUIDE:
+
+| Check | ROBOGUIDE |
+|---|---|
+| 4 stops (a TRAP, in line, a TRAP waiting for another, a TRAP on any change) | the robot stopped 1.4 s to 2.1 s, then on along the same path within 0.17 mm, the last point at 0.000 mm |
+| counters the TRAPs and the program keep | the values RAPID computes |
+| `F[n]=(ON)`, `F[n]=(DI[k])`, `IF (F[n]=OFF),JMP LBL[x]` | loaded and run; `F[n]=ON` and `IF F[n]=OFF,JMP` refused in these programs (ASBN-092) |
+
+## 51. WaitRob after a move through a zone, run
+
+TP runs the line after a move through a zone before the robot is on the point: after `L P[1] 100mm/sec CNT100`,
+9.3 mm before it, also when the move is the last of a program called. A TP program reading whether the robot moves
+(`$MOR_GRP[1].$ROB_MOVE`) loads but stops on the line (VARS-034). `WaitRob \InPos` (or `\ZeroSpeed`) there is written
+`PR[k]=LPOS`, `PR[k]=PR[k]-PR[k]`, `L PR[k] 100mm/sec FINE INC` ([user guide](guide.md#what-is-converted)).
+
+[tools/make_waitrob_probe.py](../tools/make_waitrob_probe.py) converts moves through a zone followed by a `WaitRob`, in
+the program and after a call, and reads the robot's position on the next line. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| the line after the zero incremental FINE move | the robot on the point, 0.000 mm, in the program and after a `CALL` |
+| the robot already standing still | nothing moves (`L` and `J` alike) |
+
+## 52. ExitCycle, run
+
+With `--karel`, `ExitCycle` is `CALL CA_EXITCYCLE(1)` ([user guide](guide.md#karel-programs---karel)). Measured first,
+on ROBOGUIDE (R-1000iA/80F, V10.10, KAREL option): a KAREL program aborting the task that holds the robot from a TRAP
+dies with it, nothing runs again; started as a task of its own, it aborts that task and runs it again from its first
+line, from the program and from a TRAP, the caller never running its next line. A task aborted while paused and run
+again at once stays aborted: CrossArm's program waits 100 ms first.
+
+[tools/make_exitcycle_probe.py](../tools/make_exitcycle_probe.py) converts a TRAP on an input that stops the robot,
+clears its path and ends the cycle, then an `ExitCycle` in line, over three cycles:
+
+| Check | ROBOGUIDE |
+|---|---|
+| each cycle | run again from its first line, the robot stopped where the input switched |
+| counters kept from one cycle to the next | the values RAPID keeps; no alarm |
+
+## 53. A frame from a pose chosen in the branches of an IF, run
+
+With `--karel`, a pose set in the branches of an `IF` is kept in one position register every branch writes,
+`p.rot := OrientZYX(z, y, x)` as its W, P, R (`PR[k,4]=x`, `PR[k,5]=y`, `PR[k,6]=z`), and a work object's frame
+computed from it by `CA_POSEMULT`, then copied to another work object ([user guide](guide.md#karel-programs---karel)).
+
+[tools/make_branch_frame_probe.py](../tools/make_branch_frame_probe.py) converts a routine choosing the pose by side,
+called for side A, then side B turned 90°, with moves in both work objects. On ROBOGUIDE (R-1000iA/80F, V10.10, KAREL
+option):
+
+| Check | ROBOGUIDE |
+|---|---|
+| 4 moves in the frames computed and copied | within 0.001 mm and 0.000° of RAPID's computation, worked out independently |
+
+## 54. A tool passed by reference, run
+
+A routine given a tool by reference (`INOUT tooldata`) that sets its tframe is passed the tool's number and writes
+the robot's tool frame; a `bool` passed by reference it sets is copied to a register and read back; an optional
+robtarget is passed as whether the call gives it, then the point ([user guide](guide.md#what-is-converted)).
+
+[tools/make_tool_arg_probe.py](../tools/make_tool_arg_probe.py) converts a routine setting the length of the tool it
+is given, called for two tools, a routine setting a bool by reference, an optional point given and not, and points
+put together from the x, y, z of one and the orientation of another. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| `PR[k]=UTOOL[AR[1]]`, `PR[k,3]=AR[2]`, `UTOOL[AR[1]]=PR[k]` in the routine, then a move with each tool | the flange 0.000 mm and 0.000° from RAPID's computation |
+| a bool by reference (`IF (F[n]=ON) THEN R[k]=1 ELSE R[k]=0 ENDIF`, read back `F[n]=(R[k]=1)`) | the values RAPID works out |
+| an optional point; `PR[k,1..3]=PR[a,1..3]`, `PR[k,4..6]=PR[b,4..6]` | on the point; exact |
+
+## 55. FUNCs giving a text, as TP programs, run
+
+A FUNC of the backup giving a text known at run time only is a TP program writing its text in `SR[AR[n]]`, the caller
+reading that string register ([user guide](guide.md#what-is-converted)).
+
+[tools/make_func_text_probe.py](../tools/make_func_text_probe.py) converts FUNCs padding a number with zeros and
+putting a code together, one given as the argument of another, an empty text as an argument and a FUNC returning
+early. On ROBOGUIDE (R-1000iA/80F, V10.10):
+
+| Check | ROBOGUIDE |
+|---|---|
+| `CALL F(SR[a],5,1,'0',k)`, `SR[AR[n]]=SR[m]`, `SR[AR[n]]=AR[1]`, the caller reading `SR[k]` | 6 texts as RAPID works them out |
+| a string register doubled (`SR[n]=SR[n]+SR[n]`) | 152 characters held; 304 stop the program (INTP-323); RAPID's texts are 80 at most |

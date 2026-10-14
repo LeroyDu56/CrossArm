@@ -3,7 +3,25 @@
 All notable changes to CrossArm, the ABB RAPID to FANUC TP converter. Dates are release dates;
 downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/releases).
 
-## Unreleased
+## 1.14.0 — 2026-10-14
+
+Patterns typical of large industrial cells: the motion paused and resumed on an input, cycles ended from a TRAP,
+waits for the robot to stand still, calibration routines given the tool to set, FUNCs giving a text, and what
+stands between a "not ready" conversion and a workable one. Share of instructions converted: the test corpus at
+87 %, 93 % and 91 % (78 % for the calibration modules, which gained modules of world zones, motion paused on
+inputs and other instructions TP has no form for); public open-source programs, about 65 %.
+
+**Upgrading:** StopMove / StartMove and ExitCycle convert with `--karel` only (the KAREL option R632 on a real
+robot); without it they stay TODO, now under "motion without a TP equivalent". World zones are TODO under a cause
+of their own, "world zone or safety function: set up in DCS on the FANUC" (before: "RAPID instruction without a TP
+equivalent"); a module Load names that the input does not hold, under "module loaded at run time, not in the
+input" (before: "routine or data not in the backup" or "value not known at conversion time"); SyncMoveOn & co
+under "motion without a TP equivalent", WaitSyncTask / WaitTestAndSet under "RAPID instruction without a TP
+equivalent" (before: "routine call with arguments"). A routine given a tool by reference that sets its tframe is
+passed the tool's number: a program of your own calling it passes the number. The mapping file gains the keys
+`CROSSARM.STOPPED`, `CROSSARM.STOPMOVE.<INTERRUPT>` (in `flags`), `CROSSARM.STANDSTILL` (in `point_registers`) and
+`<PROGRAM>.<FUNC>.result` (in `string_registers`); no key is removed or redefined. Diagnostic schema 4 (keys
+added). **The number of TODO of a program can go up**: routines once left out are converted and show their own.
 
 - StopMove / StartMove convert with `--karel`, through CrossArm's new KAREL program `CA_STOPMOVE`. In the program
   moving the robot: KAREL STOP / RESUME, when the same routine starts the motion again before its next move. In a

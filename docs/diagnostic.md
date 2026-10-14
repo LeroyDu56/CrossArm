@@ -33,7 +33,7 @@ RAPID's own vocabulary (public, from ABB's manuals), ABB option names and CrossA
 | `crossarm`, `environment` | CrossArm version; operating system family and release; Python version; whether CrossArm.exe ran; the day (never the time) |
 | `input` | input kind (backup / files); counts of tasks, program and system modules, PROC / FUNC / TRAP, lines, files not read, syntax errors; which options were given (mapping file, EIO.cfg, FANUC programs, --karel), as yes / no |
 | `system` | RobotWare version, ABB options with their ABB code (`616-1 PC Interface`), robot models (`IRB 1600-10/1.45`), read from BACKINFO/backinfo.txt and system.xml; anything else in those files (system name, serial number, paths, an option without its ABB code) is only counted, in `other_product_lines` |
-| `conversion` | programs, TODO, warnings; instructions and the share converted, overall and by area; the TODO on an instruction and the TODO not on one (`todo_on_instructions`, `todo_not_on_an_instruction`); the instructions in no program, by reason (`not_converted_by`); TODO and warnings by cause (the causes of the report; any other is `other (cause not listed)`); per task, named `task_1`, `task_2`... (never the task's name): modules, routines, programs, instructions, share converted, TODO, warnings, verdict |
+| `conversion` | programs, TODO, warnings; instructions and the share converted, overall and by area; the TODO on an instruction and the TODO not on one (`todo_on_instructions`, `todo_not_on_an_instruction`); the instructions in no program, by reason (`not_converted_by`); TODO and warnings by cause (the causes of the report; any other is `other (cause not listed)`); per task, named `task_1`, `task_2`... (never the task's name): modules, routines, programs, instructions, share converted, TODO, warnings, verdict; since schema 4, the blocking causes, those to solve for a workable verdict, the instructions to convert besides, the verdict with `--karel` when it differs, and how many module files the programs load that the input does not hold (counts only) |
 | `instructions`, `functions` | RAPID's own instructions and functions by name (`MOVEL`, `OFFS`), plus `assignment` and the blocks (`IF`, `FOR`...): uses, and of those uses how many were converted, converted with a warning on their line (`partial`), left TODO, inside a statement left TODO (`inside_todo`), in no program (`not_converted`, and why: `not_converted_by`) |
 | `user_calls` | calls of the backup's own routines, never by name: `user_proc(num,robtarget,\switch)`, `user_func(num)->bool`, the parameters reduced to their types; calls of routines the backup does not hold: `missing_proc/2` (argument count only) |
 | `data_types`, `records`, `aliases` | declarations by type and storage (`robtarget`: CONST 4, VAR 1, arrays...): RAPID's types by name, the backup's records as `record_1`, `record_2`... with the types of their fields, any other type as `user_type`; the number of ALIAS types |
@@ -71,7 +71,17 @@ of the backup by chance, so the test checks numbers in the report's text, not in
 
 ## Schema
 
-`schema_version` is 3 (CrossArm 1.12.0). A later version adds keys, never removes one, as for `crossarm_summary.json`.
+`schema_version` is 4 (CrossArm 1.14.0). A later version adds keys, never removes one, as for `crossarm_summary.json`.
+
+- 4 adds, to `conversion` and to each task: `blocking_causes` (the blocking causes of the verdict, each with its
+  TODO, by the cause's name), `causes_to_workable` (the blocking causes to solve for a workable verdict, the fewest
+  that bring them down to the 3 allowed, those with the fewest TODO first, as the report's "Path to workable"),
+  `instructions_to_workable` (the RAPID instructions to convert besides, 0 when 85 % are), `verdict_with_karel`
+  (the verdict a conversion with `--karel` gives when it differs, else null), `loaded_modules_missing` (the module
+  files `Load` / `StartLoad` name that the input does not hold) and `loaded_modules_named_at_run_time` (the loads
+  naming their file at run time): counts and fixed names only, never a module's name or path. `conversion` also
+  gains `verdict`, every task counted together, as the window gives it. Nothing else changes: a tool reading
+  version 3 reads version 4 as is.
 
 - 3 tells apart the FUNCs not written as a program: the reason `FUNC computed or inlined` of version 2 is now one of
   `FUNC computed at conversion`, `FUNC inlined`, `FUNC left TODO at its calls`, `FUNC never called`. Nothing else
@@ -92,8 +102,8 @@ same, as keys and numbers):
 
 Counts only: no name, comment, text, number or path of the backup is in this report or in crossarm_diag.json.
 
-- Schema version: 3
-- CrossArm 1.12.0, Python 3.14.6, Windows 11, 2026-10-13
+- Schema version: 4
+- CrossArm 1.14.0, Python 3.14.6, Windows 11, 2026-10-14
 - Input: files, 1 task(s), 1 program module(s), 0 system module(s), 76 lines
 - Routines: 3 PROC, 1 FUNC, 0 TRAP
 - Files not read: 0, syntax errors: 0
@@ -112,6 +122,7 @@ Counts only: no name, comment, text, number or path of the backup is in this rep
 - Instructions: 27, converted: 85.1 %
 - TODO on an instruction: 3, not on an instruction: 0
 - Instructions in no program: FUNC never called 1
+- Verdict: workable, blocking causes: none
 
 | Area | Converted |
 |---|---|
