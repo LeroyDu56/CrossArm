@@ -144,3 +144,21 @@ def test_an_oframe_changed_after_the_uframe_was_set_at_run_time():
     found = found[: next(i for i, line in enumerate(found) if line.startswith("UFRAME[1]=")) + 1]
     assert re.fullmatch(rf"{REG}=UFRAME\[1\]", found[0])
     assert any(line.startswith("CALL CA_POSEMULT") for line in found)
+
+def test_a_point_given_the_trans_of_a_tool_computed_at_run_time_reads_it_back_from_utool():
+    result = conversion("tPen.tframe.trans.z:=pM1.trans.z-380;\n    pM1.trans:=tPen.tframe.trans;")
+    assert not todo(result)
+    found = lines(result)
+    point = next(x for x in found if x.endswith("=LPOS")).split("=")[0][:-1]
+    read = _after(found, "l.11")[3:7]
+    assert re.fullmatch(rf"{REG}=UTOOL\[2\]", read[0])  # the tool frame the line before loaded, read back
+    work = read[0].split("=")[0][:-1]
+    assert read[1:] == [f"{point},{i}]={work},{i}]" for i in (1, 2, 3)]
+
+
+def test_a_point_given_the_trans_of_a_tool_known_now_gets_its_values():
+    result = conversion("pM1.trans:=tPen.tframe.trans;")
+    assert not todo(result)
+    found = lines(result)
+    assert not any("=UTOOL[" in line for line in found)
+    assert any(re.fullmatch(r"PR\[\d+,1\]=10", line) for line in found)  # x of tPen's tframe

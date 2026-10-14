@@ -230,6 +230,31 @@ class RuntimePoints:
                                  Blocker.RUNTIME_POSITION)  # fmt: skip
         return f"{self.c.point_register(key)[:-1]},{axis}]"
 
+    def _trans_of_frame(self, value: n.Expr, register: str) -> bool:
+        """`p.trans := tGun.tframe.trans` (or a work object's uframe), the frame computed at run time and kept by
+        the robot in UTOOL / UFRAME: read back into a scratch position register (`PR[s]=UTOOL[n]`, framefield and
+        toolarg probes), its x, y, z copied (`PR[k,i]=PR[s,i]`). False when it is no such frame, or one known now
+        (worked out as any value)."""
+        from crossarm.convert.frame_writes import SCRATCH, identity
+
+        if not (isinstance(value, n.Component) and value.field.upper() == "TRANS"):
+            return False
+        found = self.frame_kind(value.base)  # type: ignore[attr-defined]
+        if found is None:
+            return False
+        kind, key = found
+        try:
+            known, other = self.frame_now(kind, key, value.span)  # type: ignore[attr-defined]
+        except Untranslatable:
+            return False  # not kept by the robot: said by the x, y, z, as before
+        if known is not None or not identity(other):  # known: worked out; an oframe: UFRAME is uframe x oframe
+            return False
+        scratch = self.c.point_register(f"{SCRATCH}1")
+        self.frame_into(scratch, kind, key, value.span, None, None)  # type: ignore[attr-defined]
+        for i in (1, 2, 3):
+            self.emit(f"{register[:-1]},{i}]={scratch[:-1]},{i}]")
+        return True
+
     def runtime_assign(self, a: n.Assign, key: str, path: tuple[str, ...]) -> None:
         """A point worked out at run time, in its position register PR[k]: a value known now (PR[k]=P[j]); a copy of
         another one, Offs() of it (component by component); RelTool() of one whose orientation is known now
@@ -246,6 +271,8 @@ class RuntimePoints:
             return
         if path[1:] == ("TRANS",):  # p.trans := q.trans: x, y, z one by one
             self.runtime_set(name)
+            if self._trans_of_frame(a.value, register):
+                return
             try:
                 parts = [self.arithmetic(_axis(a.value, i)) for i in range(3)]
             except (Untranslatable, Unresolvable) as exc:

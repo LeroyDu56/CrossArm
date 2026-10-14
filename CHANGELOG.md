@@ -82,6 +82,10 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   side by case alone. A FUNC called after a text was worked out in a scratch string register of the same line stays
   TODO, saying so. TPWrite of its text still shows the fixed part only. The mapping file names its result registers
   `<PROGRAM>.<FUNC>.result` among the string registers; no key is removed or redefined.
+- A point given the x, y, z of a tool or work object frame computed at run time (`p.trans := tHead.tframe.trans`)
+  converts when the robot holds that frame (every change of it converted, a move selecting it): the frame is read back
+  from UTOOL / UFRAME into a position register and its x, y, z copied (`PR[k,i]=PR[s,i]`), forms already measured. A
+  work object with an oframe, or a frame a statement left TODO may have changed, stays TODO as before.
 
 ## 1.13.0 — 2026-10-13
 
