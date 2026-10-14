@@ -4320,6 +4320,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             raise Untranslatable(f"TP compares texts regardless of case ('A' = 'a'), RAPID does not: "
                                  f"'{format_expr(expr.left)}' and '{format_expr(expr.right)}' can differ by case "
                                  "alone", Blocker.CONDITION)  # fmt: skip
+        self.func_first(expr)  # the FUNCs it calls as programs, before any scratch register is worked out
         first = self.text_source(expr.left, (1, 2))
         second = self.text_source(expr.right, (2,) if first in self.c.scratch_texts else (1, 2))
         if first.startswith("AR[") and second.startswith("AR["):  # measured with a string register first
@@ -4378,6 +4379,12 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                                  " would be shared by the calls under way", Blocker.TEXT)  # fmt: skip
         return self.c.string_register(decl.name, key=f"{self.name}.{decl.name}")
 
+    def _func_text_call(self, expr: n.Expr) -> bool:
+        """A call to a FUNC of the backup giving a text, written as a program, whose text is not known now."""
+        if not (isinstance(expr, n.FuncCall) and self.c.func_layouts.get(expr.name.upper(), (None, ""))[1] == "string"):
+            return False
+        return self.fixed_text(expr) is None
+
     def text_scratch(self, slot: int) -> str:
         self.text_slots.add(slot)
         return self.c.text_scratch(slot, self.routine.kind == "TRAP" or self.routine.name.upper() in self.c.trap_side)
@@ -4388,6 +4395,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         found = self.text_register(expr)
         if found is not None:
             return found
+        if self._func_text_call(expr):
+            self.func_first(expr)
+            return self.func_text(expr)  # type: ignore[return-value]  # its own result register (func_programs)
         if not free:
             raise Untranslatable(f"'{format_expr(expr)}': more texts worked out in one instruction than TP has"
                                  " scratch string registers for", Blocker.TEXT)  # fmt: skip
@@ -4404,6 +4414,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
     def load_text(self, expr: n.Expr, into: str, free: tuple[int, ...]) -> None:
         """Lines setting the string register `into` (SR[n:...]) to the text of `expr`; scratch registers from
         `free` for what is worked out on the way."""
+        self.func_first(expr)  # the FUNCs it calls as programs, before any scratch register is worked out
         fixed = self.fixed_text(expr)
         if fixed is not None:
             self.load_literal(fixed, into, expr)
@@ -4435,6 +4446,10 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 self.text_function(expr, into, free)  # type: ignore[arg-type]
                 return
             case n.FuncCall(name=fn):
+                if (result := self.func_text(expr)) is not None:  # a FUNC written as a program (func_programs)
+                    if result != into:
+                        self.emit(f"{into}={result}")
+                    return
                 raise Untranslatable(f"text '{format_expr(expr)}' is given by {fn}, a function of the backup: a TP"
                                      " program returns no value, the function's text is written only when it is"
                                      " known at conversion time", Blocker.VALUE)  # fmt: skip

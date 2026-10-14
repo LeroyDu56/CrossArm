@@ -1139,11 +1139,12 @@ def test_an_error_handler_for_other_errors_or_in_a_routine_without_files_or_sock
     assert [n.category for n in found] == ["RAPID error handler"]
 
 
-def test_a_text_a_function_of_the_backup_gives_is_said_so():
+def test_a_text_a_function_of_the_backup_gives_is_its_program_s_string_register():
     result = run("sName:=Label(nKind);", "VAR string sName;\nVAR num nKind;", extra_procs=SOCKETS)
-    found = [n for n in result.notes if n.kind == "TODO"]
-    assert [n.category for n in found] == [Blocker.VALUE]
-    assert "is given by Label, a function of the backup: a TP program returns no value" in found[0].message
+    assert not [n for n in result.notes if n.kind == "TODO"]
+    main = next(i for i in result.programs if i.program.name == "MAIN")
+    texts = [getattr(line, "text", "") for line in main.program.lines]
+    assert texts[1:] == ["CALL LABEL(R[200],2)", "SR[1]=SR[2]"]  # convert.func_programs
 
 
 def test_an_element_of_an_array_of_texts_is_said_so():

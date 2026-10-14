@@ -73,6 +73,15 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   in the backup", or "value not known at conversion time"). The analysis lists the files to add to the input, as
   the RAPID names them, then convert again. Diagnostic schema 4 gains `loaded_modules_missing` and
   `loaded_modules_named_at_run_time` (counts only, in `conversion` and each task).
+- A FUNC of the backup giving a text known at run time only (a label padded with zeros, a code put together from
+  counters...) is written as a TP program, as the FUNCs giving a num, a bool or a robtarget: `CALL F(args,k)` just
+  before the line, the FUNC's program writing its text in `SR[AR[n]]` (`SR[AR[n]]=SR[m]`). Its text can be put
+  together with others, compared, passed on, given to another FUNC. Measured on ROBOGUIDE (probe `functext`); a string
+  register took a text of 152 characters, and doubling it to 304 stopped the program (INTP-323). A text comparison reading one is converted
+  when what the FUNC can give back (its RETURNs, its parameters as the call gives them) cannot differ from the other
+  side by case alone. A FUNC called after a text was worked out in a scratch string register of the same line stays
+  TODO, saying so. TPWrite of its text still shows the fixed part only. The mapping file names its result registers
+  `<PROGRAM>.<FUNC>.result` among the string registers; no key is removed or redefined.
 
 ## 1.13.0 — 2026-10-13
 

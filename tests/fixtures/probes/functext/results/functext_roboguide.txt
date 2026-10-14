@@ -1,0 +1,19 @@
+CA_TEXT_load loaded
+FTJOIN_load loaded
+FTLIMIT_load loaded
+FTPAD_load loaded
+FTPROBE_load loaded
+FTREPEAT_load loaded
+run done
+limit_run aborted: INTP-323 (FTLIMIT, 6) Value overflow
+ftDone 1
+ftHits 1111
+ftLen4 3
+ftLen3 78
+ftLen2 13
+ftLen1 5
+R150 76
+R151 152
+R152 0
+R153 0
+R154 0

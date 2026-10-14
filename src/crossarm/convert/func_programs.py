@@ -18,7 +18,8 @@ others gave a TODO at each call. A FUNC returning a num, a bool or a robtarget i
     pCell := GetCell(row, col);
 
 Its parameters are passed as any routine's (crossarm.convert.arguments), and one argument more, last: the number of
-the register its result goes in, R[AR[n]] for a num or a bool (1 TRUE, 0 FALSE), PR[AR[n]] for a robtarget, as
+the register its result goes in, R[AR[n]] for a num or a bool (1 TRUE, 0 FALSE), PR[AR[n]] for a robtarget,
+SR[AR[n]] for a string (tools/make_func_text_probe.py: called before any scratch string register of the line), as
 measured for the programs an integrator provides (tools/make_func_result_probe.py) and for the converted FUNCs
 themselves (tools/make_func_body_probe.py). Each RETURN writes it, then ENDs the program (back to the caller). The
 caller makes the CALL just before the line that reads the value: an assignment, a condition (IF, ELSEIF, a WHILE
@@ -44,8 +45,9 @@ from crossarm.rapid import nodes as n
 if TYPE_CHECKING:
     from crossarm.convert.translate import Converter
 
-# What a FUNC returns -> where its result is kept: a number register (num, bool as 1/0) or a position register.
-RETURNS = {"num": "num", "dnum": "num", "bool": "bool", "robtarget": "robtarget"}
+# What a FUNC returns -> where its result is kept: a number register (num, bool as 1/0), a position register, or
+# a string register (a text it puts together: SR[AR[n]]=SR[k], measured by tools/make_func_text_probe.py).
+RETURNS = {"num": "num", "dnum": "num", "bool": "bool", "robtarget": "robtarget", "string": "string"}
 
 
 def func_layouts(modules: Iterable[n.Module], records: Mapping[str, tuple[tuple[str, str], ...]],
@@ -64,7 +66,7 @@ def func_layouts(modules: Iterable[n.Module], records: Mapping[str, tuple[tuple[
             kind = RETURNS.get((routine.return_type or "").lower())
             if kind is None:
                 why[key] = (f"it returns a {routine.return_type}: a FUNC is written as a program when it returns a num,"
-                            " a bool or a robtarget")  # fmt: skip
+                            " a bool, a string or a robtarget")  # fmt: skip
                 continue
             if key in recursive:
                 why[key] = ("it calls itself back: its result register and its data would be shared by every call under"
@@ -150,6 +152,11 @@ class FuncPrograms:
             raise Untranslatable(f"{expr.name}() is written as a program only when its whole body converts, and"
                                  f" {trouble[0]}", trouble[1])  # fmt: skip
         layout, kind = entry
+        if kind == "string" and getattr(self, "text_slots", None):
+            # the scratch string registers are shared by every program: its own text work would write over them
+            raise Untranslatable(f"{expr.name}() is a FUNC giving a text, written as a program: called after the line"
+                                 " worked a text out in a scratch string register its program may use too",
+                                 Blocker.TEXT)  # fmt: skip
         name = self.c.func_program(expr.name.upper())
         self.c.func_called.append((expr.name.upper(), self.name, expr.span.line))  # type: ignore[attr-defined]
         same = sum(1 for node in self.func_nodes if node.name.upper() == expr.name.upper())
@@ -158,11 +165,17 @@ class FuncPrograms:
         if kind == "robtarget":
             register = self.c.point_register(key)
             number = register[3:-1]  # {PA:KEY}, numbered with the other position registers
+        elif kind == "string":
+            register = self.c.string_register(RESULT, key=key)
+            number = register[3:-1]
         else:
             register = self.c.written_register(RESULT, key=key)
             number = register[2 : register.index(":")]
         call = n.ProcCall(expr.span, expr.name, expr.args)
+        live = set(getattr(self, "text_slots", ()))
         self.call_with_args(call, layout, result=number)  # type: ignore[attr-defined]
+        if kind == "string":  # the texts its arguments were worked out in are passed as copies: free again
+            self.text_slots = live  # type: ignore[attr-defined]
         self.provided_results[id(expr)] = (register, kind)  # type: ignore[attr-defined]
         self.func_nodes.append(expr)  # kept alive: its id stays its own while the statement is written
         self.forget((call,), Unknown(f"may be changed by {expr.name}() at l.{expr.span.line}"))  # type: ignore[attr-defined]
@@ -181,6 +194,19 @@ class FuncPrograms:
             return None
         if found[1] != "num":
             raise Untranslatable(f"{expr.name}() gives back a {found[1]}, not a number", Blocker.VALUE)  # type: ignore[attr-defined]
+        return found[0]
+
+    def func_text(self, expr: n.Expr) -> str | None:
+        """SR[k] of a FUNC giving a text called as a program; None when the expression is no call to a FUNC of the
+        backup written as one (a FUNC that is not: Untranslatable, saying why)."""
+        if not isinstance(expr, n.FuncCall):
+            return None
+        found = self.func_result(expr)
+        if found is None:
+            self.func_excluded(expr)
+            return None
+        if found[1] != "string":
+            raise Untranslatable(f"{expr.name}() gives back a {found[1]}, not a text", Blocker.VALUE)
         return found[0]
 
     def func_point(self, expr: n.Expr) -> str | None:
@@ -204,6 +230,10 @@ class FuncPrograms:
         assert value is not None
         if kind == "num":
             self.emit(f"R[{ar}]={self.arithmetic(value)}")  # type: ignore[attr-defined]
+        elif kind == "string":
+            self.func_first(value)
+            source = self.text_source(value, (1, 2))  # type: ignore[attr-defined]
+            self.emit(f"SR[{ar}]={source}")  # type: ignore[attr-defined]
         elif kind == "bool":
             source = self.fold_texts(self.simplify(value))  # type: ignore[attr-defined]
             if isinstance(source, n.Bool):

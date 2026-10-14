@@ -87,6 +87,9 @@ probe, everything else in local/logs/probe_all.log):
     funcbody     FUNCs of the backup known at run time only, written by CrossArm as TP programs: num, bool (1 / 0),
                  robtarget results in R[AR[n]] / PR[AR[n]], RETURN inside an IF (END), called in an IF, ELSEIF, WHILE
                  test, a move, a FUNC calling a FUNC: twelve values as RAPID works them out
+    functext     FUNCs of the backup giving a text known at run time only, written as TP programs whose result
+                 is SR[AR[n]]: padding loop, optional text, FUNCs in a FUNC's arguments, compared; six values as
+                 RAPID; a string register doubled from 152 to 304 characters stops the program (INTP-323)
     raise        errors the program raises itself (RAISE of its own errnum) as a register set before END and tested
                  after the CALL, the caller's handler written there: RETRY (at most 4, then ABORT), TRYNEXT, RETURN,
                  RAISE up two levels, ERRNO: eight values as RAPID works them out
@@ -144,6 +147,7 @@ import make_frame_field_probe
 import make_func_body_probe
 import make_func_inline_probe
 import make_func_result_probe
+import make_func_text_probe
 import make_interrupt_probe
 import make_io_probe
 import make_joint_probe
@@ -553,6 +557,14 @@ def probe_funcinline() -> str:
     return f"FAIL {problem}" if problem else make_func_inline_probe.summary(make_func_inline_probe.stored())
 
 
+def probe_functext() -> str:
+    try:
+        problem = make_func_text_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_func_text_probe.summary(make_func_text_probe.stored())
+
+
 def probe_funcbody() -> str:
     try:
         problem = make_func_body_probe.run()  # stores the result, as the probe's own run does
@@ -700,7 +712,7 @@ GROUPS: dict[str, dict[str, float]] = {
              "forbound": 50},
     "timing": {"movedo": 72, "timeflag": 12, "speedargs": 132, "search": 250, "io": 20},
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
-              "sysvars": 60, "optargs": 45},
+              "sysvars": 60, "optargs": 45, "functext": 50},
     "library": {"karel": 140, "karelpose": 136, "karelfile": 120, "stopmove": 87, "exitcycle": 55},
     "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150, "branchframe": 90, "toolarg": 40},
     "robotstudio": {"abb": 74},
@@ -732,7 +744,7 @@ def main() -> int:
               "external": probe_external, "taught": probe_taught,
               "pallet": probe_pallet, "maketp": probe_maketp, "karel": probe_karel, "karelpose": probe_karelpose,
               "karelfile": probe_karelfile, "stopmove": probe_stopmove, "framefield": probe_framefield,
-              "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
+              "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "functext": probe_functext, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
               "optargs": probe_optargs, "rtcp": probe_rtcp, "waitrob": probe_waitrob, "exitcycle": probe_exitcycle, "branchframe": probe_branchframe,
               "toolarg": probe_toolarg, "abb": probe_abb}  # fmt: skip

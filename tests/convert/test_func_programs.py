@@ -141,3 +141,71 @@ def test_the_reports_name_the_func_programs_and_those_left_todo():
     assert action.todo == 1 and "`Ask()` (1 TODO)" in action.detail
     page = build_html_report(result, ConversionConfig(), ["m.mod"], title="t")
     assert "1 FUNC program call" in page and "CALL GAP</code>" in page and "1 FUNC of the backup written" in page
+
+
+TEXT_FUNCS = FUNCS + """    FUNC string Padded(string text,num width,\\string Fill)
+        VAR string out;
+        VAR string pad:=" ";
+        IF Present(Fill) pad:=Fill;
+        out:=text;
+        FOR i FROM StrLen(text) TO width-1 DO
+            out:=pad+out;
+        ENDFOR
+        RETURN out;
+    ENDFUNC
+    FUNC string Joined(string a,string b)
+        RETURN a+"-"+b;
+    ENDFUNC
+"""
+TEXT_DATA = DATA + "    VAR string sCode;\n    VAR string sTag;\n"
+
+
+def test_a_text_func_writes_its_result_in_the_string_register_the_caller_names():
+    body = LOOP.format('            sCode:=Padded(NumToStr(r,0),4\\Fill:="0");\n'
+                       '            IF sCode="0002" nCount:=nCount+1;')
+    result = run(body, TEXT_FUNCS, TEXT_DATA)
+    assert not todos(result)
+    main = lines(result)
+    call = next(text for text in main if text.startswith("CALL PADDED("))
+    k = call.rstrip(")").split(",")[-1]
+    assert call.startswith("CALL PADDED(SR[") and ",4,1,'0'," in call
+    assert main[main.index(call) + 1].endswith(f"=SR[{k}]")  # read back by the caller
+    assert lines(result, "PADDED")[-1].startswith("SR[AR[5]]=SR[")  # the result, last argument
+
+
+def test_text_funcs_put_together_and_given_to_a_text_func():
+    result = run('        sTag:="#"+Padded(sCode,3)+Joined(sCode,"9");\n        sTag:=Joined(Joined(sTag,sCode),sCode);',
+                 TEXT_FUNCS, TEXT_DATA)  # fmt: skip
+    assert not todos(result)
+    main = lines(result)
+    assert [t.split("(")[0] for t in main if t.startswith("CALL ") and "CA_TEXT" not in t] == [
+        "CALL PADDED", "CALL JOINED", "CALL JOINED", "CALL JOINED"]  # fmt: skip
+    first_join = next(i for i, t in enumerate(main) if t.startswith("CALL JOINED"))
+    assert first_join < main.index("CALL CA_TEXT(1,'#',0)")  # both FUNCs called before the text is put together
+    assert main[-2:] == ["CALL JOINED(SR[3],SR[25],3)", "SR[1]=SR[3]"]  # inner result given to the outer call
+    assert lines(result, "JOINED")[-1] == "SR[AR[3]]=SR[25]"
+
+
+def test_a_text_func_compared_is_called_before_the_other_side_is_worked_out():
+    result = run('        IF sCode+"1"=Joined(sCode,"2") nCount:=1;', TEXT_FUNCS, TEXT_DATA)
+    assert not todos(result)
+    main = lines(result)
+    call = next(i for i, t in enumerate(main) if t.startswith("CALL JOINED("))
+    other = next(i for i, t in enumerate(main) if t.startswith("CALL CA_TEXT(") and ",'1'," in t)
+    assert call < other < next(i for i, t in enumerate(main) if t.startswith("IF SR["))
+
+
+def test_a_text_func_after_a_text_worked_out_in_a_scratch_register_stays_todo():
+    procs = "    PROC Show(string a,string b)\n        nCount:=StrLen(a)+StrLen(b);\n    ENDPROC\n"
+    result = run('        Show sCode+"1",Joined(sCode,"2");', TEXT_FUNCS + procs, TEXT_DATA)
+    (todo,) = todos(result)
+    assert todo.category == Blocker.TEXT and "scratch string register its program may use too" in todo.message
+
+
+def test_a_text_func_result_holds_the_characters_its_returns_and_arguments_can():
+    """TP compares texts regardless of case: a FUNC's text compared is converted when what it can give back (its
+    RETURNs, its parameters as the call gives them) cannot differ by case alone from the other side."""
+    padded = run('        IF Padded(NumToStr(nCount,0),4\\Fill:="0")="AB12" nGap:=1;', TEXT_FUNCS, TEXT_DATA)
+    assert not todos(padded)
+    joined = run('        IF Joined(sCode,"x")="X-1" nGap:=1;', TEXT_FUNCS, TEXT_DATA)
+    assert [n.category for n in todos(joined)] == [Blocker.CONDITION]  # 'x' and 'X'

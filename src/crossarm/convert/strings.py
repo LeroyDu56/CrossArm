@@ -77,6 +77,8 @@ class Strings:
         self.value = value
         self.routines = {r.name.upper(): (m, r) for m in modules for r in m.routines}
         self._alphabets: dict[str, frozenset[str] | None] | None = None
+        self._in_func: set[str] = set()  # the FUNCs whose alphabet is being worked out (_func_alphabet)
+        self._assigned: tuple[dict, set[str]] | None = None
         self._integral: dict[str, bool] | None = None
         self._for_starts: dict[tuple[str, str], list[n.Expr]] = {}  # (ROUTINE, COUNTER) -> where its FORs start
 
@@ -196,17 +198,19 @@ class Strings:
                 return table
 
     def _expr_alphabet(self, expr: n.Expr, routine: str | None, params: frozenset[str],
-                       table: dict[str, frozenset[str] | None]) -> frozenset[str] | None:  # fmt: skip
+                       table: dict[str, frozenset[str] | None],
+                       bound: dict[str, frozenset[str] | None] | None = None) -> frozenset[str] | None:  # fmt: skip
+        """`bound`: the alphabets of the routine's parameters, from one call of it (_func_alphabet)."""
         match expr:
             case n.String(value=value):
                 return frozenset(value)
             case n.BinaryOp(op="+", left=left, right=right):
-                a = self._expr_alphabet(left, routine, params, table)
-                b = self._expr_alphabet(right, routine, params, table)
+                a = self._expr_alphabet(left, routine, params, table, bound)
+                b = self._expr_alphabet(right, routine, params, table, bound)
                 return None if a is None or b is None else a | b
             case n.Name(name=name):
                 if name.upper() in params:
-                    return None
+                    return bound.get(name.upper()) if bound is not None else None
                 key = self.key(name, routine)
                 if key in table:
                     return table[key]
@@ -216,7 +220,9 @@ class Strings:
                     return None
                 return frozenset(found) if isinstance(found, str) else None
             case n.FuncCall(name=fn, args=args) if fn.upper() == "STRPART" and args and args[0].value is not None:
-                return self._expr_alphabet(args[0].value, routine, params, table)
+                return self._expr_alphabet(args[0].value, routine, params, table, bound)
+            case n.FuncCall(name=fn) if fn.upper() in self.routines:
+                return self._func_alphabet(expr, routine, params, table, bound)  # type: ignore[arg-type]
             case n.FuncCall(name=fn) if fn.upper() in ("NUMTOSTR", "VALTOSTR"):
                 return NUMBER_TEXT
             case n.Component():
@@ -226,6 +232,75 @@ class Strings:
                     return None
                 return frozenset(found) if isinstance(found, str) else None
         return None
+
+    def _func_alphabet(self, call: n.FuncCall, routine: str | None, params: frozenset[str],
+                       table: dict[str, frozenset[str] | None],
+                       bound: dict[str, frozenset[str] | None] | None) -> frozenset[str] | None:  # fmt: skip
+        """The characters a FUNC of the backup giving a text can give back at this call: those of its RETURNs, its
+        parameters holding those of the call's arguments, its own strings worked out again from them. None: any
+        (a FUNC calling itself back, an argument or a RETURN that can hold any)."""
+        func = self.routines[call.name.upper()][1]
+        key = func.name.upper()
+        if func.kind != "FUNC" or (func.return_type or "").lower() != "string" or key in self._in_func:
+            return None
+        groups = parse_params(func.params) or []
+        positional = [a.value for a in call.args if a.name is None]
+        named = {a.name.upper(): a.value for a in call.args if a.name is not None}
+        given: dict[str, frozenset[str] | None] = {}
+        index = 0
+        for group in groups:
+            for param in group:
+                if param.type != "string":
+                    continue
+                if param.optional:
+                    value = named.get(param.name)
+                else:
+                    value = positional[index] if index < len(positional) else None
+                given[param.name] = frozenset() if value is None else (
+                    self._expr_alphabet(value, routine, params, table, bound))
+            if not group[0].optional:
+                index += 1
+        own = frozenset(given)
+        self._in_func.add(key)
+        try:
+            local = dict(table)
+            values, other = self._assignments_cached()
+            mine = {k: v for k, v in values.items() if k.startswith(f"{key}.") and k in local and k not in other}
+            for stmt in func.body:  # its own strings start from their initial value again
+                if isinstance(stmt, n.DataDecl) and (k := f"{key}.{stmt.name.upper()}") in mine:
+                    init = stmt.init
+                    local[k] = (frozenset() if init is None
+                                else frozenset(init.value) if isinstance(init, n.String) else None)  # fmt: skip
+            for _ in range(10):  # its own strings, from the parameters as this call gives them
+                changed = False
+                for k, assigned in mine.items():
+                    found: frozenset[str] | None = local[k]
+                    if found is None:
+                        continue
+                    for value, _routine, _params in assigned:
+                        more = self._expr_alphabet(value, func.name, own, local, given)
+                        found = None if more is None or found is None else found | more
+                        if found is None:
+                            break
+                    if found != local[k]:
+                        local[k], changed = found, True
+                if not changed:
+                    break
+            out: frozenset[str] = frozenset()
+            for stmt in walk_statements(func.body):
+                if isinstance(stmt, n.Return) and stmt.value is not None:
+                    more = self._expr_alphabet(stmt.value, func.name, own, local, given)
+                    if more is None:
+                        return None
+                    out |= more
+            return out
+        finally:
+            self._in_func.discard(key)
+
+    def _assignments_cached(self) -> tuple[dict[str, list[tuple[n.Expr, str | None, frozenset[str]]]], set[str]]:
+        if self._assigned is None:
+            self._assigned = self._assignments()
+        return self._assigned
 
     # -- numbers only ever given whole numbers ----------------------------------------------------------
 
