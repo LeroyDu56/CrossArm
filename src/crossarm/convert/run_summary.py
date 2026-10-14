@@ -99,6 +99,7 @@ def build_summary(result: ConversionResult, config: ConversionConfig, *, backup:
         "options": options,
         "verdict": decision.level,
         "blocking_causes": dict(decision.blocking),
+        **{key: value for key, value in analysis.path_to_workable(result).data().items() if key != "blocking_causes"},
         "programs": len(result.programs),
         "programs_ready": result.clean_programs(),
         "todo": result.todo_count,
@@ -283,6 +284,7 @@ def summary_markdown(result: ConversionResult, config: ConversionConfig, summary
         "",
         f"**{decision.level.upper()}**: {decision.sentence}",
         "",
+        *([path.text(), ""] if (path := analysis.path_to_workable(result)).needed else []),
         f"_{decision.rule}_",
         "",
     ]

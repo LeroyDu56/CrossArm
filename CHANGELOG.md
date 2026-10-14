@@ -45,6 +45,16 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   setup) rather than "call with arguments"; CalcJointT / CalcRobT are said to need the robot's kinematics rather than
   to read the robot's position. A tool or work object set at run time that no converted program uses (only routines
   left out of the conversion read it) is a remark and a warning, as one no program reads.
+- The analysis says what stands between a "not ready" conversion and a workable one, right under the decision:
+  the blocking causes to solve (the fewest that bring them down to the 3 allowed, those with the fewest TODO first,
+  each a link to its TODO), the RAPID instructions to convert besides when less than 85 % are, and, converted
+  without `--karel`, the verdict `--karel` gives when it differs ("With --karel and the KAREL option R632, the
+  conversion is workable"). In the HTML and Markdown reports, the one-page summary and the window. The rule is
+  unchanged. `crossarm_summary.json` gains `causes_to_workable`, `instructions_to_workable` and
+  `verdict_with_karel`.
+- Diagnostic schema 4 (additive): `conversion` and each task gain `blocking_causes`, `causes_to_workable`,
+  `instructions_to_workable` and `verdict_with_karel`; `conversion` gains `verdict` (every task counted together).
+  Causes by their fixed names, as `todo_by_cause`.
 - Fixed: the same backup could give a program with a different remark from one run to the next (since 1.13.0): the
   RAPID text of a statement made while copying a FUNC into its call was found by the statement's address in memory,
   which a statement made later could be given (a GetSysData copy then showed the text of another line). The

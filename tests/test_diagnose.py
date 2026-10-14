@@ -31,7 +31,7 @@ STATES = ("converted", "partial", "todo", "inside_todo", "not_converted")
 def test_the_schema(tmp_path):
     diag = diagnose.diagnose([make_backup(tmp_path)])
     assert set(diag) == TOP_KEYS
-    assert diag["schema_version"] == diagnose.SCHEMA_VERSION == 3
+    assert diag["schema_version"] == diagnose.SCHEMA_VERSION == 4
     assert set(diag["environment"]) == {"os", "os_release", "python", "exe", "day"}
     assert len(diag["environment"]["day"]) == 10  # the day, never the time
     assert diag["input"]["kind"] == "backup" and diag["input"]["tasks"] == 1
@@ -199,11 +199,31 @@ ENDMODULE
     assert "computed or inlined" not in json.dumps(diag)  # the schema 2 reason is gone
 
 
+PATH_KEYS = {"blocking_causes", "causes_to_workable", "instructions_to_workable", "verdict_with_karel"}
+
+
+def test_schema_4_says_what_blocks_the_verdict(tmp_path):
+    diag = diagnose.diagnose([make_backup(tmp_path)])
+    conversion = diag["conversion"]
+    task = conversion["tasks"][0]
+    for where in (conversion, task):  # added, nothing of schema 3 removed
+        assert PATH_KEYS <= set(where) and where["verdict"] in ("ready", "workable", "not ready")
+        assert all(cause in diagnose._KNOWN_CAUSES for cause in where["blocking_causes"])
+        assert set(where["causes_to_workable"]) <= set(where["blocking_causes"])
+        assert isinstance(where["instructions_to_workable"], int)
+    md = diagnose.markdown(diag)
+    assert f"- Verdict: {conversion['verdict']}, blocking causes: " in md
+    old = json.loads(json.dumps(diag))  # a schema 3 diagnostic: no such keys, no such lines
+    for key in (*PATH_KEYS, "verdict"):
+        del old["conversion"][key]
+    assert "- Verdict:" not in diagnose.markdown(old)
+
+
 def test_the_command_writes_both_files(tmp_path, capsys):
     assert main(["diagnose", str(PICK), "-o", str(tmp_path / "d")]) == 0
     assert "Nothing was sent" in capsys.readouterr().out
     data = json.loads((tmp_path / "d" / diagnose.DIAG_JSON).read_text(encoding="utf-8"))
-    assert data["schema_version"] == 3
+    assert data["schema_version"] == 4
     md = (tmp_path / "d" / diagnose.DIAG_MD).read_text(encoding="utf-8")
     assert md == diagnose.markdown(data) and md.startswith("# CrossArm diagnostic report")
     assert not list(PICK.parent.glob("crossarm_*"))  # nothing written next to the input

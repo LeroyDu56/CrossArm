@@ -646,6 +646,18 @@ def _since(result: ConversionResult) -> str:
     return f'<p class="since {kind}"><b>{_e(since.headline())}</b> {text}</p>'
 
 
+def _workable_path(result: ConversionResult) -> str:
+    """The path to a workable verdict, under a 'not ready' decision: each cause to solve leads to its TODO."""
+    path = analysis.path_to_workable(result)
+    if not path.needed:
+        return ""
+    text = _e(path.text())
+    for cause, _ in path.to_solve:  # the cause's name, before its TODO count, as a link to its TODO
+        shown = _e(cause)
+        text = text.replace(f"{shown}: ", f'<a href="{_e(todo_href(cause=cause))}">{shown}</a>: ', 1)
+    return f'<p class="path">{text}</p>'
+
+
 def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[tuple[str, int]],
                       targets: set[str], checklist_items: int, licence_note: list[str] = (),
                       config: ConversionConfig | None = None) -> Section:  # fmt: skip
@@ -687,6 +699,7 @@ def _analysis_section(result: ConversionResult, notice: list[str], anchors: set[
         f'<div class="verdict lv-{decision.level.replace(" ", "-")}"><div class="vmain">',
         '<div class="vstats">' + "".join(stat(*s) for s in stats) + "</div>",
         f'<p class="decision"><span class="vtag">{_e(decision.level)}</span> {_e(decision.sentence)}</p>',
+        _workable_path(result),
         f'<p class="rule">{_e(decision.rule)}</p>{why}'
         + (f'<p class="karel-use">{inline(analysis.karel_use(result))}</p>' if analysis.karel_use(result) else "")
         + (f'<p class="karel-use">{inline(analysis.func_programs_use(result))}</p>'
@@ -876,6 +889,7 @@ header.top blockquote { margin: .4em 0; padding: .35em .9em; font-size: .92em; }
 details.srcs { font-size: .85em; color: var(--muted); margin: 0 0 .4em; }
 .licence-note blockquote { margin: -.4em 0 1em; padding: .35em .9em; font-size: .92em; }
 .verdict .karel-use { font-size: .9em; margin: .3em 0 0; }
+.verdict .path { margin: .3em 0 .4em; font-weight: 600; }
 p.since { font-size: .9em; margin: .45em 0 0; padding-left: 8px; border-left: 3px solid var(--ok); }
 p.since.changed { border-left-color: var(--warn); }
 .prints { font-size: .88em; color: var(--muted); }

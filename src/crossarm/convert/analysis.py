@@ -34,7 +34,7 @@ from crossarm.convert.condition_gates import MARK
 from crossarm.convert.config import ConversionConfig
 from crossarm.convert.coverage import fmt_percent
 from crossarm.convert.taught import AGAIN, KEPT
-from crossarm.convert.translate import Capacity, ConversionResult, Note
+from crossarm.convert.translate import Capacity, ConversionResult, Note, VerdictFigures
 from crossarm.convert.unsupported import KAREL_SOCKETS, NO_TP_FAMILIES
 
 # ---------------------------------------------------------------------------
@@ -162,6 +162,96 @@ def verdict(result: ConversionResult) -> Verdict:
     return decide(programs=len(result.programs), percent=result.coverage.percent, todo=result.todo_count,
                   blocking=blocking_causes(result.notes), over=[c.resource for c in result.capacity if not c.fits],
                   causes=todo_causes(result.notes))  # fmt: skip
+
+
+def figures_verdict(figures: VerdictFigures) -> Verdict:
+    """The verdict of a conversion known by its figures alone (ConversionResult.with_karel)."""
+    causes = list(figures.causes)
+    return decide(programs=figures.programs, percent=figures.percent, todo=figures.todo,
+                  blocking=[(c, k) for c, k in causes if c in BLOCKING], over=list(figures.over), causes=causes)  # fmt: skip
+
+
+# ---------------------------------------------------------------------------
+# The path to a workable verdict: what would change it (the rule above is not changed by it)
+# ---------------------------------------------------------------------------
+
+KAREL_OPTION = "R632"  # the controller option KAREL programs need
+
+
+@dataclass(frozen=True, slots=True)
+class WorkablePath:
+    """What stands between a 'not ready' conversion and a workable one, by the rule above."""
+
+    level: str  # the verdict now
+    blocking: tuple[tuple[str, int], ...]  # the blocking causes and their TODO, most first
+    to_solve: tuple[tuple[str, int], ...]  # the fewest blocking causes to solve for at most MAX_BLOCKING, easiest first
+    instructions: int  # RAPID instructions to convert besides, for MIN_CONVERTED % (0: the share converted is enough)
+    total: int  # RAPID instructions in all
+    karel: Verdict | None  # the verdict the same conversion gets with --karel (None: not computed, or no change)
+
+    @property
+    def needed(self) -> bool:
+        """Whether there is a path to show: the verdict is not ready."""
+        return self.level == NOT_READY
+
+    def text(self) -> str:
+        """'Path to workable: solve 1 of the 4 blocking causes, the fewest TODO first: interrupt (3 TODO).' The
+        causes to solve, the instructions to convert besides, and what --karel would give; '' when workable."""
+        if not self.needed:
+            return ""
+        parts = []
+        if self.to_solve:
+            count = len(self.to_solve)
+            which = "the one with the fewest TODO" if count == 1 else "the fewest TODO first"
+            parts.append(f"solve {count} of the {len(self.blocking)} blocking causes ({MAX_BLOCKING} are allowed),"
+                         f" {which}: {'; '.join(f'{c}: {_todo(k)}' for c, k in self.to_solve)}.")  # fmt: skip
+        if self.instructions:
+            parts.append(("Then convert" if parts else "convert") + f" {self.instructions:,} more of the"
+                         f" {self.total:,} RAPID instructions ({MIN_CONVERTED:g} % at least"
+                         + ("; solving these causes counts towards it)." if self.to_solve else ")."))  # fmt: skip
+        sentence = "Path to workable: " + " ".join(parts)
+        if self.karel is not None:
+            sentence += " " + karel_sentence(self.karel)
+        return sentence
+
+    def data(self) -> dict[str, object]:
+        """For crossarm diagnose: the blocking causes, the causes to solve, by cause name (a fixed list)."""
+        return {"blocking_causes": dict(self.blocking), "causes_to_workable": dict(self.to_solve),
+                "instructions_to_workable": self.instructions,
+                "verdict_with_karel": None if self.karel is None else self.karel.level}  # fmt: skip
+
+
+def karel_sentence(decision: Verdict) -> str:
+    """'With --karel and the KAREL option R632, the conversion is workable.'"""
+    level = {READY: "ready", WORKABLE: "workable"}.get(decision.level)
+    head = f"With --karel and the KAREL option {KAREL_OPTION}"
+    if level is not None:
+        return f"{head}, the conversion is {level} ({decision.rule.split('Here: ', 1)[-1].rstrip('.')})."
+    return f"{head}, it stays not ready ({decision.rule.split('Here: ', 1)[-1].rstrip('.')})."
+
+
+def workable_path(figures: VerdictFigures, with_karel: VerdictFigures | None = None) -> WorkablePath:
+    """The blocking causes to solve (the fewest for at most MAX_BLOCKING; among them those with the fewest TODO,
+    then by family, then by name), the instructions to convert besides for MIN_CONVERTED %, and the verdict
+    `with_karel` (the figures of the same conversion with --karel) gives, when it differs."""
+    decision = figures_verdict(figures)
+    blocking = tuple(decision.blocking)
+    excess = max(0, len(blocking) - MAX_BLOCKING)
+    easiest = sorted(blocking, key=lambda ck: (ck[1], triage.family(ck[0]), ck[0]))
+    needed = -(-int(MIN_CONVERTED * 10) * figures.total // 1000)  # the fewest converted for MIN_CONVERTED %
+    instructions = max(0, needed - figures.converted) if figures.total else 0
+    karel = None
+    if with_karel is not None:
+        other = figures_verdict(with_karel)
+        karel = other if other.level != decision.level else None
+    if decision.level != NOT_READY:
+        excess, instructions = 0, 0
+    return WorkablePath(decision.level, blocking, tuple(easiest[:excess]), instructions, figures.total, karel)
+
+
+def path_to_workable(result: ConversionResult) -> WorkablePath:
+    """workable_path of a conversion; --karel's verdict when it was worked out (converted without it)."""
+    return workable_path(VerdictFigures.of(result), result.with_karel)
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +706,7 @@ def counts_text(result: ConversionResult) -> str:
 def analysis_markdown(result: ConversionResult, config: ConversionConfig | None = None) -> list[str]:
     """The analysis in the Markdown report: the decision, its rule, what to do first, capacity near the limit."""
     decision = verdict(result)
+    path = path_to_workable(result)
     coverage = result.coverage
     clean = result.clean_programs()
     sentence = business(result)
@@ -623,6 +714,7 @@ def analysis_markdown(result: ConversionResult, config: ConversionConfig | None 
         "## Analysis",
         "",
         f"- **{decision.sentence}**",
+        *([f"- **{path.text()}**"] if path.needed else []),
         f"- {decision.rule}",
         *([f"- {fmt_percent(coverage.percent)} of the {coverage.total:,} RAPID instructions converted."]
           if coverage.total else []),

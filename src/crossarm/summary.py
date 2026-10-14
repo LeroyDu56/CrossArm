@@ -12,9 +12,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from crossarm.convert.analysis import Verdict, blocking_causes, decide, todo_causes
+from crossarm.convert.analysis import Verdict, WorkablePath, blocking_causes, decide, todo_causes, workable_path
 from crossarm.convert.taught import AGAIN, KEPT, POINTS_FILE
-from crossarm.convert.translate import Blocker
+from crossarm.convert.translate import Blocker, VerdictFigures
 from crossarm.fanuc.ktrans import FOLDER as KAREL_FOLDER
 from crossarm.fanuc.maketp import FOLDER as TP_FOLDER
 from crossarm.fanuc.usage import ControllerUsage
@@ -128,6 +128,8 @@ class Summary:
     report: Path | None = None
     # The decision, every task counted together, by the rule of the report's analysis (crossarm.convert.analysis).
     decision: Verdict | None = None
+    # What would make a 'not ready' decision workable, every task counted together (analysis.workable_path).
+    path: WorkablePath | None = None
     # With --keep-taught: the points kept as touched up and to touch up again.
     taught: TaughtLine | None = None
     # What changed since the previous conversion (crossarm_summary.json), one line per task compared.
@@ -150,6 +152,20 @@ def describe_since(run: RunOutput) -> list[str]:
             + (f" (options differ: {'; '.join(options)})" if options else "") + "."]
 
 
+def run_path(run: RunOutput) -> WorkablePath | None:
+    """The path to a workable verdict of every task counted together; with --karel's figures when a task has them
+    (a task without them converts the same with --karel). None when nothing was converted."""
+    results = [t.result for t in run.tasks if t.result]
+    if not results:
+        return None
+    figures = [VerdictFigures.of(r) for r in results]
+    karel = None
+    if any(r.with_karel is not None for r in results):
+        karel_figures = [r.with_karel or f for r, f in zip(results, figures, strict=True)]
+        karel = sum(karel_figures[1:], karel_figures[0])
+    return workable_path(sum(figures[1:], figures[0]), karel)
+
+
 def summarize(run: RunOutput) -> Summary:
     ready = sum(t.result.clean_programs() for t in run.tasks if t.result)
     report = next((t.report_html for t in run.tasks if t.report_html), None)
@@ -164,6 +180,7 @@ def summarize(run: RunOutput) -> Summary:
         over=[c.resource for t in run.tasks if t.result for c in t.result.capacity if not c.fits],
         causes=todo_causes(notes),
     )  # fmt: skip
+    summary.path = run_path(run)
     summary.taught = describe_taught(run)
     summary.since = describe_since(run)
 

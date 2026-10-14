@@ -49,7 +49,7 @@ from pathlib import Path
 from crossarm import __version__, pipeline
 from crossarm.backup import open_source
 from crossarm.convert import ConversionConfig
-from crossarm.convert.analysis import verdict
+from crossarm.convert.analysis import WorkablePath, path_to_workable, verdict
 from crossarm.convert.blockers import Blocker
 from crossarm.convert.external import RAPID_FUNCTIONS
 from crossarm.convert.unsupported import NO_TP, RAPID_INSTRUCTIONS
@@ -61,9 +61,10 @@ from crossarm.rapid.source import read_source
 from crossarm.rapid.system_info import read_system
 from crossarm.rapid.tokens import RESERVED_WORDS, TokenKind
 from crossarm.rapid.walk import split_params, walk_statements
+from crossarm.summary import run_path
 from crossarm.support import InternalError, crossarm_frame, recording_internal
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DIAG_JSON = "crossarm_diag.json"
 DIAG_MD = "crossarm_diag.md"
 WINDOW = 10  # tokens kept on each side of a statement CrossArm failed on
@@ -433,6 +434,16 @@ def _by_cause(notes, kind: str) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+def _path(path: WorkablePath) -> dict[str, object]:
+    """Schema 4: the blocking causes and their TODO, the causes to solve for a workable verdict (the fewest, easiest
+    first), the instructions to convert besides, and the verdict with --karel when it differs (null otherwise).
+    Causes by their fixed names (_cause)."""
+    data = path.data()
+    for key in ("blocking_causes", "causes_to_workable"):
+        data[key] = {_cause(cause): count for cause, count in data[key].items()}  # type: ignore[union-attr]
+    return data
+
+
 def _uses(table: dict[str, Use]) -> dict[str, dict[str, int]]:
     return {key: table[key].data() for key in sorted(table, key=lambda k: (-table[k].occurrences, k))}
 
@@ -545,6 +556,7 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
                     "converted_percent": result.coverage.percent if result.coverage.total else None,
                     "todo": result.todo_count, "warnings": sum(1 for x in result.notes if x.kind == "WARNING"),
                     "verdict": verdict(result).level,
+                    **_path(path_to_workable(result)),
                 })  # fmt: skip
             tasks.append(entry)
         names_all = _Names(all_modules)
@@ -559,6 +571,9 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
                 "converted_by_area": {share.area: share.percent for share in coverage.shares},
                 "todo_by_cause": _by_cause(notes, "TODO"), "warnings_by_cause": _by_cause(notes, "WARNING"),
             })  # fmt: skip
+            path = run_path(out)
+            if path is not None:  # schema 4: every task counted together, as the window's decision
+                conversion.update({"verdict": path.level, **_path(path)})
         statements = [use for table in (inv.instructions, inv.user_calls) for use in table.values()]
         on_statements = sum(use.todo for use in statements)
         if out is not None:  # each TODO once: on the statement carrying it, or on none (a routine not found...)
@@ -715,6 +730,20 @@ def _uses_table(title: str, table: dict[str, dict]) -> list[str]:
                                               for k, v in table.items()))]  # fmt: skip
 
 
+def _path_lines(conv: dict) -> list[str]:
+    """Schema 4: the verdict, its blocking causes and what would make it workable (older diagnostics: nothing)."""
+    if "blocking_causes" not in conv:
+        return []
+    lines = [f"- Verdict: {conv['verdict']}, blocking causes: " + (", ".join(f"{k} {v}" for k, v in
+             conv["blocking_causes"].items()) or "none")]  # fmt: skip
+    if conv["causes_to_workable"] or conv["instructions_to_workable"]:
+        lines.append("- To workable: " + ", ".join([*(f"{k} {v}" for k, v in conv["causes_to_workable"].items()),
+                     *([f"{conv['instructions_to_workable']} instructions"] if conv["instructions_to_workable"] else [])]))  # fmt: skip
+    if conv["verdict_with_karel"]:
+        lines.append(f"- Verdict with --karel: {conv['verdict_with_karel']}")
+    return lines
+
+
 def markdown(diag: dict) -> str:
     """crossarm_diag.md, made from the diagnostic alone: what the user reads is what they would send."""
     env, inp, system, conv = diag["environment"], diag["input"], diag["system"], diag["conversion"]
@@ -749,6 +778,7 @@ def markdown(diag: dict) -> str:
             (f"- TODO on an instruction: {conv['todo_on_instructions']}, "
              f"not on an instruction: {conv['todo_not_on_an_instruction']}"),
             f"- Instructions in no program: {_reasons(conv['not_converted_by'])}",
+            *_path_lines(conv),
             "",
             *_table(["Area", "Converted"], ([k, v] for k, v in conv["converted_by_area"].items())),
             "### TODO by cause", "",

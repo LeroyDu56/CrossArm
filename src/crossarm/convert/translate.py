@@ -74,6 +74,7 @@ from crossarm.convert.configuration import (
     tool_on_flange,
 )
 from crossarm.convert.coverage import Coverage, measure
+from crossarm.convert.coverage import percent as coverage_percent
 from crossarm.convert.external import (
     MISSING_WHY,
     Candidate,
@@ -411,6 +412,36 @@ class ZoneUse:
     capped: bool = False  # CNT100 rounds less than the RAPID zone
 
 
+@dataclass(frozen=True, slots=True)
+class VerdictFigures:
+    """What the verdict of a conversion is decided from (crossarm.convert.analysis.decide)."""
+
+    programs: int
+    converted: int  # RAPID instructions converted
+    total: int  # RAPID instructions counted
+    todo: int
+    causes: tuple[tuple[str, int], ...]  # TODO by cause, most first (ties by name)
+    over: tuple[str, ...]  # controller resources over their limit
+
+    @property
+    def percent(self) -> float:
+        return coverage_percent(self.converted, self.total)
+
+    @classmethod
+    def of(cls, result: "ConversionResult") -> "VerdictFigures":
+        counts = Counter(note.category for note in result.notes if note.kind == "TODO")
+        return cls(len(result.programs), result.coverage.converted, result.coverage.total, result.todo_count,
+                   tuple(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+                   tuple(c.resource for c in result.capacity if not c.fits))  # fmt: skip
+
+    def __add__(self, other: "VerdictFigures") -> "VerdictFigures":
+        """Two tasks of one backup, counted together."""
+        counts = Counter(dict(self.causes)) + Counter(dict(other.causes))
+        return VerdictFigures(self.programs + other.programs, self.converted + other.converted,
+                              self.total + other.total, self.todo + other.todo,
+                              tuple(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))), self.over + other.over)  # fmt: skip
+
+
 @dataclass
 class ConversionResult:
     programs: list[ProgramInfo] = field(default_factory=list)
@@ -466,6 +497,9 @@ class ConversionResult:
     # TODO it would convert (karel_would()).
     karel_programs: list[str] = field(default_factory=list)
     karel_todo: int = 0
+    # Without --karel, when it would convert some TODO: what decides the verdict of the same conversion with it
+    # (analysis.path_to_workable says whether --karel changes the verdict); None otherwise.
+    with_karel: "VerdictFigures | None" = None
     # --karel: each library program -> the TP programs calling it -> how many calls ({}: none used); None: no --karel.
     karel_calls: dict[str, dict[str, int]] | None = None
     # Each FUNC of the backup copied into its calls (crossarm.convert.func_inline) -> the (TP program, RAPID line) of
@@ -5432,7 +5466,10 @@ def convert(
             scope.written = shared.written
             scope.program_names, scope.given_programs = taken  # its programs named as this task's are
         again = Converter(modules, dataclasses.replace(copy.deepcopy(config), karel=True), sources, signals, scope)
-        result.karel_todo = karel_would(result, again.convert(routines, program_modules))
+        other = again.convert(routines, program_modules)
+        result.karel_todo = karel_would(result, other)
+        if result.karel_todo:
+            result.with_karel = VerdictFigures.of(other)
     return result
 
 
