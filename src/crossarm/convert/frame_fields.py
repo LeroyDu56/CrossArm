@@ -136,6 +136,13 @@ class FrameFields:
                   " selects it and no program reads it: nothing written on the FANUC", Blocker.RUNTIME_FRAME)  # fmt: skip
         return True
 
+    def _fixed_work_object(self, a: n.Assign, name: str) -> bool:
+        """Whether a work object's ufprog is TRUE here: a fixed one, whose ufmec RAPID does not read."""
+        try:
+            return self.c.computer.value(n.Component(a.span, n.Name(a.span, name), "ufprog")).value is True  # type: ignore[attr-defined]
+        except Unresolvable:
+            return False
+
     def _field_note(self, a: n.Assign, name: str, path: tuple[str, ...], new: Typed | None) -> None:
         index = 1 if path[1] == "UFPROG" else 2
         value = new.value[index] if new is not None and isinstance(new.value, list) else None
@@ -145,6 +152,8 @@ class FrameFields:
             self.warn(a, f"work object {name}: ufprog {'FALSE' if value is False else 'only known at run time'} here:"  # type: ignore[attr-defined]
                       " a work object moved by a mechanical unit (coordinated motion) is not converted, its UFRAME"
                       " does not follow the unit", Blocker.STATIONARY)  # fmt: skip
+        elif path[1] == "UFMEC" and self._fixed_work_object(a, name):
+            return  # a fixed work object (ufprog TRUE): RAPID reads no ufmec
         elif path[1] == "UFMEC" and (value is None or (value and not str(value).upper().startswith("ROB_"))):
             unit = f"'{value}'" if value is not None else "a mechanical unit only known at run time"
             self.warn(a, f"work object {name}: ufmec names {unit}: nothing written on the FANUC, a work object moved"  # type: ignore[attr-defined]

@@ -24,6 +24,13 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   cancelled) and runs it again from its first line; the line after the CALL never runs, data keep their values, as
   in RAPID. A TRAP that stops the robot then ends the cycle no longer needs a TRAP starting it again. Measured on
   ROBOGUIDE (probe `exitcycle`). Without `--karel` it stays TODO, now under "motion without a TP equivalent".
+- With `--karel`, a work object's frame computed from a pose chosen in the branches of an IF or a TEST converts: the
+  pose is kept in one position register every branch writes; `p.rot := OrientZYX(z, y, x)` of such a pose writes its
+  W, P, R (`PR[k,4..6]`); the frame is worked out by `CA_POSEMULT` and its copies to other work objects follow.
+  Measured on ROBOGUIDE (probe `branchframe`, within 0.001 mm). After an IF, a branch that never goes past it (EXIT,
+  RETURN...) no longer makes data unknown; a tool or work object the branches leave different in one field only
+  (a ufmec named per branch) keeps its other fields known; a field copied whole from another tool or work object
+  that keeps it (`w2 := w1`) still counts as unchanged. No ufmec warning for a fixed work object (ufprog TRUE).
 
 ## 1.13.0 — 2026-10-13
 

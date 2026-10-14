@@ -43,10 +43,12 @@ from crossarm.convert.arguments import MOTION_ARGUMENTS, Signature, fine_given, 
 from crossarm.convert.blockers import Blocker, Untranslatable
 from crossarm.convert.calls import RoutineCalls
 from crossarm.convert.compute import (
+    FRAME_RECORDS,
     LAYOUTS,
     PREDEFINED,
     Computer,
     Effects,
+    Hole,
     MeasuredAtRunTime,
     Typed,
     Unknown,
@@ -374,6 +376,24 @@ PAYLOAD_SCHEDULES = 10  # PAYLOAD[1-10] on a standard controller (ROBOGUIDE: PAY
 _TOOL_ARGUMENT = {"MOVELDO": 3, "MOVEJDO": 3, "MOVECDO": 4, "MOVELAO": 3, "MOVEJAO": 3, "MOVECAO": 4,
                   "MOVELGO": 3, "MOVEJGO": 3, "MOVECGO": 4, "TRIGGL": 4, "TRIGGJ": 4, "TRIGGC": 5,
                   "SEARCHL": 4, "SEARCHJ": 4, "SEARCHC": 5}  # fmt: skip
+
+
+def _merged_fields(name: str, values: list, reason: str) -> Typed | None:
+    """After an IF or a TEST, a tool or work object every path left known but for some fields (a ufmec named per
+    branch): those fields unknown alone (Hole), the frame still known when they are not its own; None otherwise."""
+    first = values[0]
+    if not all(isinstance(v, Typed) and not isinstance(v, Unknown) for v in values) or first.type not in FRAME_RECORDS \
+            or any(v.type != first.type or len(v.value) != len(first.value) for v in values):  # fmt: skip
+        return None
+    names = [label.upper() for label, _type in LAYOUTS[first.type]]
+    out = []
+    for i, items in enumerate(zip(*(v.value for v in values), strict=True)):
+        if all(item == items[0] for item in items):
+            out.append(items[0])
+        else:
+            measured = any(isinstance(item, Hole) and item.measured for item in items)
+            out.append(Hole(f"'{name}.{names[i].lower()}' {reason}", measured, here=True))
+    return Typed(out, first.type, first.dims)
 
 
 def _bare(register: str) -> str:
@@ -2442,6 +2462,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             first = values[0]
             if all(isinstance(v, Typed) and v == first for v in values):
                 merged[name] = first
+            elif (fields := _merged_fields(name, values, differs.reason)) is not None:
+                merged[name] = fields  # a tool or work object: the fields every path left the same are known
             else:  # measured on one path: a calibration whichever way
                 merged[name] = next((v for v in values if isinstance(v, Unknown) and v.measured), differs)
         self.known = merged
@@ -4972,6 +4994,12 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.emit("ELSE")
             self.block(else_body)
         ends.append((self.active_uf, self.active_ut))
+        # a path that never goes past the IF (EXIT, RETURN...) leaves nothing to agree on
+        rest_leaves = leaves((n.If(first.condition.span, rest, else_body),)) if rest else leaves(else_body)
+        if leaves(first.body) and not rest_leaves:
+            after_first = self.known
+        elif rest_leaves and not leaves(first.body):
+            self.known = after_first
         self.merge(first.condition.span.line, after_first, self.known)
         self.emit("ENDIF")
         (uf1, ut1), (uf2, ut2) = ends

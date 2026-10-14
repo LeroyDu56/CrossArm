@@ -33,7 +33,7 @@ from crossarm.convert.remote_tcp import remote_pair
 from crossarm.convert.tp_numbers import fmt_number, operand
 from crossarm.convert.values import RobTarget, Unresolvable
 from crossarm.convert.wrappers import parameters
-from crossarm.geometry import mat_mul, matrix_to_quat, matrix_to_wpr, quat_to_matrix, rot_x, rot_y, rot_z
+from crossarm.geometry import mat_mul, matrix_to_quat, matrix_to_wpr, quat_to_matrix, quat_to_wpr, rot_x, rot_y, rot_z
 from crossarm.rapid import nodes as n
 from crossarm.rapid.to_pseudo import format_expr
 from crossarm.rapid.walk import walk_statements
@@ -91,6 +91,14 @@ def find_runtime_points(c: "Converter", routines: list[n.Routine]) -> dict[str, 
             assignments.append((key, stmt, set(own), params))
             kinds[key] = decl.type_name.lower()
     found: set[str] = set()
+    if c.config.karel:  # a pose set in a branch of an IF or a TEST and elsewhere: its value depends on the path taken
+        branched = {id(s) for r in routines for s in walk_statements(r.body)
+                    if isinstance(s, n.If | n.Test) for s in walk_statements(_branches(s))}  # fmt: skip
+        by_key: dict[str, list[n.Assign]] = {}
+        for key, stmt, _own, _params in assignments:
+            if kinds[key] == "pose" and len(path_of(stmt.target) or ()) == 1:
+                by_key.setdefault(key, []).append(stmt)
+        found |= {key for key, stmts in by_key.items() if len(stmts) > 1 and any(id(s) in branched for s in stmts)}
     for routine in routines:  # passed to a routine changing it (VAR robtarget): read back into its register
         own = {d.name.upper(): d for d in routine.body if isinstance(d, n.DataDecl)}
         for stmt in walk_statements(routine.body):
@@ -116,6 +124,13 @@ def find_runtime_points(c: "Converter", routines: list[n.Routine]) -> dict[str, 
         if not more:
             return {key: kinds.get(key, "robtarget") for key in found}
         found |= more
+
+
+def _branches(stmt: n.If | n.Test) -> tuple[n.Stmt, ...]:
+    """The statements of every branch of an IF or a TEST (the top level of each)."""
+    if isinstance(stmt, n.If):
+        return tuple(s for b in stmt.branches for s in b.body) + tuple(stmt.else_body)
+    return tuple(s for case in stmt.cases for s in case.body) + tuple(stmt.default or ())
 
 
 def provided_result(c: "Converter", value: n.Expr) -> bool:
@@ -226,6 +241,9 @@ class RuntimePoints:
         if len(path) > 1 and self.c.runtime_points.get(key) == "jointtarget":
             raise Untranslatable(f"{format_expr(a.target)} set: CrossArm reads the axes of a jointtarget kept in a position"
                                  " register (CJointT), but does not write them", Blocker.RUNTIME_POSITION)  # fmt: skip
+        if len(path) == 2 and path[1] == "ROT" and self.c.runtime_points.get(key) == "pose":
+            self.pose_orientation(a, register, name)
+            return
         if len(path) > 1:
             axis = self.runtime_axis(a.target)
             self.emit(f"{axis}={self.arithmetic(a.value)}")
@@ -237,6 +255,46 @@ class RuntimePoints:
         else:
             self._runtime_value(a, register, name, turn)
         self.known.pop(f"{name}#UNSET", None)  # set whole: readable again
+
+    def pose_orientation(self, a: n.Assign, register: str, name: str) -> None:
+        """`p.rot := OrientZYX(z, y, x)` of a pose kept in PR[k] (--karel): W, P, R are x, y, z (both turn about
+        z, then y, then x of the frame turned: Rz.Ry.Rx), each written into its component (PR[k,4..6]); an
+        orientation known now, its W, P, R. The routine's own pose set first here: its other components too,
+        as declared (it starts each call so)."""
+        own = name.upper() in self.local_names or self.c.symbols.is_local(name)
+        earlier = False
+        for stmt in walk_statements(self.routine.body):
+            if stmt is a:
+                break
+            if isinstance(stmt, n.Assign) and (p := path_of(stmt.target)) and p[0] == name.upper():
+                earlier = True
+        value = a.value
+        try:
+            known = self.c.computer.value(value)
+        except Unresolvable:
+            known = None
+        if isinstance(known, Typed):
+            angles = [operand(fmt_number(round(v, 3) + 0.0)) for v in quat_to_wpr(tuple(known.value))]
+        elif isinstance(value, n.FuncCall) and value.name.upper() == "ORIENTZYX" and len(value.args) == 3 \
+                and all(arg.name is None and arg.value is not None for arg in value.args):  # fmt: skip
+            angles = [self.arithmetic(arg.value) for arg in reversed(value.args)]  # x, y, z: W, P, R
+        else:
+            raise Untranslatable(f"{format_expr(a.target)} set to {format_expr(value)}: the orientation of a pose kept"
+                                 " in a position register is set to OrientZYX() or to a value known now",
+                                 Blocker.RUNTIME_POSITION)  # fmt: skip
+        if own and not earlier:
+            try:
+                start = self.c.computer.value(n.Name(a.span, name))
+                xyz = [operand(fmt_number(round(v, 3) + 0.0)) for v in start.value[0]]
+            except Unresolvable as exc:
+                raise Untranslatable(f"{format_expr(a.target)}: {exc}", Blocker.RUNTIME_POSITION) from exc
+            for axis, text in enumerate(xyz, 1):
+                self.emit(f"{register[:-1]},{axis}]={text}")
+        else:
+            self.runtime_set(name)
+        for axis, text in zip((4, 5, 6), angles, strict=True):
+            self.emit(f"{register[:-1]},{axis}]={text}")
+        self.known[f"{name}#ROT"] = Unknown("has an orientation known at run time only")
 
     def _runtime_value(self, a: n.Assign, register: str, name: str, turn: str) -> None:
         """The whole of a point kept in a register (runtime_assign)."""

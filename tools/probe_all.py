@@ -73,6 +73,9 @@ probe, everything else in local/logs/probe_all.log):
     framefield   a tool's tframe.trans and a work object's uframe.trans / .rot set from points read on the robot
                  (PR[F]=UTOOL/UFRAME, PR[F,i]=PR[k,i], UTOOL/UFRAME=PR[F]), that uframe copied to nine work objects
                  (banks, oframe by CA_POSEMULT): the moves after them where RAPID puts the flange
+    branchframe  --karel: a work object's uframe from a pose chosen in the branches of an IF (both write its register),
+                 turned by OrientZYX of a parameter (PR[k,4..6]), PoseMult by CA_POSEMULT, copied to two work
+                 objects: the moves in the copies where RAPID puts the flange, two calls
     funcinline   FUNCs of the backup building tools and work objects from base frames calibrated at run time,
                  copied into each call: TP (PR[F,i]=PR[F,i]+d) where the base's orientation is known, else
                  CA_POSEMULT: the moves with each tool, in each work object, where RAPID puts the flange
@@ -126,6 +129,7 @@ import make_arg_probe
 import make_array_probe
 import make_array_write_probe
 import make_bank_probe
+import make_branch_frame_probe
 import make_compute_probe
 import make_condition_gate_probe
 import make_condition_probe
@@ -498,6 +502,14 @@ def probe_stopmove() -> str:
     return f"FAIL {problem}" if problem else make_stopmove_probe.summary(make_stopmove_probe.stored())
 
 
+def probe_branchframe() -> str:
+    try:
+        problem = make_branch_frame_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_branch_frame_probe.summary(make_branch_frame_probe.stored())
+
+
 def probe_exitcycle() -> str:
     try:
         problem = make_exitcycle_probe.run()  # stores the result, as the probe's own run does
@@ -679,7 +691,7 @@ GROUPS: dict[str, dict[str, float]] = {
     "calls": {"external": 39, "taught": 74, "maketp": 43, "funcresult": 65, "funcbody": 60, "raise": 72,
               "sysvars": 60, "optargs": 45},
     "library": {"karel": 140, "karelpose": 136, "karelfile": 120, "stopmove": 87, "exitcycle": 55},
-    "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150},
+    "frames": {"framefield": 100, "funcinline": 100, "rtcp": 150, "branchframe": 90},
     "robotstudio": {"abb": 74},
 }  # fmt: skip
 GROUP_LIMIT_S = 600
@@ -711,7 +723,7 @@ def main() -> int:
               "karelfile": probe_karelfile, "stopmove": probe_stopmove, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
-              "optargs": probe_optargs, "rtcp": probe_rtcp, "waitrob": probe_waitrob, "exitcycle": probe_exitcycle,
+              "optargs": probe_optargs, "rtcp": probe_rtcp, "waitrob": probe_waitrob, "exitcycle": probe_exitcycle, "branchframe": probe_branchframe,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     grouped = [probe for group in GROUPS.values() for probe in group]

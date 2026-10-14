@@ -1036,19 +1036,33 @@ class Computer:
                 or written.everything or decl.type_name.lower() in written.types:  # fmt: skip
             return False
         writes = [p for p, _ in written.places.get(path[0], ()) if _overlap(p, path)]
-        if not writes or any(p != path for p in writes):
+        if not writes or any(p not in (path, path[:1]) for p in writes):
             return False
         scope, frames, self.scope, self._frames = self.scope, self._frames, (lambda name: None), []
         try:
             index, _type = self.layouts.field(decl.type_name.lower(), path[1])
             declared = self.value(decl.init).value[index]
             same = all(value is not None and _equal(self.value(value).value, declared) for value in written.values[path])
+            # a whole copy of another tool or work object whose field keeps the same declared value (`w2 := w1`)
+            same = same and all(isinstance(value, n.Name) and self._keeps(value.name, decl.type_name.lower(), path[1],
+                                                                          index, declared)
+                                for value in written.values.get(path[:1], ()))  # fmt: skip
         except (Unresolvable, TypeError, IndexError):
             same = False
         finally:
             self.scope, self._frames = scope, frames
         self._invariant[path] = same
         return same
+
+    def _keeps(self, name: str, type_name: str, field: str, index: int, declared: Any) -> bool:
+        """Whether the field of another tool or work object of the same type keeps the value `declared` (invariant)."""
+        decl = self.symbols.get_global(name)
+        if decl is None or decl.dims or decl.init is None or decl.type_name.lower() != type_name:
+            return False
+        if not _equal(self.value(decl.init).value[index], declared):
+            return False
+        key = (name.upper(), field)
+        return not any(_overlap(p, key) for p, _ in self.written.places.get(key[0], ())) or self.invariant(key)
 
     def _read_path(self, name: str, path: tuple[str, ...], type_name: str) -> Any:
         expr: n.Expr = n.Name(n.Span(0, 0), name)

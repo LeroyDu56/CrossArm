@@ -1,0 +1,13 @@
+ca_posemult_load loaded
+BFPREP_load loaded
+SETUP_FRAMES_load loaded
+BFTURN_load loaded
+BFCONV_load loaded
+BFPREP_run done
+SETUP_FRAMES_run done
+conv_run done
+conv_done 1
+BFS1 1035.036 -53.314 774.114 175.000 -10.000 -150.000
+BFS2 1035.036 -53.314 774.114 175.000 -10.000 -150.000
+BFS3 1078.241 45.837 774.114 175.000 -10.000 45.000
+BFS4 1078.241 45.837 774.114 175.000 -10.000 45.000
