@@ -61,6 +61,18 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   statement is now held with its text, and so is the stand-in of a condition left to the integrator. The data
   known after an IF / TEST, and those a call may change, are now gone through in a fixed order rather than a
   set's. A new test converts under three PYTHONHASHSEED values and compares every file written.
+- World zones (WZBoxDef, WZCylDef, WZSphDef, WZHomeJointDef, WZLimJointDef, WZLimSup, WZDOSet, WZEnable,
+  WZDisable, WZFree) stay TODO under a cause of their own, "world zone or safety function: set up in DCS on the
+  FANUC", saying so. The commissioning checklist gains a group "Safety and world zones (DCS)": one item per zone
+  with its shape, its values when known at conversion (corners, centre, radius, joint values), what it does (the
+  robot stops, or an output is set) and where the RAPID switches it. When the backup's system description lists
+  SafeMove or World Zones, the analysis and the checklist remind that the safety is set up again in DCS. CrossArm
+  converts no safety function: each zone is redone and validated on the FANUC.
+- A module that Load / StartLoad / UnLoad name and the input does not hold, or whose file is named at run time,
+  stays TODO under a cause of its own, "module loaded at run time, not in the input" (before: "routine or data not
+  in the backup", or "value not known at conversion time"). The analysis lists the files to add to the input, as
+  the RAPID names them, then convert again. Diagnostic schema 4 gains `loaded_modules_missing` and
+  `loaded_modules_named_at_run_time` (counts only, in `conversion` and each task).
 
 ## 1.13.0 — 2026-10-13
 

@@ -988,7 +988,6 @@ def test_a_constant_below_one_is_assigned_without_its_zero():
     ("TPShow TP_LATEST;", "", "TPShow: a screen or an application of the ABB pendant"),
     ("BookErrNo ERR_GRIP;", "VAR errnum ERR_GRIP:=-1;", "BookErrNo: the ABB event log"),
     ('ErrWrite\\W,"Gripper","Part lost";', "", "ErrWrite: the ABB event log"),
-    ("WZLimSup\\Temp,wzZone,shVolume;", "VAR wztemporary wzZone;\nVAR shapedata shVolume;", "WZLimSup: world zone"),
     ("IF sState=SOCKET_CONNECTED nOk:=1;", "VAR socketstatus sState;\nVAR num nOk;", "sState (socketstatus data): sockets"),
     ("WHILE answer<>4 DO\nStop;\nENDWHILE", "VAR btnres answer:=-1;", "answer (btnres data): operator dialog"),
 ])  # fmt: skip

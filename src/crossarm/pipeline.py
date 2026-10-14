@@ -54,6 +54,7 @@ from crossarm.convert.taught import (
 )
 from crossarm.convert.taught import report_section as taught_section
 from crossarm.convert.translate import ControllerScope, Note, remark_lines
+from crossarm.convert.world_zones import safety_options
 from crossarm.fanuc import ktrans
 from crossarm.fanuc.ktrans import KarelExport, KarelRequest
 from crossarm.fanuc.ls_writer import write_ls
@@ -65,6 +66,7 @@ from crossarm.licence import LicenceStatus
 from crossarm.licence import current as current_licence
 from crossarm.rapid import ParseResult, parse_file
 from crossarm.rapid.eio import find_eio, read_eio
+from crossarm.rapid.system_info import read_system
 from crossarm.support import internal_error, log_text, record_internal
 
 Log = Callable[[str], None]
@@ -262,6 +264,7 @@ def _convert_task(task: TaskSource, parsed_task: tuple[list[ParseResult], list[s
         result.notes.append(Note("", None, "TODO", f"module {module} not converted: {why}", Blocker.INTERNAL))
         log(f"  {task.name}: module {module} not converted: {why}")
     result.shared_with = other_tasks
+    result.safety_options = safety_options(read_system(source.root).options)  # convert.world_zones: DCS reminder
     if mapping_warning:
         result.notes.append(Note("", None, "WARNING", mapping_warning, Blocker.OTHER))
     points = records(result, task.name)  # theoretical, before any taught value is kept

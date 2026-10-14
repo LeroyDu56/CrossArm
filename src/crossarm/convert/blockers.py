@@ -51,6 +51,8 @@ class Blocker:
     SEARCH = "search: the FANUC skip stops and fails otherwise"
     IO_ROUNDED = "I/O written approximately (pulse length)"
     INLINED = "function of the backup copied into each call"
+    SAFETY = "world zone or safety function: set up in DCS on the FANUC"
+    LOADED_MODULE = "module loaded at run time, not in the input"
     INTERNAL = "CrossArm internal error"
     OTHER = "other"
 

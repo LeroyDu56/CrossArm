@@ -444,6 +444,14 @@ def _path(path: WorkablePath) -> dict[str, object]:
     return data
 
 
+def loaded_modules(result) -> dict[str, int]:
+    """Schema 4, additive (1.14): the module files Load / StartLoad name that the input does not hold, and the loads
+    naming their file at run time (crossarm.convert.module_loads). Counts only, never a name or a path."""
+    missing = result.loaded_missing
+    return {"loaded_modules_missing": len({m.path.upper() for m in missing if m.path}),
+            "loaded_modules_named_at_run_time": len({(m.program, m.line) for m in missing if not m.path})}  # fmt: skip
+
+
 def _uses(table: dict[str, Use]) -> dict[str, dict[str, int]]:
     return {key: table[key].data() for key in sorted(table, key=lambda k: (-table[k].occurrences, k))}
 
@@ -557,6 +565,7 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
                     "todo": result.todo_count, "warnings": sum(1 for x in result.notes if x.kind == "WARNING"),
                     "verdict": verdict(result).level,
                     **_path(path_to_workable(result)),
+                    **loaded_modules(result),
                 })  # fmt: skip
             tasks.append(entry)
         names_all = _Names(all_modules)
@@ -571,6 +580,8 @@ def diagnose(paths: list[Path], config: ConversionConfig | None = None, eio: Pat
                 "converted_by_area": {share.area: share.percent for share in coverage.shares},
                 "todo_by_cause": _by_cause(notes, "TODO"), "warnings_by_cause": _by_cause(notes, "WARNING"),
             })  # fmt: skip
+            for key in ("loaded_modules_missing", "loaded_modules_named_at_run_time"):
+                conversion[key] = sum(entry.get(key, 0) for entry in tasks)  # type: ignore[misc]
             path = run_path(out)
             if path is not None:  # schema 4: every task counted together, as the window's decision
                 conversion.update({"verdict": path.level, **_path(path)})

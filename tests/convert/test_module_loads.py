@@ -7,7 +7,11 @@ GetSysData of a tool or work object selected before it in the routine: copied fr
 
 from test_translate import HOME, TOOL, WOBJ, run, todos, tp_lines
 
+from crossarm.convert import triage
+from crossarm.convert.analysis import priority_actions
+from crossarm.convert.blockers import Blocker
 from crossarm.convert.module_loads import module_of
+from crossarm.diagnose import loaded_modules
 
 SESSION = "VAR loadsession lsNext;"
 CUR = "PERS tooldata tCur:=[TRUE,[[0,0,100],[1,0,0,0]],[2.4,[0,0,90],[1,0,0,0],0,0,0]];"
@@ -36,9 +40,26 @@ def test_a_module_not_in_the_backup_is_todo_saying_so():
     body = 'Load \\Dynamic, "HOME:/Other.mod";\nUnLoad "HOME:" \\File:="Other.mod";\nLoad sPath;\nWaitLoad lsNext;'
     result = run(body, SESSION + 'VAR string sPath:="";\nPROC set()\nsPath:="HOME:/A.mod";\nENDPROC')
     other, unload, named, waited = todos(result)
-    assert "module OTHER is not in the backup" in other and "module OTHER" in unload
+    assert "module OTHER is not in the input: add its file" in other and "module OTHER" in unload
     assert "named at run time" in named
     assert "no StartLoad" in waited
+    causes = [note.category for note in result.notes if note.kind == "TODO"]
+    assert causes == [Blocker.LOADED_MODULE] * 3 + [Blocker.MISSING]
+    # Kept for the analysis: the file as the RAPID names it, one entry per line left TODO.
+    assert [(m.module, m.path, m.line) for m in result.loaded_missing] == [
+        ("OTHER", "HOME:/Other.mod", 7), ("OTHER", "HOME:/Other.mod", 8), ("", "", 9)]
+
+
+def test_the_analysis_asks_for_the_module_files_to_add_and_the_diagnostic_counts_them():
+    body = ('Load \\Dynamic, "HOME:/jobs/JobsB.mod";\nStartLoad \\Dynamic, "HOME:/jobs" \\File:="JobsC.modx", lsNext;\n'
+            'WaitLoad lsNext;\nUnLoad "HOME:/jobs/JobsB.mod";\nLoad sPath;')  # fmt: skip
+    result = run(body, SESSION + 'VAR string sPath:="";\nPROC set()\nsPath:="HOME:/A.mod";\nENDPROC')
+    action = next(a for a in priority_actions(result) if a.causes == (Blocker.LOADED_MODULE,))
+    assert action.title == "Add the 2 module files the programs load to the input"
+    assert "`HOME:/jobs/JobsB.mod`, `HOME:/jobs/JobsC.modx`" in action.detail
+    assert "1 load names its file at run time" in action.detail
+    assert action.todo == 5 and action.who == (triage.BACKUP,)
+    assert loaded_modules(result) == {"loaded_modules_missing": 2, "loaded_modules_named_at_run_time": 1}
 
 
 def test_save_stays_without_a_tp_equivalent():

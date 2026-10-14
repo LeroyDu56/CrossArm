@@ -101,7 +101,7 @@ from crossarm.convert.karel_poses import KarelPoses, karel_candidates, karel_wou
 from crossarm.convert.karel_poses import place_frames as place_karel_frames
 from crossarm.convert.late_calls import LateCalls
 from crossarm.convert.module_loads import INSTRUCTIONS as MODULE_LOADS
-from crossarm.convert.module_loads import ModuleLoads
+from crossarm.convert.module_loads import MissingModule, ModuleLoads
 from crossarm.convert.motion import corner, next_move
 from crossarm.convert.payload import Payload, combined
 from crossarm.convert.raised import RaisedErrors, RaisedPaths
@@ -135,6 +135,10 @@ from crossarm.convert.values import (
     Unresolvable,
     unit_quaternion,
 )
+from crossarm.convert.world_zones import INSTRUCTIONS as WORLD_ZONES
+from crossarm.convert.world_zones import WorldZone
+from crossarm.convert.world_zones import scan as scan_world_zones
+from crossarm.convert.world_zones import todo_reason as zone_todo
 from crossarm.convert.wrappers import CallMismatch, MoveRoutine, find_move_routines, parameters
 from crossarm.fanuc.tp import (
     Attributes,
@@ -519,6 +523,13 @@ class ConversionResult:
     # id() of those instructions (their blocks are converted: diagnose counts them so).
     gated: list[GatedCondition] = field(default_factory=list)
     gated_ids: set[int] = field(default_factory=set)
+    # The world zones the RAPID sets up (crossarm.convert.world_zones), for the checklist; and the safety options
+    # the backup's system description lists (SafeMove, World Zones), set by the pipeline.
+    world_zones: list[WorldZone] = field(default_factory=list)
+    safety_options: list[str] = field(default_factory=list)
+    # Modules loaded at run time (Load, StartLoad) the input does not hold, each at the line left TODO for it
+    # (crossarm.convert.module_loads): the files to add to the input.
+    loaded_missing: list[MissingModule] = field(default_factory=list)
 
     @property
     def todo_count(self) -> int:
@@ -1125,12 +1136,31 @@ class Converter:
         res.coverage = measure([r for _, r in selected], left_out, self.not_converted, declared, set(self.move_routines),
                                res.instructions)  # fmt: skip
         res.modules = list(self.modules)
+        res.world_zones = scan_world_zones(self.modules, self._zone_value)
+        todo_at = {(note.program, note.rapid_line) for note in res.notes
+                   if note.kind == "TODO" and note.category == Blocker.LOADED_MODULE}  # fmt: skip
+        res.loaded_missing = list(dict.fromkeys(m for m in res.loaded_missing if (m.program, m.line) in todo_at))
         if self.config.karel:
             res.karel_calls = karel_calls((info.program.name, [line.text for line in info.program.lines
                                                                if isinstance(line, Instruction)])
                                           for info in res.programs)  # fmt: skip
             res.karel_programs = list(res.karel_calls)
         return res
+
+    def _zone_value(self, expr: n.Expr) -> str:
+        """A world zone's argument for the checklist: its value when known at conversion ('[400,-300,0]', the
+        position of a robtarget, the axes of a jointtarget), else its RAPID text."""
+        try:
+            value = self.computer.value(expr).value
+        except (Unresolvable, TypeError, ValueError, KeyError, AttributeError, IndexError):
+            return format_expr(expr)
+        if isinstance(value, list) and value and isinstance(value[0], list):
+            value = value[0]  # a robtarget's position, a jointtarget's robot axes
+        if isinstance(value, list) and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value):
+            return "[" + ",".join("-" if abs(v) >= 9e8 else f"{v:g}" for v in value) + "]"  # 9E9: axis not checked
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return f"{value:g}"
+        return format_expr(expr)
 
     def _write_func_programs(self, selected: list[tuple[n.Module, n.Routine]], skipped: list[n.Routine]) -> None:
         """The FUNCs the programs call as programs of their own (convert.func_programs), written after them, with
@@ -2624,6 +2654,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         """(why, cause) of a statement left TODO for `exc`."""
         # An Unresolvable that reaches here is always a value we could not work out.
         measured = Blocker.CALIBRATION if isinstance(exc, MeasuredAtRunTime) else Blocker.VALUE
+        if getattr(exc, "category", None) in (Blocker.SAFETY, Blocker.LOADED_MODULE):
+            return str(exc), exc.category  # type: ignore[attr-defined]  # said precisely, as raised
         none = no_tp_equivalent(stmt, self.c.procs.keys() | self.c.computer.functions.keys(),
                                  self.c.symbols.type_of, MODULE_LOADS | (KAREL_FILES if self.c.config.karel else set()),
                                  self.c.config.karel)  # fmt: skip
@@ -3488,6 +3520,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
             self.exit_cycle(call)  # convert.stop_move
         elif name in STOP_MOVE_INSTRUCTIONS and name not in self.c.procs:
             self.stop_move(call, name)  # convert.stop_move
+        elif name in WORLD_ZONES and name not in self.c.procs:
+            raise Untranslatable(zone_todo(call), Blocker.SAFETY)  # convert.world_zones
         elif name in MODULE_LOADS and name not in self.c.procs:
             self.module_load(call, name)  # convert.module_loads
         elif name == "BOOKERRNO" and name not in self.c.procs and self.book_error(call):

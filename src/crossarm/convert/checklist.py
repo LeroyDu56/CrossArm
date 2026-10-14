@@ -374,6 +374,43 @@ def _allocations(allocations: list[Allocation], prefix: str, places: _Places, wh
     return items
 
 
+def _safety(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
+    """The world zones the RAPID sets up and the safety options of the ABB system (crossarm.convert.world_zones):
+    each to set up again in DCS and validate on the robot. CrossArm converts none of it."""
+    program_of = {(info.module.upper(), info.routine.upper()): info.program.name for info in result.programs}
+    items = []
+    for zone in result.world_zones:
+        shape = f"{'inside' if zone.inside else 'outside'} of a {zone.shape}" if zone.shape else "a shape"
+        what = zone.action or "defined, not installed by the RAPID converted here"
+        note = ("ABB world zones are in the world frame (positions in mm, joints in degrees). Set up the same zone on"
+                " the FANUC: DCS Cartesian Position Check for a box, a cylinder or a sphere, Joint Position Check for"
+                " joint values, the zone's status on a safe output where the cell reads one (or an interference check"
+                " zone); then validate it on the robot.")  # fmt: skip
+        if zone.temporary or zone.switched:
+            note += (" A temporary zone, switched while running"
+                     + (f" ({', '.join(zone.switched[:4])})" if zone.switched else "")
+                     + ": a DCS zone is switched by a safe input, not by a TP program.")  # fmt: skip
+        located = [(program_of.get((module.upper(), routine.upper()), ""), line) for module, routine, line in zone.places]
+        where = ", ".join(f"{module}.{routine} l.{line}" for module, routine, line in zone.places[:3])
+        items.append(_Item(
+            f"zone|{zone.name}|{zone.shape}|{zone.values}|{zone.action}",
+            f"Zone {_code(zone.name)}: {_e(shape)}, {_e(what)}",
+            values=_e(zone.values), note=_e(note + f" RAPID: {where}."),
+            links=places.links(located, "at")))  # fmt: skip
+    for option in result.safety_options:
+        zones = "world zone" in option.lower()
+        items.append(_Item(
+            f"option|{option}", f"ABB option {_code(option)}: set up the safety again on the FANUC",
+            note=_e("World zones are set up by RAPID instructions, often in an event routine of a system module: the"
+                    " zones listed here are the ones of the modules given; look for others on the ABB." if zones else
+                    "Its configuration (zones, speed limits, tool orientation, safe I/O) is in the ABB's safety"
+                    " controller, not in the RAPID: CrossArm reads none of it. Set up DCS to the same limits and"
+                    " validate it on the robot.")))  # fmt: skip
+    intro = ("CrossArm converts no safety function: what the ABB keeps the robot out of, or signals, is set up again"
+             " in the FANUC's Dual Check Safety (DCS) on the pendant, and validated on the robot before production.")
+    return intro, items
+
+
 def _io(result: ConversionResult, places: _Places) -> tuple[str, list[_Item]]:
     items = []
     for allocations, prefix in ((result.digital_inputs, "DI"), (result.digital_outputs, "DO"),
@@ -641,6 +678,7 @@ _GROUPS = (
     ("provided", "Programs to provide"),
     ("frames", "Frames and tools"),
     ("payloads", "Payloads"),
+    ("safety", "Safety and world zones (DCS)"),
     ("io", "I/O to map"),
     ("registers", "Registers, flags and timers"),
     ("conditions", "Conditions to set"),
@@ -663,6 +701,7 @@ def checklist_section(result: ConversionResult, config: ConversionConfig, anchor
         "provided": _provided(result, places),
         "frames": _frames(result, config, places),
         "payloads": _payloads(result, config, places),
+        "safety": _safety(result, places),
         "io": _io(result, places),
         "registers": _registers(result, places),
         "conditions": _conditions(result, places),

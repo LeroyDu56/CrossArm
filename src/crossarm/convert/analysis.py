@@ -480,6 +480,37 @@ def priority_actions(result: ConversionResult, config: ConversionConfig | None =
             "#review", "Items to review", Blocker.MISSING, **_concerning(missing), who=(backup, integrator),
             snippet=snippet))  # fmt: skip
         snippet = ""
+    loaded = by_cause.get(Blocker.LOADED_MODULE, [])
+    done.add(Blocker.LOADED_MODULE)
+    if loaded:  # crossarm.convert.module_loads: files the RAPID loads from the disk, not in the input
+        paths = list(dict.fromkeys(m.path for m in result.loaded_missing if m.path))
+        late = len({(m.program, m.line) for m in result.loaded_missing if not m.path})
+        shown = _names([f"`{path}`" for path in paths], 6)
+        actions.append(Action(
+            f"Add the {_plural(len(paths), 'module file')} the programs load to the input" if paths else
+            "Add the modules the programs load at run time to the input",
+            (f"{shown} (Load, StartLoad): the backup does not hold {'them' if len(paths) > 1 else 'it'}. " if paths
+             else "") + (f"{_plural(late, 'load names its file', 'loads name their file')} at run time: add every"
+                         " module it may load. " if late else "")
+            + "Copy the files next to the other modules of the backup (or into the .zip) and convert again: their"
+            f" programs are then converted with the others; {_todo(len(loaded))}{_programs(loaded)}.",
+            "#review", "Items to review", Blocker.LOADED_MODULE, **_concerning(loaded), who=(backup,)))  # fmt: skip
+    safety = by_cause.get(Blocker.SAFETY, [])
+    done.add(Blocker.SAFETY)
+    if safety or result.world_zones or result.safety_options:  # crossarm.convert.world_zones
+        zones = [f"`{zone.name}`" for zone in result.world_zones]
+        parts = []
+        if zones:
+            parts.append(f"{_plural(len(zones), 'world zone')} the RAPID sets up ({_names(zones, 4)})")
+        if result.safety_options:
+            parts.append("the ABB system lists " + _names([f"`{o}`" for o in result.safety_options], 3))
+        actions.append(Action(
+            "Set up the robot's safety and zones in DCS, then validate them",
+            "; ".join(parts) + ". CrossArm converts no safety function: set them up again on the FANUC (DCS"
+            " Cartesian or Joint Position Check, safe I/O, or its interference check zones) and validate them on the"
+            " robot before production" + (f"; {_todo(len(safety))}{_programs(safety)}" if safety else "") + ".",
+            "#ck-safety", "Checklist: Safety and world zones",
+            **(_concerning(safety) if safety else {}), who=(integrator,)))  # fmt: skip
     if result.provided:
         names = [f"`{use.program}`" for use in result.provided]
         actions.append(Action(

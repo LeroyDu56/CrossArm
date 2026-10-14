@@ -25,6 +25,7 @@ from crossarm.convert.translate import ConversionResult, suffixed, tp_program_na
 
 CALIBRATION, FRAMES, MOVES, IO, HMI, DATA, FLOW = "calibration", "frames", "motion", "I/O", "operator HMI", "data", "program flow"  # fmt: skip
 ERRORS, INTERRUPTS, SYSTEM, NUMBERING, CROSSARM, OTHER = "errors", "interrupts", "system", "numbering", "CrossArm", "other"  # fmt: skip
+SAFETY = "safety"
 
 FAMILIES: dict[str, str] = {
     Blocker.CALIBRATION: CALIBRATION, Blocker.SEARCH: CALIBRATION,
@@ -40,7 +41,8 @@ FAMILIES: dict[str, str] = {
     Blocker.INLINED: FLOW,
     Blocker.HANDLER: ERRORS,
     Blocker.INTERRUPT: INTERRUPTS, Blocker.MONITOR: INTERRUPTS,
-    Blocker.MISSING: SYSTEM, Blocker.NO_TP_EQUIVALENT: SYSTEM, Blocker.REAL_CONTROLLER: SYSTEM,
+    Blocker.MISSING: SYSTEM, Blocker.LOADED_MODULE: SYSTEM, Blocker.NO_TP_EQUIVALENT: SYSTEM,
+    Blocker.SAFETY: SAFETY, Blocker.REAL_CONTROLLER: SYSTEM,
     Blocker.CAPACITY: NUMBERING, Blocker.TAKEN: NUMBERING, Blocker.RENAMED: NUMBERING,
     Blocker.INTERNAL: CROSSARM,
     Blocker.OTHER: OTHER,
@@ -57,6 +59,7 @@ FAMILY_WORDS = {
     ERRORS: "error handling",
     INTERRUPTS: "interrupts",
     SYSTEM: "system routines and functions",
+    SAFETY: "safety and world zones (set up in DCS)",
     NUMBERING: "controller numbering",
     CROSSARM: "CrossArm internal errors",
     OTHER: "other causes",
@@ -110,7 +113,7 @@ WHO = (INTEGRATOR, BACKUP, OPTION, LATER)
 
 # TP has no equivalent: the FANUC side redesigns it, whatever the converter does.
 NO_TP_CAUSES = frozenset({
-    Blocker.NO_TP_EQUIVALENT, Blocker.MOTION, Blocker.LOOP, Blocker.HANDLER, Blocker.PROVIDED_FUNCTION,
+    Blocker.NO_TP_EQUIVALENT, Blocker.SAFETY, Blocker.MOTION, Blocker.LOOP, Blocker.HANDLER, Blocker.PROVIDED_FUNCTION,
     *_RAPID_ERRORS,
 })  # fmt: skip
 # TP has the means; CrossArm does not convert these yet in every form. No promise, no date.
