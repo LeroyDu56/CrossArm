@@ -336,6 +336,7 @@ _INTERRUPT_GAPS = {
 }
 _CHANGING = frozenset({"INCR", "DECR", "ADD", "CLEAR"})  # written as the assignment they make: _as_assignment
 NO_GROUP = "*,*,*,*,*"  # DEFAULT_GROUP of a program that moves no robot: a TRAP, a condition program
+STANDSTILL_KEY = "CROSSARM.STANDSTILL"  # the zero position register of WaitRob's incremental FINE move (mapping)
 SR_LIMIT = 25  # string registers of a controller (ROBOGUIDE: SR[26] does not exist)
 TEXT_PROGRAM = "CA_TEXT"  # the program loading a text into a string register (crossarm.convert.strings)
 TEXT_KEY = "CROSSARM.TEXT"  # its key in the mapping file (programs)
@@ -3541,9 +3542,12 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         return isinstance(value, list) and bool(value) and value[0] is True
 
     def wait_robot(self, call: n.ProcCall, option: str) -> None:
-        """WaitRob \\InPos or \\ZeroSpeed after a FINE move: TP runs the line after a FINE move once the robot
-        stands on the point, so there is nothing to wait for. After a move through a zone, or when the program
-        may arrive from elsewhere (a label, a call), TP has no wait for the robot to stop: TODO."""
+        """WaitRob \\InPos or \\ZeroSpeed. After a FINE move TP runs the next line once the robot stands on the
+        point: nothing to wait for. Else (a move through a zone, here or in a routine called before, or the
+        program arriving from a label) a zero incremental FINE move: the robot ends the move before on its point
+        and stops there, as RAPID does, and the next line runs then (measured 1.14-02: 0.000 mm; without it the
+        line after a CNT100 move at 100 mm/s runs 9 mm before the point). Not in a TRAP: it runs without the
+        motion group."""
         for line in reversed(self.lines):
             if isinstance(line, Motion):
                 if line.termination == "FINE":
@@ -3552,8 +3556,14 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
                 break
             if line.text.startswith(("LBL[", "CALL ", "ENDIF", "ENDFOR", "ELSE")):
                 break
-        raise Untranslatable(f"WaitRob \\{option}: TP has no wait for the robot to stop; the move before it must be"
-                             " FINE", Blocker.MOTION)  # fmt: skip
+        if self.routine.kind == "TRAP" or self.routine.name.upper() in self.c.no_group:
+            raise Untranslatable(f"WaitRob \\{option} in a TRAP or a routine a TRAP calls: it runs without the"
+                                 " motion group, so it cannot wait for the robot", Blocker.MOTION)  # fmt: skip
+        register = self.c.point_register(STANDSTILL_KEY)
+        self.emit(f"!WaitRob {option}: stop on the point")
+        self.emit(f"{register}=LPOS")
+        self.emit(f"{register}={register}-{register}")  # zero: the move goes nowhere, FINE
+        self.lines.append(Motion("L", register, "100mm/sec", "FINE", None, "INC"))
 
     # -- interrupts: condition monitors ----------------------------------------------
 

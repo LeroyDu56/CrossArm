@@ -1225,6 +1225,29 @@ def test_testdi_is_the_input_at_one():
 
 
 def test_waitrob_after_a_fine_move_has_nothing_to_wait_for():
-    result = run("MoveL pHome,v500,fine,tGrip;\nWaitRob\\InPos;\nMoveL pHome,v500,z10,tGrip;\nWaitRob\\InPos;", HOME + TOOL)
-    assert tp_lines(result)[3] == "!WaitRob InPos: FINE before"
-    assert [n.message.split(":")[0] for n in result.notes if n.kind == "TODO"] == ["WaitRob \\InPos"]
+    result = run("MoveL pHome,v500,fine,tGrip;\nWaitRob\\InPos;", HOME + TOOL)
+    assert tp_lines(result)[3:] == ["!WaitRob InPos: FINE before"]
+
+
+def test_waitrob_after_a_zone_or_a_call_is_a_zero_incremental_fine_move():
+    # measured 1.14-02: the robot ends the move before on its point and stops; the next line runs then
+    result = run("MoveL pHome,v500,z10,tGrip;\nWaitRob\\InPos;\nOther;\nWaitRob\\ZeroSpeed;", HOME + TOOL,
+                 extra_procs="PROC Other()\nMoveL pHome,v500,z50,tGrip;\nENDPROC")  # fmt: skip
+    assert not todos(result)
+    (register,) = result.point_registers
+    assert register.rapid_name == "CROSSARM.STANDSTILL"
+    pr = f"PR[{register.number}]"
+    assert tp_lines(result)[3:7] == ["!WaitRob InPos: stop on the point", f"{pr}=LPOS", f"{pr}={pr}-{pr}",
+                                     f"L {pr} 100mm/sec FINE"]  # fmt: skip
+    assert tp_lines(result)[8:] == ["!WaitRob ZeroSpeed: stop on the point", f"{pr}=LPOS", f"{pr}={pr}-{pr}",
+                                    f"L {pr} 100mm/sec FINE"]  # fmt: skip
+    move = result.programs[0].program.lines[7]
+    assert isinstance(move, Motion) and move.options == "INC"
+
+
+def test_waitrob_in_a_trap_stays_todo():
+    source = ("MODULE M\nVAR intnum iGo;\nPROC main()\nCONNECT iGo WITH tGo;\nISignalDI diGo,1,iGo;\nENDPROC\n"
+              "TRAP tGo\nWaitRob\\InPos;\nENDTRAP\nENDMODULE\n")  # fmt: skip
+    result = convert([parse_module(source)], ConversionConfig(timestamp=datetime(2026, 1, 1)), routines=["main", "tGo"],
+                     sources={"M": source}, signals={"DIGO": Signal("diGo", "DI")})  # fmt: skip
+    assert any("WaitRob \\InPos in a TRAP" in t for t in todos(result))

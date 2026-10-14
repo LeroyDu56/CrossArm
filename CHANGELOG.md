@@ -14,6 +14,11 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   `stopmove`). The mapping file gains the flag keys `CROSSARM.STOPPED` and `CROSSARM.STOPMOVE.<INTERRUPT>`; no key
   is removed or redefined. Without `--karel` they stay TODO, now under "motion without a TP equivalent".
 - A TRAP connected by a routine of a system module that the programs call is written with that routine.
+- WaitRob \InPos / \ZeroSpeed after a move through a zone, or after a call or a branch, is a zero incremental FINE
+  move (`L PR[k] 100mm/sec FINE INC`, `PR[k]` set to zero just before): the robot ends the move before on its point
+  and stops there, as in RAPID, before the next line runs (measured on ROBOGUIDE, probe `waitrob`; without it, the
+  line after a CNT100 move runs about 9 mm before the point). The mapping file gains the position register key
+  `CROSSARM.STANDSTILL`. In a TRAP it stays TODO.
 
 ## 1.13.0 — 2026-10-13
 

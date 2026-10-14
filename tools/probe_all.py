@@ -65,6 +65,8 @@ probe, everything else in local/logs/probe_all.log):
     stopmove     --karel: StopMove / StartMove by CA_STOPMOVE, in line after a CNT move and in TRAPs on inputs switched
                  through COM while the robot moves (a TRAP resuming itself, one waiting for another TRAP's input, one
                  on any change): the robot stops on its line, then goes on to the point; the TRAP counts as RAPID's
+    waitrob      WaitRob \\InPos / \\ZeroSpeed after a move through a zone, in the program and after a call (a zero
+                 incremental FINE move): the position read on the next line is the point, 9 mm before it without
     framefield   a tool's tframe.trans and a work object's uframe.trans / .rot set from points read on the robot
                  (PR[F]=UTOOL/UFRAME, PR[F,i]=PR[k,i], UTOOL/UFRAME=PR[F]), that uframe copied to nine work objects
                  (banks, oframe by CA_POSEMULT): the moves after them where RAPID puts the flange
@@ -158,6 +160,7 @@ import make_sysvar_probe
 import make_taught_probe
 import make_time_flag_probe
 import make_wait_probe
+import make_waitrob_probe
 import roboguide
 import robotstudio
 from make_pose_probe import FLANGE_PR, compare, read_posreg, read_robotstudio
@@ -491,6 +494,14 @@ def probe_stopmove() -> str:
     return f"FAIL {problem}" if problem else make_stopmove_probe.summary(make_stopmove_probe.stored())
 
 
+def probe_waitrob() -> str:
+    try:
+        problem = make_waitrob_probe.run()  # stores the result, as the probe's own run does
+    except RuntimeError as exc:
+        return f"FAIL {exc}"
+    return f"FAIL {problem}" if problem else make_waitrob_probe.summary(make_waitrob_probe.stored())
+
+
 def probe_framefield() -> str:
     try:
         problem = make_frame_field_probe.run()  # stores the result, as the probe's own run does
@@ -647,7 +658,7 @@ def _run(folder: str, program: str, zero: list[int], check: Callable[[], str] | 
 
 # Probes run together in less than 10 minutes: (seconds each took on ROBOGUIDE V10.10, R-1000iA/80F).
 GROUPS: dict[str, dict[str, float]] = {
-    "motion": {"pose": 85, "pin": 79, "banks": 86, "compute": 54, "points": 54, "pallet": 32},
+    "motion": {"pose": 85, "pin": 79, "banks": 86, "compute": 54, "points": 54, "pallet": 32, "waitrob": 40},
     "data": {"negative": 8, "args": 15, "conditions": 11, "waits": 18, "setup": 16, "select": 13, "arrays": 13,
              "interrupts": 27, "params": 14, "records": 70, "strings": 15, "arraywrite": 13, "flags": 12,
              "flagarrays": 13, "pointref": 22, "joints": 20, "condgate": 63,
@@ -688,7 +699,7 @@ def main() -> int:
               "karelfile": probe_karelfile, "stopmove": probe_stopmove, "framefield": probe_framefield,
               "funcinline": probe_funcinline, "funcresult": probe_funcresult, "funcbody": probe_funcbody, "raise": probe_raise,
               "sysvars": probe_sysvars, "condgate": probe_condgate, "forbound": probe_forbound,
-              "optargs": probe_optargs, "rtcp": probe_rtcp,
+              "optargs": probe_optargs, "rtcp": probe_rtcp, "waitrob": probe_waitrob,
               "abb": probe_abb}  # fmt: skip
     # --summary: one short line per probe; what the probes print and the full verdicts go to local/logs/probe_all.log
     grouped = [probe for group in GROUPS.values() for probe in group]

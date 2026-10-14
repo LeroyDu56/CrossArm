@@ -1,0 +1,9 @@
+WPSETUP_load loaded
+TOCORNER_load loaded
+WAITPROBE_load loaded
+setup_run done
+run done
+nDone 1
+wpNoWait 1390.700 -200.000 800.000 -180.000 -.000 135.000
+wpInPos 1400.000 -200.000 800.000 180.000 .000 135.000
+wpZeroSpeed 1400.000 -200.000 800.000 180.000 .000 135.000

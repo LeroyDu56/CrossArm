@@ -355,6 +355,8 @@ _RESERVED = (
                        " again at each turn, RAPID once)")),
     ("CROSSARM.RETRY.", ("reserved by CrossArm: the RETRY count of this routine's ERROR handler (at most 4, then"
                          " the program stops)")),
+    ("CROSSARM.STANDSTILL", ("reserved by CrossArm: zero, the incremental FINE move of a WaitRob that stops the"
+                             " robot on its point")),
 )  # fmt: skip
 
 
