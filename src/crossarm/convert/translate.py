@@ -904,7 +904,9 @@ class Converter:
         self.result.rapid_sources = self.source_lines
         self._warned: set[str] = set()
         self.inlined: list[tuple[str, str, int]] = []  # FUNC copied into a call: (FUNC, program, line), func_inline
-        self.inline_texts: dict[int, str] = {}  # id of a statement made by func_inline: its RAPID text
+        # id of a statement made by func_inline -> (that statement, its RAPID text). The statement is held: once
+        # freed, its id could be given to another statement made later (the output would then depend on memory).
+        self.inline_texts: dict[int, tuple[n.Stmt, str]] = {}
         self.do_names, self.di_names = self._signals_by_usage()
         self.program_names: dict[str, str] = {}  # routine (upper) -> TP name, set by convert()
         self.move_routines = find_move_routines(modules)
@@ -2328,7 +2330,8 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         self.calc_floor = 0
         self.calc_top = 0  # the highest Calc slot worked out in the condition being written
         self.gates: list = []  # the conditions left to the integrator, by instruction being written (condition_gates)
-        self.gate_names: dict[int, str] = {}  # id() of the stand-in of such a condition -> its flag
+        # id() of the stand-in of such a condition -> (the stand-in, held so its id is not reused, its flag)
+        self.gate_names: dict[int, tuple[n.Expr, str]] = {}
         self.gate_keys: set[str] = set()
         self.gate_notes: list[int] = []  # where the notes of each such instruction start
         self.after: tuple[n.Stmt, ...] = ()  # what follows the statement being written, in its block
@@ -2453,7 +2456,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
     def forget(self, stmts: Iterable[n.Stmt], why: Unknown) -> None:
         """What these statements may change is no longer known: they ran, or might have."""
         names, anything = self.c.effects.of(stmts)
-        for name in names:
+        for name in sorted(names):  # a set: in a fixed order
             self.known[name] = why
             if f"{name}#ROT" in self.known:  # the orientation of a point kept in a register goes with it
                 self.known[f"{name}#ROT"] = why
@@ -2474,7 +2477,7 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
         """After an IF or a TEST: what every path left the same is known, the rest is not."""
         merged: dict[str, Typed | Unknown] = {}
         differs = Unknown(f"is set differently in the branches of the {what} at l.{line}")
-        for name in set().union(*states):
+        for name in dict.fromkeys(name for state in states for name in state):  # in order, not a set's
             values = [state.get(name, differs) for state in states]
             first = values[0]
             if all(isinstance(v, Typed) and v == first for v in values):
@@ -2525,8 +2528,9 @@ class _RoutineTranslator(RuntimePoints, RoutineCalls, KarelPoses, KarelFiles, Fr
 
     def rapid_text(self, stmt: n.Stmt) -> str:
         """The RAPID source line of a statement (comment stripped), or a re-print of it."""
-        if (made := self.c.inline_texts.get(id(stmt))) is not None:  # a statement of an inlined FUNC
-            return made
+        made = self.c.inline_texts.get(id(stmt))
+        if made is not None and made[0] is stmt:  # a statement of an inlined FUNC
+            return made[1]
         lines = self.c.source_lines.get(self.module.name.upper())
         if lines and 0 < stmt.span.line <= len(lines):
             text = lines[stmt.span.line - 1]

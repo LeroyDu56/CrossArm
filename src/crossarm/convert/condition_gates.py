@@ -91,7 +91,7 @@ class ConditionGates:
     name: str
     strict: int
     gates: list[list[_Pending]]
-    gate_names: dict[int, str]
+    gate_names: dict[int, tuple[n.Expr, str]]
     gate_keys: set[str]
     gate_notes: list[int]
 
@@ -128,7 +128,7 @@ class ConditionGates:
         slot = f"F[{number}]"
         self._pending(expr, exc, slot, text, what)
         stand_in = n.Name(expr.span, GATE)
-        self.gate_names[id(stand_in)] = f"F[{number}:{_comment(text)}]"
+        self.gate_names[id(stand_in)] = (stand_in, f"F[{number}:{_comment(text)}]")
         return stand_in
 
     def gate_register(self, expr: n.Expr, exc: BaseException, what: str = "TEST") -> str:
@@ -145,12 +145,15 @@ class ConditionGates:
         return f"R[{number}:{_comment(text)}]"
 
     def is_gate(self, expr: n.Expr) -> bool:
-        return id(expr) in self.gate_names
+        found = self.gate_names.get(id(expr))
+        return found is not None and found[0] is expr
 
     def gate_condition(self, expr: n.Expr, negate: bool) -> str | None:
         """'F[3]=ON' for the stand-in of a condition (OFF negated), None for any other expression."""
-        flag = self.gate_names.get(id(expr))
-        return None if flag is None else f"{flag}={'OFF' if negate else 'ON'}"
+        found = self.gate_names.get(id(expr))
+        if found is None or found[0] is not expr:
+            return None
+        return f"{found[1]}={'OFF' if negate else 'ON'}"
 
     def gate_close(self, top: int, end: int | None = None) -> int | None:
         """Writes the gates of the instruction started at `top`, each jumping to LBL[end] (a new label when None,

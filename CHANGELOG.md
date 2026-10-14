@@ -45,6 +45,12 @@ downloads are on the [releases page](https://github.com/LeroyDu56/CrossArm/relea
   setup) rather than "call with arguments"; CalcJointT / CalcRobT are said to need the robot's kinematics rather than
   to read the robot's position. A tool or work object set at run time that no converted program uses (only routines
   left out of the conversion read it) is a remark and a warning, as one no program reads.
+- Fixed: the same backup could give a program with a different remark from one run to the next (since 1.13.0): the
+  RAPID text of a statement made while copying a FUNC into its call was found by the statement's address in memory,
+  which a statement made later could be given (a GetSysData copy then showed the text of another line). The
+  statement is now held with its text, and so is the stand-in of a condition left to the integrator. The data
+  known after an IF / TEST, and those a call may change, are now gone through in a fixed order rather than a
+  set's. A new test converts under three PYTHONHASHSEED values and compares every file written.
 
 ## 1.13.0 — 2026-10-13
 

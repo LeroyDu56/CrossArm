@@ -328,7 +328,7 @@ class FuncInline:
         return True
 
     def _inline_one(self, stmt: n.Assign, function: str, convert: Any) -> None:
-        self.c.inline_texts[id(stmt)] = f"{format_expr(stmt.target)}:={format_expr(stmt.value)}"  # type: ignore[attr-defined]
+        self.c.inline_texts[id(stmt)] = (stmt, f"{format_expr(stmt.target)}:={format_expr(stmt.value)}")  # type: ignore[attr-defined]
         try:
             convert(stmt)
         except Untranslatable as exc:
@@ -382,7 +382,7 @@ class FuncInline:
         here = self.known.get(key)  # type: ignore[attr-defined]
         if dirty and isinstance(here, Typed):
             whole = n.Assign(statements[-1].span, self._target(statements[-1].target), literal(here.value, statements[-1].span))
-            self.c.inline_texts[id(whole)] = f"{format_expr(whole.target)}:={function}()"  # type: ignore[attr-defined]
+            self.c.inline_texts[id(whole)] = (whole, f"{format_expr(whole.target)}:={function}()")  # type: ignore[attr-defined]
             self._inline_one(whole, function, lambda s: self.computed(s, root_type))  # type: ignore[attr-defined]
         elif root_type == "tooldata" and isinstance(here, Typed) and statements:
             self._payload_change(statements[-1], self.c.symbols.get(key).name, here)  # type: ignore[attr-defined]
